@@ -16,6 +16,7 @@ import { draftRoutes } from "./routes/drafts.js";
 import { memoryRoutes } from "./routes/memories.js";
 import { libraryRoutes } from "./routes/library.js";
 import { startScheduler } from "./automations/scheduler.js";
+import { seedDefaultAutomations } from "./automations/defaults.js";
 import { startLibrary, getLibraryDir } from "./library/ingest.js";
 import { activeModelConfigured } from "./llm/registry.js";
 
@@ -49,6 +50,9 @@ async function main(): Promise<void> {
     });
   }
 
+  // Populate the built-in automations on a fresh install, then schedule
+  // everything (defaults included) for this boot.
+  await seedDefaultAutomations();
   await startScheduler();
 
   // Index the document drop folder and keep watching it.
