@@ -2,6 +2,9 @@ import { promises as fs } from "node:fs";
 import { dirname, resolve } from "node:path";
 import type { Credential, CredentialStore } from "@earendil-works/pi-ai";
 import { env } from "../env.js";
+import { moduleLogger } from "../logger.js";
+
+const log = moduleLogger("credential-store");
 
 /**
  * File-backed pi-ai CredentialStore (pi-ai only ships an in-memory one).
@@ -25,14 +28,31 @@ export class FileCredentialStore implements CredentialStore {
   private async load(): Promise<Record<string, Credential>> {
     try {
       return JSON.parse(await fs.readFile(this.filePath, "utf8")) as Record<string, Credential>;
-    } catch {
-      return {};
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
+      // A corrupt or unreadable store must never be treated as "no
+      // credentials" — modify()/delete() would then save over the file and
+      // permanently wipe every other provider's saved credential. Fail loudly.
+      log.error({ err: error, filePath: this.filePath }, "failed to read credential store");
+      throw error;
     }
   }
 
   private async save(all: Record<string, Credential>): Promise<void> {
     await fs.mkdir(dirname(this.filePath), { recursive: true });
-    await fs.writeFile(this.filePath, JSON.stringify(all, null, 2), { mode: 0o600 });
+    // Atomic write: a crash or power loss mid-write must never leave a
+    // truncated/corrupt auth.json — load() would then wipe every credential
+    // on the very next save. Write to a temp file in the same directory,
+    // fsync it, then rename over the target (same-filesystem rename is atomic).
+    const tempPath = `${this.filePath}.tmp`;
+    const handle = await fs.open(tempPath, "w", 0o600);
+    try {
+      await handle.writeFile(JSON.stringify(all, null, 2));
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    await fs.rename(tempPath, this.filePath);
   }
 
   read(providerId: string): Promise<Credential | undefined> {

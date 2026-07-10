@@ -36,9 +36,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ErrorBanner } from "@/components/ui/feedback";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { relativeTime } from "@/lib/dates";
+import { takePendingKnowledgeFocus } from "@/lib/paletteFocus";
 import { toast } from "@/lib/toast";
 import { useServerEvents } from "@/lib/serverEvents";
-import { cn, errorMessage } from "@/lib/utils";
+import { cn, errorMessage, UNASSIGNED_ACCOUNT_COLOR } from "@/lib/utils";
 
 /** Connected accounts whose name looks like an email address — the only ones
  *  relevant to memory scoping (a Notion or Slack connection has no sent mail
@@ -87,12 +88,23 @@ export function KnowledgePanel() {
     [accounts],
   );
 
+  // The search palette navigates here, then dispatches this with the hit's
+  // id — but only once this effect's listener is attached, which loses the
+  // race when Knowledge wasn't already mounted. Catch that case by also
+  // reading the same payload stashed just before navigate (lib/paletteFocus.ts).
   React.useEffect(() => {
+    const applyFocus = (detail: { type: "document" | "memory"; id: string }) => {
+      if (detail.type === "memory") setFocusMemoryId(detail.id);
+      else setFocusDocumentId(detail.id);
+    };
+    const pending = takePendingKnowledgeFocus();
+    if (pending) applyFocus(pending);
     const onOpen = (e: Event) => {
       const detail = (e as CustomEvent<{ type: "document" | "memory"; id: string }>).detail;
       if (!detail) return;
-      if (detail.type === "memory") setFocusMemoryId(detail.id);
-      else setFocusDocumentId(detail.id);
+      applyFocus(detail);
+      // Already handled live — discard so a later remount doesn't replay it.
+      takePendingKnowledgeFocus();
     };
     window.addEventListener("trailin:open-knowledge", onOpen);
     return () => window.removeEventListener("trailin:open-knowledge", onOpen);
@@ -267,6 +279,10 @@ function MemoryStrip({
   const listRef = React.useRef<HTMLDivElement>(null);
   // Refocused once the editor collapses back into the single-line composer.
   const composerInputRef = React.useRef<HTMLInputElement>(null);
+  // That refocus is programmatic and must not itself reopen the editor via
+  // the trigger's onFocus — set right before the one .focus() call below and
+  // consumed by the next focus event, whichever it is.
+  const suppressComposerOpenRef = React.useRef(false);
 
   const accountLabel = React.useCallback(
     (accountId: string) => accounts.find((a) => a.id === accountId)?.name ?? accountId,
@@ -369,7 +385,7 @@ function MemoryStrip({
       .map(([accountId, entries]) => ({
         key: accountId,
         label: accountLabel(accountId),
-        color: accountColor(accountId) ?? "#616161",
+        color: accountColor(accountId) ?? UNASSIGNED_ACCOUNT_COLOR,
         general: false as const,
         entries,
       }))
@@ -421,6 +437,7 @@ function MemoryStrip({
       await api.addMemory(content, accountId);
       setComposerOpen(false);
       await refresh();
+      suppressComposerOpenRef.current = true;
       composerInputRef.current?.focus();
     } catch (err) {
       toast.error(errorMessage(err));
@@ -436,7 +453,7 @@ function MemoryStrip({
     <Card as="section" padding="lg" className="flex flex-col gap-4">
       <SectionHead
         icon={Brain}
-        tone="bg-accent/15 text-accent"
+        tone="tint-accent"
         title={t("knowledge.sections.memory.title")}
         count={loading ? null : memories.length}
       >
@@ -486,7 +503,7 @@ function MemoryStrip({
                 active={filter === a.id}
                 // Same grey the row dot and ColorPicker fall back to for an
                 // account with no color assigned — never no dot at all.
-                color={accountColor(a.id) ?? "#616161"}
+                color={accountColor(a.id) ?? UNASSIGNED_ACCOUNT_COLOR}
                 onClick={() => toggleAccountFilter(a.id)}
                 // Group sub-headers carry the full address, so the chip can
                 // afford the short local part.
@@ -519,7 +536,13 @@ function MemoryStrip({
             <Input
               ref={composerInputRef}
               value=""
-              onFocus={() => setComposerOpen(true)}
+              onFocus={() => {
+                if (suppressComposerOpenRef.current) {
+                  suppressComposerOpenRef.current = false;
+                  return;
+                }
+                setComposerOpen(true);
+              }}
               readOnly
               placeholder={t("memory.addPlaceholder")}
               aria-label={t("memory.addPlaceholder")}
@@ -804,7 +827,7 @@ function MemoryEditor({
             <MemoryFilterChip
               key={a.id}
               active={scope === a.id}
-              color={accountColor(a.id) ?? "#616161"}
+              color={accountColor(a.id) ?? UNASSIGNED_ACCOUNT_COLOR}
               onClick={() => setScope(a.id)}
               title={a.name}
             >
@@ -936,7 +959,7 @@ function MemoryRow({
               aria-label={t("knowledge.sections.memory.filterAccountHint", { name: accountLabel })}
               data-tooltip={t("knowledge.sections.memory.filterAccountHint", { name: accountLabel })}
               className="h-2.5 w-2.5 shrink-0 rounded-full"
-              style={{ backgroundColor: (entry.accountId && resolveColor(entry.accountId)) ?? "#616161" }}
+              style={{ backgroundColor: (entry.accountId && resolveColor(entry.accountId)) ?? UNASSIGNED_ACCOUNT_COLOR }}
             />
           ) : (
             // Global entry, but others on the strip are scoped — give it a real
@@ -1052,12 +1075,15 @@ function LibrarySection({ focusId }: { focusId: string | null }) {
 
   React.useEffect(() => {
     const trimmed = query.trim();
+    // Set synchronously, not just inside the timeout below: this is also what
+    // invalidates a still-in-flight older request the instant the query moves
+    // on, whether it moves on to a new query or back to empty.
+    lastSearchedRef.current = trimmed;
     if (!trimmed) {
       setContentHits([]);
       return;
     }
     const timer = setTimeout(() => {
-      lastSearchedRef.current = trimmed;
       api
         .searchLibrary(trimmed)
         .then((res) => {
@@ -1615,7 +1641,7 @@ function DocumentTile({
           )}
 
           {snippet && !failed && (
-            <span className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-muted-foreground/80">
+            <span className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-muted-foreground/70">
               {snippet}
             </span>
           )}

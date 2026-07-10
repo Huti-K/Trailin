@@ -100,8 +100,8 @@ export function DraftRow({
       onDeleted();
     } catch (err) {
       onError(errorMessage(err));
-      setBusy(false);
     } finally {
+      setBusy(false);
       setConfirmOpen(false);
     }
   };

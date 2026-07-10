@@ -2,8 +2,9 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { AgentCard, ConnectedAccount } from "@trailin/shared";
 import { toCardAccount } from "../agent/cards.js";
 import { getAccountDescriptions } from "../db/settings.js";
-import { gmailDraftProvider } from "../pipedream/gmailDrafts.js";
+import { snippetFrom } from "../email/textUtils.js";
 import { accountSlug, buildDraftTool, type EmailToolset } from "../pipedream/mcp.js";
+import { demoDraftProvider } from "./demoDrafts.js";
 import { getDemoAccounts } from "./accounts.js";
 import { daysAgo } from "./content.js";
 import { MAILBOX, resolveThread, type DemoEmailMessage, type DemoThread } from "./mailbox.js";
@@ -38,7 +39,10 @@ interface ParsedQuery {
   olderThanDays?: number;
 }
 
-const QUERY_TOKEN_RE = /"[^"]*"|\S+/g;
+// An operator+quoted-value token (from:"Thomas Brandt") must be kept
+// together — without the first alternative, the tokenizer would split it at
+// the space inside the quotes and neither half could ever match.
+const QUERY_TOKEN_RE = /[a-zA-Z_]+:"[^"]*"|"[^"]*"|\S+/g;
 const DAY_SUFFIX_RE = /^(\d+)d$/;
 
 function unquote(value: string): string {
@@ -131,8 +135,7 @@ function searchMailbox(
 }
 
 function formatSnippet(body: string): string {
-  const collapsed = body.replace(/\s+/g, " ").trim();
-  return collapsed.length > SNIPPET_LENGTH ? `${collapsed.slice(0, SNIPPET_LENGTH).trimEnd()}…` : collapsed;
+  return snippetFrom(body, SNIPPET_LENGTH);
 }
 
 function formatHit(hit: MatchedMessage): string {
@@ -299,7 +302,7 @@ export async function buildDemoEmailToolset(): Promise<EmailToolset> {
     const findTool = buildFindEmailTool(account, slug, purpose);
     const getThreadTool = buildGetThreadTool(account, slug, purpose);
     // Never in readTools: background delegate workers must not create drafts.
-    const draftTool = buildDraftTool(account, `gmail-create-draft__${slug}`, gmailDraftProvider);
+    const draftTool = buildDraftTool(account, `gmail-create-draft__${slug}`, demoDraftProvider);
 
     tools.push(findTool, getThreadTool, draftTool);
     readTools.push(findTool, getThreadTool);

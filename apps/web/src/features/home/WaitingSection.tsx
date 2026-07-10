@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import type { AccountColor, AccountWaiting } from "@trailin/shared";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { UNASSIGNED_ACCOUNT_COLOR } from "@/lib/utils";
 
 /**
  * "Waiting on others" — sent threads nobody has replied to yet, flattened
@@ -59,7 +60,7 @@ export function WaitingSection({
         onClick={() => setIsExpanded(!isExpanded)}
         title={isExpanded ? "Collapse" : "Expand"}
       >
-        <div className="flex h-7 w-7 items-center justify-center rounded-md bg-accent/15 text-accent">
+        <div className="tint-accent flex h-7 w-7 items-center justify-center rounded-md">
           <Hourglass className="h-4 w-4" />
         </div>
         {t("home.waitingTitle")}
@@ -84,7 +85,7 @@ export function WaitingSection({
                 style={{
                   backgroundColor:
                     colors.find((c) => c.accountId === item.accountId)?.hex ??
-                    "var(--muted-foreground)",
+                    UNASSIGNED_ACCOUNT_COLOR,
                 }}
               />
               <div className="min-w-0 flex-1">

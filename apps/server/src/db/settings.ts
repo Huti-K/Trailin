@@ -140,7 +140,7 @@ export interface DemoDraftRecord {
 /** Demo drafts, keyed by the fake account id — seeded once, then edited via deletes. */
 export type DemoDraftStore = Record<string, DemoDraftRecord[]>;
 
-/** Fake Gmail drafts for demo mode (see pipedream/gmailDrafts.ts), keyed by account id. */
+/** Fake Gmail drafts for demo mode (see email/gmailDrafts.ts), keyed by account id. */
 export async function getDemoDraftStore(): Promise<DemoDraftStore> {
   const raw = await getSetting(DEMO_DRAFTS_SETTING_KEY);
   if (!raw) return {};

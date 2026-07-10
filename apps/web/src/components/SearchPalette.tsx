@@ -18,6 +18,7 @@ import type { AccountColor, ConnectedAccount, SearchResult } from "@trailin/shar
 import { api } from "@/lib/api";
 import { dateTimeLabel } from "@/lib/dates";
 import { NAV_ITEMS, type NavItem } from "@/lib/nav";
+import { setPendingDraftFocus, setPendingKnowledgeFocus } from "@/lib/paletteFocus";
 import { Chip } from "@/components/ui/chip";
 import { IconButton } from "@/components/ui/icon-button";
 import { cn, MOD_LABEL } from "@/lib/utils";
@@ -332,11 +333,15 @@ export function SearchPalette() {
       window.dispatchEvent(new CustomEvent("trailin:open-chat", { detail: hit.id }));
       window.dispatchEvent(new CustomEvent("trailin:show-chat"));
     } else if (hit.type === "draft") {
+      // Stashed before navigate: HomePanel may not be mounted yet to catch the
+      // CustomEvent below (see lib/paletteFocus.ts).
+      if (hit.accountId) setPendingDraftFocus({ accountId: hit.accountId, draftId: hit.id });
       navigate("/");
       window.dispatchEvent(
         new CustomEvent("trailin:open-draft", { detail: { accountId: hit.accountId, draftId: hit.id } }),
       );
     } else {
+      setPendingKnowledgeFocus({ type: hit.type, id: hit.id });
       navigate("/knowledge");
       window.dispatchEvent(new CustomEvent("trailin:open-knowledge", { detail: { type: hit.type, id: hit.id } }));
     }
@@ -436,7 +441,7 @@ export function SearchPalette() {
               autoComplete="off"
               autoCorrect="off"
               spellCheck={false}
-              className="h-14 w-full min-w-0 bg-transparent text-base outline-none placeholder:text-muted-foreground/80"
+              className="h-14 w-full min-w-0 bg-transparent text-base outline-none placeholder:text-muted-foreground"
             />
             {query ? (
               <IconButton
@@ -539,7 +544,7 @@ export function SearchPalette() {
             </aside>
           </div>
 
-          <div className="flex h-9 shrink-0 items-center gap-4 bg-surface-2/50 px-4 text-[11px] text-muted-foreground/80">
+          <div className="flex h-9 shrink-0 items-center gap-4 bg-surface-2/50 px-4 text-[11px] text-muted-foreground/70">
             <span className="flex items-center gap-1.5">
               <span className="flex gap-0.5">
                 <Kbd>↑</Kbd>
@@ -603,13 +608,13 @@ function PaletteRow({ entry, index, active, query, language, navTitle, colorFor,
       onClick={onSelect}
       className={cn(
         "flex w-full scroll-mb-2 scroll-mt-9 items-center gap-3 rounded-lg px-2.5 py-2 text-left transition-colors",
-        active ? "bg-accent/12" : "hover:bg-secondary",
+        active ? "bg-accent/10" : "hover:bg-secondary",
       )}
     >
       <span
         className={cn(
           "flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors",
-          active ? "bg-accent/15 text-accent" : "bg-surface-2 text-muted-foreground",
+          active ? "tint-accent" : "tint-neutral",
         )}
       >
         <Icon className="h-[15px] w-[15px]" />

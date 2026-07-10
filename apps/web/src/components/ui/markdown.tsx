@@ -3,6 +3,7 @@ import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useTranslation } from "react-i18next";
 import { Mail } from "lucide-react";
+import { isMailboxUrl } from "@/lib/mailboxLinks";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 
@@ -12,7 +13,7 @@ const components: Components = {
   a: ({ children, href, ...props }) => {
     const { t } = useTranslation();
 
-    if (href?.includes("mail.google.com")) {
+    if (isMailboxUrl(href)) {
       return (
         <a
           {...props}
@@ -36,8 +37,14 @@ const components: Components = {
           onClick={(e) => {
             e.preventDefault();
             const email = href.replace("mailto:", "");
-            navigator.clipboard.writeText(email);
-            toast.success(t("markdown.copiedToClipboard", { email }));
+            if (!navigator.clipboard) {
+              toast.error(t("markdown.copyFailed", { email }));
+              return;
+            }
+            navigator.clipboard
+              .writeText(email)
+              .then(() => toast.success(t("markdown.copiedToClipboard", { email })))
+              .catch(() => toast.error(t("markdown.copyFailed", { email })));
           }}
           className="font-medium text-accent underline decoration-accent/30 underline-offset-4 transition-colors hover:decoration-accent"
           title={t("markdown.copyEmailAddress")}
@@ -60,17 +67,17 @@ const components: Components = {
     );
   },
   ul: ({ children }) => <ul className="my-2 ml-5 list-disc space-y-1.5 marker:text-accent/80">{children}</ul>,
-  ol: ({ children }) => <ol className="my-2 ml-5 list-decimal space-y-1.5 marker:text-muted-foreground/80">{children}</ol>,
+  ol: ({ children }) => <ol className="my-2 ml-5 list-decimal space-y-1.5 marker:text-muted-foreground/70">{children}</ol>,
   li: ({ children }) => <li className="leading-relaxed text-foreground/90 pl-1">{children}</li>,
   h1: ({ children }) => <h1 className="mt-6 mb-3 text-xl font-semibold tracking-tight text-foreground">{children}</h1>,
   h2: ({ children }) => <h2 className="mt-5 mb-2 text-lg font-semibold tracking-tight text-foreground">{children}</h2>,
   h3: ({ children }) => <h3 className="mt-4 mb-2 text-base font-semibold tracking-tight text-foreground">{children}</h3>,
   blockquote: ({ children }) => (
-    <blockquote className="my-3 border-l-2 border-muted-foreground/30 pl-4 text-[0.95em] text-muted-foreground italic">
+    <blockquote className="my-3 border-l-2 border-border pl-4 text-[0.95em] text-muted-foreground italic">
       {children}
     </blockquote>
   ),
-  hr: () => <hr className="my-6 border-border/40" />,
+  hr: () => <hr className="my-6 border-border" />,
   code: ({ children, ...props }) => (
     <code className="rounded bg-surface-2/60 px-1.5 py-0.5 font-mono text-[0.85em] text-foreground/80" {...props}>
       {children}
@@ -87,10 +94,10 @@ const components: Components = {
     </div>
   ),
   th: ({ children }) => (
-    <th className="border-b border-muted-foreground/20 px-3 py-2 font-medium text-muted-foreground">{children}</th>
+    <th className="border-b border-border px-3 py-2 font-medium text-muted-foreground">{children}</th>
   ),
   td: ({ children }) => (
-    <td className="border-b border-muted-foreground/10 px-3 py-2 align-top">{children}</td>
+    <td className="border-b border-border px-3 py-2 align-top">{children}</td>
   ),
 };
 

@@ -261,7 +261,7 @@ function SetupWizard({
         {GUIDE_STEPS.map((step, i) => (
           <li key={step.key} className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2.5">
-              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-accent/10 text-[11px] font-semibold text-accent">
+              <span className="tint-accent flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold">
                 {i + 1}
               </span>
               <p className="text-xs text-muted-foreground">{t(`connections.${step.key}`)}</p>

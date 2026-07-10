@@ -35,6 +35,20 @@ export const notConfigured = (message: string): AppError => new AppError(message
 export const upstreamError = (message: string, cause?: unknown): AppError =>
   new AppError(message, 502, { cause });
 
+/**
+ * Duck-typed HTTP status off whatever an upstream SDK call threw — e.g.
+ * PipedreamError from @pipedream/sdk, which every mail-provider driver's
+ * calls (through pipedream/connect.ts's proxyRequest) ultimately throw.
+ * Lets a route tell "that id doesn't exist upstream" (404) apart from a real
+ * outage before deciding between notFound and upstreamError. Undefined when
+ * the thrown value carries no numeric statusCode.
+ */
+export function upstreamStatusCode(error: unknown): number | undefined {
+  if (typeof error !== "object" || error === null) return undefined;
+  const status = (error as { statusCode?: unknown }).statusCode;
+  return typeof status === "number" ? status : undefined;
+}
+
 /** The `{ error }` envelope every non-2xx API response uses. `requestId` ties it to the logs. */
 export interface ErrorResponse {
   error: string;

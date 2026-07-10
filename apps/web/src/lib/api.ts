@@ -2,7 +2,6 @@ import type {
   AccountColor,
   AccountDescription,
   AccountDrafts,
-  AccountVoice,
   AccountWaiting,
   AppStatus,
   Automation,
@@ -89,16 +88,6 @@ export const api = {
     http<{ descriptions: AccountDescription[] }>("PUT", "/api/settings/account-descriptions", {
       descriptions,
     }),
-  accountVoices: () => get<{ voices: AccountVoice[] }>("/api/settings/account-voices"),
-  saveAccountVoices: (voices: AccountVoice[]) =>
-    http<{ voices: AccountVoice[] }>("PUT", "/api/settings/account-voices", { voices }),
-  // Long-running (30-90s): the server reads the account's sent mail and derives
-  // a signature + style notes.
-  learnAccountVoice: (accountId: string) =>
-    http<{ voice: AccountVoice }>(
-      "POST",
-      `/api/settings/account-voices/${encodeURIComponent(accountId)}/learn`,
-    ),
 
   llmProviders: () => get<LlmProviderInfo[]>("/api/llm/providers"),
   modelSettings: () => get<ModelSettings>("/api/llm/model"),
@@ -127,7 +116,7 @@ export const api = {
   pipedreamConnectToken: (app: string) =>
     http<ConnectTokenResponse>("POST", "/api/pipedream/accounts/connect-token", { app }),
   deletePipedreamAccount: (id: string) =>
-    http<{ ok: boolean }>("DELETE", `/api/pipedream/accounts/${id}`),
+    http<{ ok: boolean }>("DELETE", `/api/pipedream/accounts/${encodeURIComponent(id)}`),
 
   /** Global search across chats, digests, drafts, documents and memories (command palette). */
   search: (q: string) => get<{ results: SearchResult[] }>(`/api/search?q=${encodeURIComponent(q)}`),
@@ -146,16 +135,25 @@ export const api = {
   drafts: (opts?: { refresh?: boolean }) =>
     get<AccountDrafts[]>(`/api/drafts${opts?.refresh ? "?refresh=1" : ""}`),
   draftDetail: (accountId: string, draftId: string) =>
-    get<{ body: string; cc: string; bcc: string }>(`/api/drafts/${accountId}/${draftId}`),
+    get<{ body: string; cc: string; bcc: string }>(
+      `/api/drafts/${encodeURIComponent(accountId)}/${encodeURIComponent(draftId)}`,
+    ),
   deleteDraft: (accountId: string, draftId: string) =>
-    http<{ ok: boolean }>("DELETE", `/api/drafts/${accountId}/${draftId}`),
+    http<{ ok: boolean }>(
+      "DELETE",
+      `/api/drafts/${encodeURIComponent(accountId)}/${encodeURIComponent(draftId)}`,
+    ),
   // No humanizer/signature — saves exactly what the caller passed.
   updateDraft: (accountId: string, draftId: string, patch: { body?: string; subject?: string }) =>
-    http<{ ok: boolean }>("PATCH", `/api/drafts/${accountId}/${draftId}`, patch),
+    http<{ ok: boolean }>(
+      "PATCH",
+      `/api/drafts/${encodeURIComponent(accountId)}/${encodeURIComponent(draftId)}`,
+      patch,
+    ),
   /** `excludeMessageId` drops the draft's own message — Gmail counts it as part of the thread. */
   draftThread: (accountId: string, threadId: string, excludeMessageId?: string) =>
     get<EmailThread>(
-      `/api/threads/${accountId}/${threadId}${
+      `/api/threads/${encodeURIComponent(accountId)}/${encodeURIComponent(threadId)}${
         excludeMessageId ? `?excludeMessageId=${encodeURIComponent(excludeMessageId)}` : ""
       }`,
     ),
@@ -183,13 +181,15 @@ export const api = {
   createAutomation: (body: { name: string; instruction: string; schedule: string; showInActivity?: boolean }) =>
     http<Automation>("POST", "/api/automations", body),
   updateAutomation: (id: string, body: Partial<Automation>) =>
-    http<Automation>("PATCH", `/api/automations/${id}`, body),
+    http<Automation>("PATCH", `/api/automations/${encodeURIComponent(id)}`, body),
   // Setting pinned true unpins every other automation server-side (exactly one may lead Home).
   setAutomationPinned: (id: string, pinned: boolean) =>
-    http<Automation>("PATCH", `/api/automations/${id}`, { pinned }),
-  deleteAutomation: (id: string) => http<{ ok: boolean }>("DELETE", `/api/automations/${id}`),
-  runAutomation: (id: string) => http<{ ok: boolean }>("POST", `/api/automations/${id}/run`),
-  automationRuns: (id: string) => get<AutomationRun[]>(`/api/automations/${id}/runs`),
+    http<Automation>("PATCH", `/api/automations/${encodeURIComponent(id)}`, { pinned }),
+  deleteAutomation: (id: string) =>
+    http<{ ok: boolean }>("DELETE", `/api/automations/${encodeURIComponent(id)}`),
+  runAutomation: (id: string) =>
+    http<{ ok: boolean }>("POST", `/api/automations/${encodeURIComponent(id)}/run`),
+  automationRuns: (id: string) => get<AutomationRun[]>(`/api/automations/${encodeURIComponent(id)}/runs`),
 
   memories: () => get<MemoryEntry[]>("/api/memories"),
   // `accountId` is only sent when the caller passes it explicitly — omitting it
@@ -203,10 +203,11 @@ export const api = {
   updateMemory: (id: string, content: string, accountId?: string | null) =>
     http<MemoryEntry>(
       "PUT",
-      `/api/memories/${id}`,
+      `/api/memories/${encodeURIComponent(id)}`,
       accountId !== undefined ? { content, accountId } : { content },
     ),
-  deleteMemory: (id: string) => http<{ ok: boolean }>("DELETE", `/api/memories/${id}`),
+  deleteMemory: (id: string) =>
+    http<{ ok: boolean }>("DELETE", `/api/memories/${encodeURIComponent(id)}`),
 
   library: () => get<LibraryStatus>("/api/library"),
   setLibraryFolder: (folder: string) =>
@@ -216,7 +217,7 @@ export const api = {
   pickLibraryFolder: () =>
     http<LibraryStatus | { canceled: true }>("POST", "/api/library/folder/pick"),
   deleteLibraryDocument: (id: string) =>
-    http<LibraryStatus>("DELETE", `/api/library/documents/${id}`),
+    http<LibraryStatus>("DELETE", `/api/library/documents/${encodeURIComponent(id)}`),
   searchLibrary: (q: string) =>
     get<{ results: LibrarySearchHit[] }>(`/api/library/search?q=${encodeURIComponent(q)}`),
   // Raw file body (not JSON), so this bypasses the `http` helper.
@@ -232,6 +233,10 @@ export const api = {
   /** Open a library document in a new browser tab (or trigger a download). */
   openLibraryDocument: (id: string): void => {
     window.open(`/api/library/documents/${encodeURIComponent(id)}/open`, "_blank");
+  },
+  /** Download a SQLite snapshot of the local database (streamed as an attachment). */
+  downloadBackup: (): void => {
+    window.open("/api/backup", "_blank");
   },
 };
 
@@ -250,6 +255,8 @@ export async function streamChat(
     body: JSON.stringify(body),
     signal,
   });
+  // A refused turn (e.g. 409 while this conversation is still replying) answers
+  // with the plain `{ error }` envelope rather than the SSE stream.
   await throwOnError(res);
   if (!res.body) throw new Error("The chat response did not include a stream.");
 

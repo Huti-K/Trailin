@@ -227,7 +227,9 @@
     "colorPresets": "Color presets",
     "advanced": "Advanced",
     "advancedBuiltin": "Built-in Pipedream",
-    "advancedCustom": "Own Pipedream project"
+    "advancedCustom": "Own Pipedream project",
+    "editNote": "Edit note",
+    "notePlaceholder": "What this account is for — the agent reads this note"
   },
   "home": {
     "setupBanner": "Trailin isn't fully set up, the agent can't reach your mail yet.",
@@ -437,6 +439,10 @@
         "title": "Preferences",
         "description": "How Trailin looks, speaks, and tells time."
       },
+      "data": {
+        "title": "Local data",
+        "description": "Everything Trailin has stored on this computer, and how to back it up."
+      },
       "language": {
         "title": "Language",
         "description": "Used for the app and for the assistant's answers, in chat and in automations."
@@ -469,6 +475,11 @@
       "label": "Timezone",
       "description": "Automations run and times are shown in this timezone",
       "localTime": "Local time {{time}}"
+    },
+    "backup": {
+      "label": "Backup",
+      "description": "A snapshot of the local database — chats, drafts, memories, and automations, but not your connected accounts' credentials.",
+      "cta": "Download"
     },
     "provider": "Provider",
     "model": "Model",
@@ -503,7 +514,8 @@
   "markdown": {
     "openInMailbox": "Open in mailbox",
     "copyEmailAddress": "Copy email address",
-    "copiedToClipboard": "Copied {{email}} to clipboard"
+    "copiedToClipboard": "Copied {{email}} to clipboard",
+    "copyFailed": "Couldn't copy {{email}} — copy it manually"
   },
   "errorBoundary": {
     "title": "Something went wrong",

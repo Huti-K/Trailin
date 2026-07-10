@@ -15,7 +15,7 @@ export function SectionHeader({
     <div className="flex flex-col gap-1.5">
       <h2 className="flex items-center gap-2 text-base font-semibold tracking-tight text-foreground">
         {icon ? (
-          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-accent/10 text-accent [&_svg]:h-3.5 [&_svg]:w-3.5">
+          <span className="tint-accent flex h-6 w-6 shrink-0 items-center justify-center rounded-md [&_svg]:h-3.5 [&_svg]:w-3.5">
             {icon}
           </span>
         ) : (

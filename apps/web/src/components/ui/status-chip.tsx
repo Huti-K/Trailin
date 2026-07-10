@@ -2,9 +2,9 @@ import * as React from "react";
 import { cn } from "@/lib/utils";
 
 const TONE = {
-  success: "bg-success/15 text-success",
-  warning: "bg-warning/15 text-warning",
-  muted: "bg-muted-foreground/10 text-muted-foreground",
+  success: "tint-success",
+  warning: "tint-warning",
+  muted: "tint-neutral",
 } as const;
 
 /** Small pill for a section header's status — icons are sized here, callers don't need to. */

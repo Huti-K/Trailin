@@ -42,7 +42,7 @@ export interface DemoThread {
 /**
  * Resolve a threadId, or a messageId of the form "<threadId>-mN", to its
  * DemoThread. Shared by demo/emailTools.ts's gmail-get-thread tool and
- * pipedream/gmailDrafts.ts's getGmailThread (demo path), so a draft's thread
+ * demo/demoDrafts.ts's getThread, so a draft's thread
  * link resolves identically whether the agent or the drafts UI reads it.
  */
 export function resolveThread(threads: DemoThread[], id: string): DemoThread | undefined {

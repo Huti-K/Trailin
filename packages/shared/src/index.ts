@@ -522,9 +522,22 @@ export function formatFileSize(bytes: number): string {
 }
 
 /** Topics broadcast over GET /api/events when server-side data changes. */
+/**
+ * Lifecycle triage of a mail thread relative to the user, as the enrichment
+ * pipeline (server: email/enrich/) judged it. Orthogonal to urgency: triage
+ * says WHO the ball is with, urgency says how hot it is.
+ */
+export const THREAD_TRIAGES = ["needs_reply", "needs_action", "waiting_on", "fyi", "done"] as const;
+export type ThreadTriage = (typeof THREAD_TRIAGES)[number];
+
+export const THREAD_URGENCIES = ["high", "normal", "low"] as const;
+export type ThreadUrgency = (typeof THREAD_URGENCIES)[number];
+
 export type ServerEventTopic =
   | "runs"           // automation run started/finished (activity feed, run history)
   | "drafts"         // a Gmail draft was created or deleted
+  | "mail"           // the local mailbox mirror changed (messages synced/updated/removed)
+  | "mail_state"     // enrichment updated thread summaries/triage (email/enrich/)
   | "memories"       // agent memory saved/updated/deleted
   | "library"        // library document written/changed
   | "conversations"  // chat/automation conversation list changed

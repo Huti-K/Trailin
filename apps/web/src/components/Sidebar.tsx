@@ -68,7 +68,7 @@ export function Sidebar({ status, onClose, isCollapsed, onCollapsedChange }: Sid
                 "group relative flex items-center gap-3 rounded-lg py-2 text-sm font-medium transition-colors",
                 isCollapsed ? "md:px-0 md:w-10 md:justify-center px-3" : "px-3",
                 isActive
-                  ? "bg-accent/12 text-accent"
+                  ? "tint-accent"
                   : "text-muted-foreground hover:bg-secondary hover:text-foreground",
               )}
             >
@@ -98,7 +98,7 @@ export function Sidebar({ status, onClose, isCollapsed, onCollapsedChange }: Sid
                   "group relative flex items-center gap-3 rounded-lg py-2 text-sm font-medium transition-colors",
                   isCollapsed ? "md:px-0 md:w-10 md:justify-center px-3" : "px-3",
                   isActive
-                    ? "bg-accent/12 text-accent"
+                    ? "tint-accent"
                     : "text-muted-foreground hover:bg-secondary hover:text-foreground",
                 )}
               >

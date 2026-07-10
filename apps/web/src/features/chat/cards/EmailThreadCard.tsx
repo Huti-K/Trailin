@@ -18,6 +18,15 @@ export function EmailThreadCard({ card, color }: { card: EmailThreadData; color?
   const [openIndexes, setOpenIndexes] = React.useState<Set<number>>(
     () => new Set(lastIndex >= 0 ? [lastIndex] : []),
   );
+  // A retried tool call replaces this card's `messages` in place, reusing this
+  // same component instance (ChatPanel's "card" handler and turnCards.ts both
+  // key by toolCallId). Re-derive which message is open whenever the array
+  // itself changes, not just once on mount.
+  const [trackedMessages, setTrackedMessages] = React.useState(messages);
+  if (messages !== trackedMessages) {
+    setTrackedMessages(messages);
+    setOpenIndexes(new Set(lastIndex >= 0 ? [lastIndex] : []));
+  }
 
   const toggle = (index: number) => {
     setOpenIndexes((prev) => {

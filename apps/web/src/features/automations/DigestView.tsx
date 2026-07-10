@@ -320,7 +320,7 @@ export function DigestView({
       {parsed.otherMarkdown && (
         <Markdown
           content={parsed.otherMarkdown}
-          className="border-t border-border/50 pt-3 text-sm text-muted-foreground"
+          className="border-t border-border pt-3 text-sm text-muted-foreground"
         />
       )}
     </div>

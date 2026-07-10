@@ -3,10 +3,13 @@ import type { AccountVoice } from "@trailin/shared";
 import { createMemory, deleteMemory, listMemories } from "../db/memories.js";
 import { getAccountVoices, setAccountVoices } from "../db/settings.js";
 import { modelRegistry, resolveActiveModel } from "../llm/registry.js";
+import { moduleLogger } from "../logger.js";
 import { listAccounts } from "../pipedream/connect.js";
 import { loadEmailTools } from "../pipedream/mcp.js";
 import { errorMessage } from "../util.js";
 import { runPrompt } from "./run.js";
+
+const log = moduleLogger("voiceLearn");
 
 /**
  * Learns an account's writing voice from its own sent mail: a one-shot
@@ -80,6 +83,31 @@ function parseLearnedVoice(raw: string): LearnedVoice {
 }
 
 /**
+ * Runtime guard for the report_style tool's call. The JSON schema below only
+ * constrains what the model is told to send, not what actually arrives —
+ * this throws (the AgentTool contract: "throw on failure instead of
+ * encoding errors in content") on anything malformed, so a bad call fails
+ * the tool call itself before learnAccountVoice ever touches persistence.
+ */
+function validateReportStyleParams(value: unknown): LearnedVoice {
+  if (typeof value !== "object" || value === null) {
+    throw new Error("report_style: params must be an object with style and signature.");
+  }
+  const v = value as Record<string, unknown>;
+  if (!Array.isArray(v.style) || v.style.length === 0) {
+    throw new Error("report_style: style must be a non-empty array of style directives.");
+  }
+  const style = v.style.map((entry) => (typeof entry === "string" ? entry.trim() : ""));
+  if (style.some((entry) => !entry)) {
+    throw new Error("report_style: every style entry must be a non-empty string.");
+  }
+  if (typeof v.signature !== "string") {
+    throw new Error('report_style: signature must be a string (use "" if there is none).');
+  }
+  return { style, signature: v.signature };
+}
+
+/**
  * The worker's structured-output tool: instead of parsing prose, it hands its
  * findings straight to `onReport` as validated params. `terminate: true`
  * tells the agent loop to stop after this tool batch rather than start
@@ -117,7 +145,7 @@ function buildReportStyleTool(onReport: (report: LearnedVoice) => void): AgentTo
       required: ["style", "signature"],
     } as AgentTool["parameters"],
     execute: async (_id, params) => {
-      const report = params as LearnedVoice;
+      const report = validateReportStyleParams(params);
       onReport(report);
       return {
         content: [{ type: "text", text: "Style report recorded." }],
@@ -166,10 +194,12 @@ export async function learnAccountVoice(accountId: string): Promise<AccountVoice
   const voices = await getAccountVoices();
   const existing = voices.find((v) => v.accountId === accountId);
 
-  // Replace the previous learn run's style directives, not any memory the
-  // user wrote by hand — deleteMemory is a no-op for ids already gone.
-  for (const id of existing?.styleMemoryIds ?? []) await deleteMemory(id);
-
+  // Write-then-delete: create the new style memories and persist the voice
+  // record pointing at them FIRST, and only then delete the previous learn
+  // run's memories. Deleting first (the old order) meant a mid-run failure,
+  // or a directive silently skipped below, could leave the account with
+  // fewer/no style directives and styleMemoryIds pointing at nothing — an
+  // orphaned old memory is recoverable by hand, a lost voice is not.
   const styleMemoryIds: string[] = [];
   for (const directive of learned.style) {
     const trimmed = directive.trim();
@@ -196,6 +226,22 @@ export async function learnAccountVoice(accountId: string): Promise<AccountVoice
   const index = voices.findIndex((v) => v.accountId === accountId);
   const updated = index >= 0 ? voices.map((v, i) => (i === index ? next : v)) : [...voices, next];
   await setAccountVoices(updated);
+
+  // Only now replace the previous learn run's style directives, not any
+  // memory the user wrote by hand — deleteMemory is a no-op for ids already
+  // gone. Skip any id a dedup hit above reused for the new voice, and don't
+  // let one bad delete abort the rest: the fresh voice above is already
+  // saved either way, so a failure here just orphans a memory (recoverable
+  // in Settings) rather than losing the voice.
+  for (const id of existing?.styleMemoryIds ?? []) {
+    if (styleMemoryIds.includes(id)) continue;
+    try {
+      await deleteMemory(id);
+    } catch (error) {
+      log.warn({ err: error, accountId, memoryId: id }, "failed to delete old style memory");
+    }
+  }
+
   return next;
 }
 

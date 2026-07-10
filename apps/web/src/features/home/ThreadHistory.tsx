@@ -30,7 +30,7 @@ export function ThreadHistory({ messages }: { messages: EmailThreadMessage[] }) 
 
   return (
     // A left rule, not a card — this is context for the draft below it, not content of its own.
-    <div className="flex flex-col gap-0.5 border-l-2 border-border/60 pl-3">
+    <div className="flex flex-col gap-0.5 border-l-2 border-border pl-3">
       {messages.map((message, index) => (
         <ThreadMessageRow
           key={index}

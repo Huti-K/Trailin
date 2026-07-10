@@ -49,6 +49,7 @@ export function BriefingHero({
   runs,
   onNavigate,
   nextRunAt,
+  colors,
 }: {
   run: RunFeedItem;
   /** Full runs feed, used only to detect an already in-flight re-run of this automation. */
@@ -56,19 +57,13 @@ export function BriefingHero({
   onNavigate: (view: View) => void;
   /** Next scheduled run of this automation (Automation.nextRunAt), shown when this run isn't from today. */
   nextRunAt?: string | null;
+  /** HomePanel already fetches and caches these — no need for BriefingHero to fetch its own. */
+  colors: AccountColor[];
 }) {
   const { t, i18n } = useTranslation();
   const [expanded, setExpanded] = React.useState(true);
   const [refreshing, setRefreshing] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
-  const [colors, setColors] = React.useState<AccountColor[]>([]);
-
-  React.useEffect(() => {
-    api
-      .accountColors()
-      .then((r) => setColors(r.colors))
-      .catch(() => {});
-  }, []);
 
   const briefingCard = React.useMemo(() => findBriefingCard(run), [run]);
   const urgentCount = React.useMemo(() => countUrgentItems(run), [run]);
@@ -132,7 +127,7 @@ export function BriefingHero({
         onClick={() => setExpanded(!expanded)}
       >
         <div className="flex min-w-0 items-center gap-2.5">
-          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-accent/15 text-accent">
+          <div className="tint-accent flex h-7 w-7 shrink-0 items-center justify-center rounded-md">
             <Sunrise className="h-4 w-4" />
           </div>
           <div className="flex min-w-0 flex-col">
@@ -180,7 +175,7 @@ export function BriefingHero({
       {error && <ErrorBanner>{error}</ErrorBanner>}
 
       {expanded && (
-        <div className="mt-1 border-t border-border/40 pt-3">
+        <div className="mt-1 border-t border-border pt-3">
           {briefingCard ? (
             <BriefingCard card={briefingCard} colors={colors} />
           ) : (

@@ -2,6 +2,7 @@ import type { Agent } from "@earendil-works/pi-agent-core";
 import type { AgentCard } from "@trailin/shared";
 import { moduleLogger } from "../logger.js";
 import { parseAgentCard } from "./cards.js";
+import { maybeCompact } from "./compaction.js";
 
 /**
  * The slice of pino's Logger a turn needs. Spelling out the narrow shape lets
@@ -114,6 +115,10 @@ export async function runPrompt(
   signal?.addEventListener("abort", onAbort);
 
   try {
+    // Trim the transcript in advance if it's nearing the model's context
+    // window — fails open (never throws), so a compaction hiccup can't sink
+    // the turn itself.
+    await maybeCompact(session.agent, log);
     await session.agent.prompt(prompt);
   } finally {
     signal?.removeEventListener("abort", onAbort);

@@ -2,15 +2,10 @@ import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { desc, eq, inArray, or, sql } from "drizzle-orm";
 import type { ChatStreamEvent, ChatToolCall } from "@trailin/shared";
-import { db, schema } from "../db/index.js";
+import { db, schema, sqlite } from "../db/index.js";
 import { parseStoredCards } from "../agent/cards.js";
-import {
-  buildSystemPrompt,
-  disposeSession,
-  getOrCreateSession,
-  runPrompt,
-} from "../agent/emailAgent.js";
-import { collectTurnCards, serializeTurnCards } from "../agent/turnCards.js";
+import { buildSystemPrompt, disposeSession } from "../agent/emailAgent.js";
+import { beginTurn, TurnInFlightError, type Turn } from "../agent/turnRecorder.js";
 import { emitServerEvent } from "../events.js";
 import { errorMessage, escapeLikeInput, likePattern } from "../util.js";
 
@@ -19,8 +14,23 @@ interface ChatBody {
   message: string;
 }
 
-/** In-flight turns, used by the history rail's live working indicator. */
+// Conversation ids with a visibly in-flight turn, purely for the history
+// rail's live "responding…" indicator (the `running` flag below). This is
+// deliberately separate from the correctness guard in agent/turnRecorder.ts
+// (beginTurn/TurnInFlightError): that guard exists so a second overlapping
+// send can never corrupt the transcript, and is released the instant
+// Turn.run() ends, wherever it's called from. This Set only drives a UI
+// badge and is safe to manage locally, right around the request lifecycle.
 const runningConversations = new Set<string>();
+
+// Same two-statement shape as the writes in agent/turnRecorder.ts, wrapped in
+// one SQLite transaction so a crash or error between the two can never leave
+// a conversation deleted with its messages still around (or vice versa). See
+// automations.ts's pinExclusively / mailStore.ts's applyTxn for the idiom.
+const deleteConversation = sqlite.transaction((id: string) => {
+  sqlite.prepare("DELETE FROM messages WHERE conversation_id = ?").run(id);
+  sqlite.prepare("DELETE FROM conversations WHERE id = ?").run(id);
+});
 
 function parseToolCalls(value: string | null): ChatToolCall[] | undefined {
   if (!value) return undefined;
@@ -85,6 +95,13 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
       if (!title) {
         return reply.code(400).send({ error: "title is required" });
       }
+      const [existing] = await db
+        .select({ id: schema.conversations.id })
+        .from(schema.conversations)
+        .where(eq(schema.conversations.id, req.params.id));
+      if (!existing) {
+        return reply.code(404).send({ error: "not found" });
+      }
       await db
         .update(schema.conversations)
         .set({ title })
@@ -94,12 +111,30 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
     },
   );
 
-  app.delete<{ Params: { id: string } }>("/api/conversations/:id", async (req) => {
-    await db.delete(schema.messages).where(eq(schema.messages.conversationId, req.params.id));
-    await db.delete(schema.conversations).where(eq(schema.conversations.id, req.params.id));
-    // Drop the live agent session too — otherwise a deleted conversation could
-    // keep running (and its next reply would resurrect the row on write).
+  app.delete<{ Params: { id: string } }>("/api/conversations/:id", async (req, reply) => {
+    const [existing] = await db
+      .select({ id: schema.conversations.id })
+      .from(schema.conversations)
+      .where(eq(schema.conversations.id, req.params.id));
+    if (!existing) {
+      return reply.code(404).send({ error: "not found" });
+    }
+    // A turn currently running for this conversation can still insert its
+    // assistant row (turnRecorder.ts's recordOutcome) after the delete below —
+    // refuse instead of racing it, same 409 shape POST /api/chat itself
+    // returns for a second concurrent send. runningConversations is added
+    // synchronously right after beginTurn acquires the real in-flight guard,
+    // with no `await` between the two, so this check can't miss a turn that
+    // only just started.
+    if (runningConversations.has(req.params.id)) {
+      return reply.code(409).send({ error: "a reply is in progress for this conversation" });
+    }
+    // Drop the live agent session before deleting rows, not after: once this
+    // resolves, nothing can start a new turn against this conversationId (the
+    // next getOrCreateSession would rebuild from `messages`, which is about
+    // to be gone), so no write can land after the delete below commits.
     await disposeSession(req.params.id);
+    deleteConversation(req.params.id);
     emitServerEvent("conversations");
     return { ok: true };
   });
@@ -177,8 +212,23 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(400).send({ error: "message is required" });
     }
 
-    if (req.body.conversationId && runningConversations.has(req.body.conversationId)) {
-      return reply.code(409).send({ error: "This conversation is already responding." });
+    // Resolve the id and acquire the turn guard before hijacking the reply —
+    // once hijack() hands the socket over there is no way left to answer
+    // with a real HTTP status code, so an overlapping send has to be turned
+    // away here. A brand-new conversation's id is freshly minted and can
+    // never already be in flight, so this applies uniformly whether or not
+    // the client sent one.
+    const conversationId = req.body.conversationId ?? randomUUID();
+    let turn: Turn;
+    try {
+      turn = beginTurn(conversationId);
+    } catch (error) {
+      if (error instanceof TurnInFlightError) {
+        return reply
+          .code(409)
+          .send({ error: "a reply is already in progress for this conversation" });
+      }
+      throw error;
     }
 
     // We stream on the raw socket; tell Fastify the reply is ours now.
@@ -211,49 +261,35 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
 
     const now = () => new Date().toISOString();
 
-    let runningConversationId: string | undefined;
-    let userMessagePersisted = false;
-    let assistantMessagePersisted = false;
     let streamedText = "";
-    const toolCalls: ChatToolCall[] = [];
-    let turnCards: ReturnType<typeof collectTurnCards> | undefined;
     try {
-      let conversationId = req.body.conversationId;
-      if (!conversationId) {
-        conversationId = randomUUID();
-        await db.insert(schema.conversations).values({
-          id: conversationId,
-          title: message.slice(0, 80),
-          createdAt: now(),
-        });
-        emitServerEvent("conversations");
-      }
-      send({ type: "conversation", conversationId });
-      runningConversationId = conversationId;
       runningConversations.add(conversationId);
       emitServerEvent("conversations");
 
-      // Build the session before persisting the new message: a session rebuilt
-      // from the DB must seed only *prior* turns, not the one being sent.
-      const session = await getOrCreateSession(conversationId);
+      // Create the conversation row on first use. This fires for every
+      // freshly minted id, but a client-supplied id can also name a
+      // conversation this server never recorded (e.g. stale client state
+      // after a delete) — either way, the message rows this turn is about to
+      // write must not end up orphaned against a nonexistent conversation.
+      // No other route creates type: "chat" rows (automations/scheduler.ts
+      // creates its own type: "automation" rows, keyed to the run id), so
+      // this is the one place chat conversations come into being;
+      // onConflictDoNothing makes the insert safe to attempt even when the
+      // row already exists.
+      const created = await db
+        .insert(schema.conversations)
+        .values({ id: conversationId, title: message.slice(0, 80), createdAt: now() })
+        .onConflictDoNothing({ target: schema.conversations.id });
+      if (created.changes > 0) {
+        emitServerEvent("conversations");
+      }
+      send({ type: "conversation", conversationId });
 
-      await db.insert(schema.messages).values({
-        id: randomUUID(),
-        conversationId,
-        role: "user",
-        content: message,
-        createdAt: now(),
-      });
-      userMessagePersisted = true;
       let thinkingSent = false;
-      // Collects this turn's cards (persisted with the assistant message below)
-      // and links any created draft back to this conversation.
-      const currentTurnCards = collectTurnCards(conversationId);
-      turnCards = currentTurnCards;
-      const text = await runPrompt(
-        session,
-        message,
-        {
+      const { text } = await turn.run({
+        prompt: message,
+        session: "pooled",
+        handlers: {
           onTextDelta: (delta) => {
             streamedText += delta;
             send({ type: "text_delta", delta });
@@ -266,80 +302,40 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
             }
           },
           onToolStart: (toolCallId, toolName, parameters) => {
-            const contentOffset = streamedText.length;
-            toolCalls.push({
-              id: toolCallId,
-              name: toolName,
-              isError: false,
-              done: false,
+            send({
+              type: "tool_start",
+              toolCallId,
+              toolName,
               parameters,
-              contentOffset,
+              contentOffset: streamedText.length,
             });
-            send({ type: "tool_start", toolCallId, toolName, parameters, contentOffset });
           },
           onToolUpdate: (toolCallId, toolName, detail) => {
-            const call = toolCalls.find((item) => item.id === toolCallId);
-            if (call) call.detail = detail;
             send({ type: "tool_update", toolCallId, toolName, detail });
           },
           onToolEnd: (toolCallId, toolName, isError, result) => {
-            const call = toolCalls.find((item) => item.id === toolCallId);
-            if (call) Object.assign(call, { done: true, isError, result });
             send({ type: "tool_end", toolCallId, toolName, isError, result });
           },
           onCard: (toolCallId, card) => {
-            currentTurnCards.onCard(toolCallId, card);
             send({ type: "card", toolCallId, card });
           },
         },
-        controller.signal,
-        req.log.child({ conversationId }),
-      );
-
-      await db.insert(schema.messages).values({
-        id: randomUUID(),
-        conversationId,
-        role: "assistant",
-        content: text,
-        cards: serializeTurnCards(currentTurnCards.cards),
-        toolCalls: toolCalls.length > 0 ? JSON.stringify(toolCalls) : null,
-        createdAt: now(),
+        signal: controller.signal,
+        log: req.log.child({ conversationId }),
       });
-      assistantMessagePersisted = true;
-      emitServerEvent("conversations");
 
       send({ type: "done", text });
     } catch (error) {
-      // A client-disconnect abort surfaces here too (runPrompt rethrows the
-      // agent's "aborted" failure); clientClosed already suppressed send().
+      // A client-disconnect abort surfaces here too (the recorder rethrows
+      // after writing the cancelled row); clientClosed already suppressed
+      // send() by then. The transcript is already closed out one way or
+      // another by turn.run() itself — this is only about telling a
+      // still-connected client that something went wrong.
       req.log.error(error, "chat failed");
-      const message = errorMessage(error);
-      // Keep partial text, tool activity and the failure itself visible after a
-      // reload. If persistence is what failed, don't hide the original error
-      // behind a second database exception.
-      if (runningConversationId && userMessagePersisted && !assistantMessagePersisted) {
-        try {
-          await db.insert(schema.messages).values({
-            id: randomUUID(),
-            conversationId: runningConversationId,
-            role: "assistant",
-            content: streamedText.trim(),
-            cards: serializeTurnCards(turnCards?.cards ?? []),
-            toolCalls: toolCalls.length > 0 ? JSON.stringify(toolCalls) : null,
-            error: message,
-            createdAt: now(),
-          });
-          emitServerEvent("conversations");
-        } catch (persistError) {
-          req.log.error(persistError, "failed to persist chat error");
-        }
-      }
-      send({ type: "error", message });
+      send({ type: "error", message: errorMessage(error) });
     } finally {
-      if (runningConversationId) {
-        runningConversations.delete(runningConversationId);
-        emitServerEvent("conversations");
-      }
+      runningConversations.delete(conversationId);
+      emitServerEvent("conversations");
       reply.raw.off("close", onClientClose);
       if (!reply.raw.writableEnded) reply.raw.end();
     }

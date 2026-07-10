@@ -4,7 +4,7 @@ import { listAccounts } from "../pipedream/connect.js";
 
 /**
  * Per-inbox signature: applied mechanically by the create-draft tool (see
- * pipedream/gmailDrafts.ts) and, when configured, called out in the agent's
+ * email/gmailDrafts.ts) and, when configured, called out in the agent's
  * system prompt so it never writes one itself (see buildVoiceContext below).
  * Writing style is NOT part of AccountVoice anymore — it lives as
  * account-scoped long-term memories instead (learned from sent mail or

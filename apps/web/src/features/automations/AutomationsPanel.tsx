@@ -66,7 +66,7 @@ export function AutomationsPanel() {
   const schedule = advanced ? cron : buildCron(preset);
   const cronValid = looksLikeCron(cron);
   const scheduleValid = advanced
-    ? cronValid
+    ? cron.trim().length > 0
     : preset.frequency !== "custom" || preset.weekdays.length > 0;
 
   const refresh = React.useCallback(async () => {
@@ -153,6 +153,7 @@ export function AutomationsPanel() {
       await refresh();
     } catch (err) {
       toast.error(errorMessage(err));
+    } finally {
       setSaving(false);
     }
   };
@@ -520,6 +521,8 @@ function AutomationCard({
     try {
       await api.updateAutomation(automation.id, { enabled });
       await onChanged();
+    } catch (err) {
+      toast.error(errorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -532,6 +535,8 @@ function AutomationCard({
     try {
       await api.setAutomationPinned(automation.id, !automation.pinned);
       await onChanged();
+    } catch (err) {
+      toast.error(errorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -544,6 +549,8 @@ function AutomationCard({
       setExpanded(true);
       // Give the run a moment to be recorded before the first poll.
       setTimeout(() => void loadRuns(), 800);
+    } catch (err) {
+      toast.error(errorMessage(err));
     } finally {
       setBusy(false);
     }

@@ -12,8 +12,11 @@ import {
 } from "../db/settings.js";
 import { env } from "../env.js";
 import { emitServerEvent } from "../events.js";
+import { moduleLogger } from "../logger.js";
 import { errorMessage } from "../util.js";
 import * as store from "./store.js";
+
+const ingestLog = moduleLogger("library");
 
 /**
  * The library drop folder: files put there (or uploaded via the web UI) are
@@ -141,15 +144,27 @@ export function chunkText(text: string, target = CHUNK_TARGET): string[] {
 async function listFiles(): Promise<Map<string, { size: number; mtimeMs: number }>> {
   const found = new Map<string, { size: number; mtimeMs: number }>();
   const visit = async (rel: string): Promise<void> => {
-    const entries = await readdir(join(libraryDir, rel), { withFileTypes: true });
+    let entries;
+    try {
+      entries = await readdir(join(libraryDir, rel), { withFileTypes: true });
+    } catch (error) {
+      // A permission-denied or vanished subfolder must not abort the whole
+      // scan — skip this subtree and keep indexing the rest.
+      ingestLog.warn({ err: error, rel }, "skipping unreadable library directory");
+      return;
+    }
     for (const entry of entries) {
       if (entry.name.startsWith(".")) continue;
       const relPath = rel ? `${rel}/${entry.name}` : entry.name;
       if (entry.isDirectory()) {
         await visit(relPath);
       } else if (entry.isFile()) {
-        const info = await stat(join(libraryDir, relPath));
-        found.set(relPath, { size: info.size, mtimeMs: Math.round(info.mtimeMs) });
+        try {
+          const info = await stat(join(libraryDir, relPath));
+          found.set(relPath, { size: info.size, mtimeMs: Math.round(info.mtimeMs) });
+        } catch {
+          // Vanished between readdir and stat — the follow-up scan reconciles it away.
+        }
       }
     }
   };
@@ -234,10 +249,19 @@ export function scanLibrary(): Promise<ScanSummary> {
     scanning = null;
     if (rescanWanted) {
       rescanWanted = false;
-      void scanLibrary();
+      scanLibrary().catch((error: unknown) =>
+        ingestLog.error({ err: error }, "chained library rescan failed"),
+      );
     }
   });
   return scanning;
+}
+
+/** Wait out any in-flight scan (and its chained rescans) — used around folder switches. */
+async function drainScanning(): Promise<void> {
+  while (scanning) {
+    await scanning.catch(() => {});
+  }
 }
 
 /** Two stats ~500ms apart: true while the file is still being written to. */
@@ -296,25 +320,70 @@ async function doScan(): Promise<ScanSummary> {
 
 let watcher: FSWatcher | null = null;
 let scanTimer: NodeJS.Timeout | null = null;
+let watcherRetryTimer: NodeJS.Timeout | null = null;
+/** Bumped every time stopWatcher() tears a watcher down (folder switch, or
+ *  the top of every startWatcher() call). A delayed retry captures the
+ *  generation live when it was armed and checks it before resurrecting a
+ *  watcher, so it never fires for a folder that's since been switched away
+ *  from or a watcher that's already been re-armed by another attempt. */
+let watcherGeneration = 0;
+const WATCHER_RETRY_MS = 30_000;
 
 /** Debounced scan trigger, shared by the folder watcher and settle retries. */
 function scheduleScan(delayMs: number): void {
   if (scanTimer) clearTimeout(scanTimer);
-  scanTimer = setTimeout(() => void scanLibrary(), delayMs);
+  scanTimer = setTimeout(() => {
+    scanLibrary().catch((error: unknown) =>
+      ingestLog.error({ err: error }, "scheduled library scan failed"),
+    );
+  }, delayMs);
 }
 
 function stopWatcher(): void {
   watcher?.close();
   watcher = null;
+  watcherGeneration += 1;
+  // A pending debounced scan targets whatever folder was active when it was
+  // armed; left running, it can fire against libraryDir mid-switch (see
+  // setLibraryFolder). Cancel it whenever the watcher is torn down.
+  if (scanTimer) {
+    clearTimeout(scanTimer);
+    scanTimer = null;
+  }
+  // Likewise a pending watcher-restart retry belongs to the watcher just
+  // closed — drop it so it can't resurrect a watcher for a folder that's
+  // being switched away from.
+  if (watcherRetryTimer) {
+    clearTimeout(watcherRetryTimer);
+    watcherRetryTimer = null;
+  }
 }
 
 function startWatcher(): void {
   stopWatcher();
+  const generation = watcherGeneration;
   try {
-    watcher = watch(libraryDir, { recursive: true }, () => scheduleScan(1000));
-    watcher.on("error", () => {
-      watcher?.close();
+    const instance = watch(libraryDir, { recursive: true }, () => scheduleScan(1000));
+    watcher = instance;
+    instance.on("error", (error) => {
+      // A stray event from a watcher already superseded by a folder switch
+      // or an earlier retry — this generation is no longer current, so
+      // there's nothing to close or retry.
+      if (watcherGeneration !== generation) return;
+      ingestLog.warn(
+        { err: error, folder: libraryDir },
+        `library watcher failed — retrying in ${WATCHER_RETRY_MS / 1000}s`,
+      );
+      instance.close();
       watcher = null;
+      watcherRetryTimer = setTimeout(() => {
+        watcherRetryTimer = null;
+        // Stale by the time the backoff elapsed — folder switched, or the
+        // watcher was already re-armed some other way. Re-arming here would
+        // resurrect a watcher nobody wants.
+        if (watcherGeneration !== generation) return;
+        startWatcher();
+      }, WATCHER_RETRY_MS);
     });
   } catch {
     // No folder watching on this platform — boot scans and the UI's rescan still work.
@@ -326,11 +395,13 @@ export async function startLibrary(log: (message: string) => void): Promise<void
   const saved = await getLibraryFolderSetting();
   libraryDir = resolveFolder(saved ?? env.libraryPath);
   await mkdir(libraryDir, { recursive: true });
-  void scanLibrary().then((s) => {
-    if (s.indexed || s.failed || s.removed) {
-      log(`Library scan: ${s.indexed} indexed, ${s.removed} removed, ${s.failed} failed`);
-    }
-  });
+  scanLibrary()
+    .then((s) => {
+      if (s.indexed || s.failed || s.removed) {
+        log(`Library scan: ${s.indexed} indexed, ${s.removed} removed, ${s.failed} failed`);
+      }
+    })
+    .catch((error: unknown) => ingestLog.error({ err: error }, "initial library scan failed"));
   startWatcher();
 }
 
@@ -352,12 +423,15 @@ export async function setLibraryFolder(input: string): Promise<void> {
   }
   // A scan started before the switch reads the old folder; changing the
   // module variable under it would mix the two. Follow-up scans chain onto
-  // `scanning`, so loop until none is left.
-  while (scanning) {
-    await scanning.catch(() => {});
-  }
+  // `scanning`, so wait until none is left.
+  await drainScanning();
   await setSetting(LIBRARY_FOLDER_SETTING_KEY, next);
+  // stopWatcher() also cancels any pending debounced scan timer, but that
+  // timer could have already fired during the awaits above and started a
+  // scan of the OLD folder — drain it too, so nothing is in flight reading
+  // libraryDir when it's reassigned just below.
   stopWatcher();
+  await drainScanning();
   libraryDir = next;
   startWatcher();
   await scanLibrary();

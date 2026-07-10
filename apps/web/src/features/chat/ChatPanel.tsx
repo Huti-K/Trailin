@@ -890,6 +890,10 @@ export function HistoryList({
   };
 
   const startRename = (c: Conversation) => {
+    // Enter/Escape set this true and unmount the input without firing blur
+    // (browsers don't dispatch focusout for a removed element), so a stale
+    // true would swallow the next rename's blur-commit. Clear it up front.
+    renameHandled.current = false;
     setRenamingId(c.id);
     setRenameDraft(c.title || "");
   };
@@ -934,7 +938,7 @@ export function HistoryList({
       key={c.id}
       className={cn(
         "group flex items-center gap-1 rounded-lg transition-colors",
-        c.id === activeId ? "bg-accent/12" : "hover:bg-secondary",
+        c.id === activeId ? "bg-accent/10" : "hover:bg-secondary",
       )}
     >
       {renamingId === c.id ? (

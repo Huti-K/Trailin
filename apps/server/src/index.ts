@@ -5,7 +5,8 @@ import Fastify, { type FastifyBaseLogger } from "fastify";
 import cors from "@fastify/cors";
 import fastifyStatic from "@fastify/static";
 import { env } from "./env.js";
-import { registerErrorHandler } from "./errors.js";
+import { registerErrorHandler, type ErrorResponse } from "./errors.js";
+import { isAllowedHost } from "./hostGuard.js";
 import { installProcessErrorHandlers, logger } from "./logger.js";
 import { pipedreamConfigured } from "./pipedream/connect.js";
 import { chatRoutes } from "./routes/chat.js";
@@ -20,11 +21,15 @@ import { memoryRoutes } from "./routes/memories.js";
 import { libraryRoutes } from "./routes/library.js";
 import { eventRoutes } from "./routes/events.js";
 import { searchRoutes } from "./routes/search.js";
+import { backupRoutes } from "./routes/backup.js";
 import { startScheduler } from "./automations/scheduler.js";
 import { seedDefaultAutomations } from "./automations/defaults.js";
+import { startSyncEngine } from "./email/sync/syncEngine.js";
+import { startEnrichment } from "./email/enrich/enrichService.js";
 import { seedDemoData } from "./demo/seed.js";
 import { startLibrary, getLibraryDir } from "./library/ingest.js";
 import { activeModelConfigured } from "./llm/registry.js";
+import { recoverInterruptedTurns } from "./agent/turnRecorder.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -37,7 +42,24 @@ async function main(): Promise<void> {
   const app = Fastify({ loggerInstance });
   registerErrorHandler(app);
 
-  await app.register(cors, { origin: true });
+  // No auth on this API (local-first, single-user), so CORS is the only
+  // thing stopping an arbitrary website from reading/mutating it via the
+  // browser — reflect only same-host origins (any port), never `true`.
+  await app.register(cors, {
+    origin: (origin, cb) => {
+      cb(null, !origin || /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin));
+    },
+  });
+
+  // DNS-rebinding defense: CORS above only looks at Origin, which a rebound
+  // page never has to send — the Host header is what's left to catch it.
+  app.addHook("onRequest", async (req, reply) => {
+    if (!isAllowedHost(req.headers.host, env.host)) {
+      const body: ErrorResponse = { error: "host not allowed", requestId: String(req.id) };
+      reply.code(403).send(body);
+    }
+  });
+
   await app.register(accountRoutes);
   await app.register(chatRoutes);
   await app.register(automationRoutes);
@@ -50,6 +72,7 @@ async function main(): Promise<void> {
   await app.register(libraryRoutes);
   await app.register(eventRoutes);
   await app.register(searchRoutes);
+  await app.register(backupRoutes);
 
   // When the web app has been built, serve it from the same process so a
   // single `pnpm start` works on a desktop machine or a host.
@@ -82,7 +105,17 @@ async function main(): Promise<void> {
     // everything (defaults included) for this boot.
     await seedDefaultAutomations();
     await startScheduler();
+    // Close out any chat/automation turn left dangling by a mid-turn restart.
+    await recoverInterruptedTurns();
   }
+
+  // Mirror every connected mailbox into SQLite (email/sync/) — the local
+  // state summaries/triage/drafts read from. Demo mode syncs the seeded
+  // mailbox through the same engine instead of calling out to Pipedream, so
+  // this starts after seeding either way. Enrichment rides the mirror's
+  // "mail" events to keep per-thread summaries/triage fresh.
+  startSyncEngine();
+  startEnrichment();
 
   // Index the document drop folder and keep watching it.
   await startLibrary((message) => app.log.info(message));
@@ -114,7 +147,7 @@ async function main(): Promise<void> {
     });
   }
 
-  await app.listen({ port: env.port, host: "0.0.0.0" });
+  await app.listen({ port: env.port, host: env.host });
 }
 
 installProcessErrorHandlers();

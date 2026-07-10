@@ -1,14 +1,15 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { EMAIL_APPS, type ConnectedAccount } from "@trailin/shared";
+import { accountSupportsWaiting, listWaiting } from "../email/waiting.js";
 import { listAccounts } from "../pipedream/connect.js";
-import { listGmailWaiting } from "../pipedream/gmailWaiting.js";
 import { errorMessage } from "../util.js";
 import { accountNotFoundText, findAccount } from "./knowledgeTools.js";
 
 /**
- * Agent tool over gmailWaiting.ts's "waiting on others" threads (same data
- * the Home page's pending-work section uses) — Gmail only for now, other
- * email apps aren't wired up to listGmailWaiting.
+ * Agent tool over email/waiting.ts's "waiting on others" threads (same data
+ * the Home page's pending-work section uses, routes/waiting.ts) — computed
+ * from the local mailbox mirror, so it covers every connected account whose
+ * app has a SyncProvider instead of hardcoding any one of them.
  */
 
 const text = (value: string) => ({
@@ -16,7 +17,7 @@ const text = (value: string) => ({
   details: undefined,
 });
 
-/** Whole days elapsed since `iso`, floored, min 1 (matches gmailWaiting's ≥24h wait filter). */
+/** Whole days elapsed since `iso`, floored, min 1 (matches email/waiting.ts's ≥24h wait filter). */
 function daysSince(iso: string): number {
   return Math.max(1, Math.floor((Date.now() - new Date(iso).getTime()) / (24 * 60 * 60 * 1000)));
 }
@@ -26,10 +27,10 @@ const listWaitingThreadsTool: AgentTool = {
   label: "List threads awaiting replies",
   description:
     `Threads where the user sent the last message and nobody has replied for at least a day ` +
-    `— per connected Gmail account, most-overdue first, up to 10 per account. Use this for ` +
-    `follow-up checks, briefings, or when the user asks what they're still waiting on. Read a ` +
-    `thread with the account's get-thread tool using the listed threadId, and consider ` +
-    `offering a nudge draft for long-overdue ones. Only Gmail accounts are covered for now.`,
+    `— per connected account with mailbox sync, most-overdue first, up to 10 per account. ` +
+    `Use this for follow-up checks, briefings, or when the user asks what they're ` +
+    `still waiting on. Read a thread with the account's get-thread tool using the listed ` +
+    `threadId, and consider offering a nudge draft for long-overdue ones.`,
   parameters: {
     type: "object",
     properties: {
@@ -37,7 +38,7 @@ const listWaitingThreadsTool: AgentTool = {
         type: "string",
         description:
           "Only check this account (email address or account id); omit to check every " +
-          "connected Gmail account.",
+          "connected account with waiting-thread tracking.",
       },
     },
   } as AgentTool["parameters"],
@@ -50,15 +51,16 @@ const listWaitingThreadsTool: AgentTool = {
     if (filtered) {
       const resolved = findAccount(accounts, filtered);
       if (!resolved) return text(accountNotFoundText(filtered, accounts));
+      if (!accountSupportsWaiting(resolved.app)) {
+        return text(`${resolved.name} (${resolved.app}) isn't covered by waiting-thread tracking yet (no mailbox sync for this app).`);
+      }
       targets = [resolved];
     } else {
-      targets = accounts.filter((a) => a.app === "gmail");
+      targets = accounts.filter((a) => accountSupportsWaiting(a.app));
     }
 
     if (targets.length === 0) {
-      return text(
-        "No Gmail accounts are connected — waiting-thread tracking is Gmail-only for now.",
-      );
+      return text("No connected accounts support waiting-thread tracking yet.");
     }
 
     const sections: string[] = [];
@@ -66,7 +68,7 @@ const listWaitingThreadsTool: AgentTool = {
     let anyFailed = false;
     for (const acc of targets) {
       try {
-        const items = await listGmailWaiting(acc);
+        const items = await listWaiting(acc);
         if (items.length === 0) {
           sections.push(`${acc.name}: nothing waiting.`);
           continue;
@@ -90,13 +92,10 @@ const listWaitingThreadsTool: AgentTool = {
 
     if (!filtered) {
       const uncovered = accounts.filter(
-        (a) => a.app !== "gmail" && (EMAIL_APPS as readonly string[]).includes(a.app),
+        (a) => !accountSupportsWaiting(a.app) && (EMAIL_APPS as readonly string[]).includes(a.app),
       );
       if (uncovered.length > 0) {
-        sections.push(
-          `Not covered yet (waiting-thread tracking is Gmail-only for now): ` +
-            `${uncovered.map((a) => a.name).join(", ")}.`,
-        );
+        sections.push(`Not covered by waiting-thread tracking yet: ${uncovered.map((a) => a.name).join(", ")}.`);
       }
     }
 

@@ -10,6 +10,7 @@ import { buildBriefingTool } from "./briefingTool.js";
 import { parseStoredCards } from "./cards.js";
 import { buildDelegateTool } from "./delegate.js";
 import { buildKnowledgeContext, buildKnowledgeTools } from "./knowledgeTools.js";
+import { runPrompt, type RunHandlers, type TurnLogger } from "./run.js";
 import { buildVoiceContext } from "./voice.js";
 import { buildVoiceLearnTool } from "./voiceLearn.js";
 import { buildWaitingThreadsTool } from "./waitingTools.js";
@@ -93,9 +94,10 @@ Guidelines:
 - Past scheduled-automation runs (morning briefings, end-of-day learnings) are on record: use
   automation_history to find runs and automation_run_read for a run's full text whenever the user
   references "your briefing", something "you flagged", or what an automation found on some day.
-- list_waiting_threads shows, per Gmail account, threads where the user sent the last message and
-  nobody has replied for a day or more. Use it when the user asks what they're waiting on, for
-  follow-up checks, and in briefings; for long-overdue threads, offer a nudge draft.
+- list_waiting_threads shows, per connected account with waiting-thread tracking, threads where the
+  user sent the last message and nobody has replied for a day or more. Use it when the user asks
+  what they're waiting on, for follow-up checks, and in briefings; for long-overdue threads, offer
+  a nudge draft.
 - compose_briefing renders a structured, interactive briefing card (grouped by how urgently each
   message needs the user, with per-thread actions). Use it whenever you produce a multi-message
   inbox digest, and give every item its real threadId so the card's actions work. When you call
@@ -159,12 +161,45 @@ export async function buildSystemPrompt(): Promise<string> {
 export interface AgentSession {
   agent: Agent;
   toolset: EmailToolset;
+  /**
+   * Turns currently running against this session. sweepSessions (below) must
+   * never close a session's toolset while this is above zero — go through
+   * runTurn (not the bare runPrompt) so a turn can't forget to mark itself.
+   */
+  inFlight: number;
+  /** Idle/LRU eviction clock: refreshed on creation, on lookup, and when a turn ends. */
+  lastUsed: number;
+  /**
+   * Runs one prompt through this session, exactly like the standalone
+   * runPrompt, but also marks the session busy for the turn's duration and
+   * refreshes lastUsed when it ends — see sweepSessions.
+   */
+  runTurn(
+    prompt: string,
+    handlers?: RunHandlers,
+    signal?: AbortSignal,
+    log?: TurnLogger,
+  ): Promise<string>;
 }
 
-/** A live session plus when it was last touched, for idle/LRU eviction. */
-interface SessionEntry {
-  session: AgentSession;
-  lastUsed: number;
+/** Wraps a fresh agent/toolset pair with the busy-tracking runTurn every cached session shares. */
+function createAgentSession(agent: Agent, toolset: EmailToolset): AgentSession {
+  const session: AgentSession = {
+    agent,
+    toolset,
+    inFlight: 0,
+    lastUsed: Date.now(),
+    async runTurn(prompt, handlers, signal, log) {
+      session.inFlight++;
+      try {
+        return await runPrompt(session, prompt, handlers, signal, log);
+      } finally {
+        session.inFlight--;
+        session.lastUsed = Date.now();
+      }
+    },
+  };
+  return session;
 }
 
 // Idle sessions keep their MCP connections open for nothing; cap both how
@@ -173,27 +208,32 @@ const SESSION_IDLE_TTL_MS = 30 * 60 * 1000;
 const SESSION_MAX_COUNT = 20;
 const SESSION_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 
-const sessions = new Map<string, SessionEntry>();
+const sessions = new Map<string, AgentSession>();
 // In-flight session creations, keyed by conversationId — lets two concurrent
 // requests for a brand-new conversation share one creation instead of each
 // opening (and one of them leaking) its own MCP session.
 const pendingSessions = new Map<string, Promise<AgentSession>>();
 
 /** Same disposal path resetSessions()/disposeSession() use, for idle/LRU eviction too. */
-function evictSession(conversationId: string, entry: SessionEntry): void {
+function evictSession(conversationId: string, session: AgentSession): void {
   sessions.delete(conversationId);
-  void entry.session.toolset.close().catch(() => {});
+  void session.toolset.close().catch(() => {});
 }
 
 function sweepSessions(): void {
   const now = Date.now();
-  for (const [conversationId, entry] of sessions) {
-    if (now - entry.lastUsed > SESSION_IDLE_TTL_MS) evictSession(conversationId, entry);
+  for (const [conversationId, session] of sessions) {
+    // A turn is running against this session; closing its toolset now would
+    // pull the rug out from under an in-flight tool call.
+    if (session.inFlight > 0) continue;
+    if (now - session.lastUsed > SESSION_IDLE_TTL_MS) evictSession(conversationId, session);
   }
   if (sessions.size > SESSION_MAX_COUNT) {
-    const byLastUsed = [...sessions.entries()].sort((a, b) => a[1].lastUsed - b[1].lastUsed);
-    for (const [conversationId, entry] of byLastUsed.slice(0, sessions.size - SESSION_MAX_COUNT)) {
-      evictSession(conversationId, entry);
+    const evictable = [...sessions.entries()]
+      .filter(([, session]) => session.inFlight === 0)
+      .sort((a, b) => a[1].lastUsed - b[1].lastUsed);
+    for (const [conversationId, session] of evictable.slice(0, sessions.size - SESSION_MAX_COUNT)) {
+      evictSession(conversationId, session);
     }
   }
 }
@@ -301,11 +341,9 @@ export async function getOrCreateSession(conversationId: string): Promise<AgentS
     existing.lastUsed = Date.now();
     // The current date/time (and memory/library context) can go stale on a
     // long-lived session — recompute the system prompt before every prompt.
-    existing.session.agent.state.systemPrompt = await buildSystemPrompt();
-    existing.session.agent.state.thinkingLevel = resolveThinkingLevel(
-      existing.session.agent.state.model,
-    );
-    return existing.session;
+    existing.agent.state.systemPrompt = await buildSystemPrompt();
+    existing.agent.state.thinkingLevel = resolveThinkingLevel(existing.agent.state.model);
+    return existing;
   }
 
   // Two concurrent requests for the same new conversationId must share one
@@ -315,11 +353,20 @@ export async function getOrCreateSession(conversationId: string): Promise<AgentS
   if (inFlight) return inFlight;
 
   const creation = (async (): Promise<AgentSession> => {
-    const [toolset, history] = await Promise.all([loadEmailTools(), loadHistory(conversationId)]);
-    const session: AgentSession = { agent: await buildAgent(toolset, history), toolset };
-    sessions.set(conversationId, { session, lastUsed: Date.now() });
-    if (sessions.size > SESSION_MAX_COUNT) sweepSessions();
-    return session;
+    const toolsetPromise = loadEmailTools();
+    try {
+      const [toolset, history] = await Promise.all([toolsetPromise, loadHistory(conversationId)]);
+      const session = createAgentSession(await buildAgent(toolset, history), toolset);
+      sessions.set(conversationId, session);
+      if (sessions.size > SESSION_MAX_COUNT) sweepSessions();
+      return session;
+    } catch (error) {
+      // toolsetPromise may have resolved (live MCP connections open) even
+      // though loadHistory or buildAgent failed — close it instead of
+      // leaking those connections on every retry of a failing conversation.
+      await toolsetPromise.then((t) => t.close()).catch(() => {});
+      throw error;
+    }
   })();
   pendingSessions.set(conversationId, creation);
   try {
@@ -333,21 +380,29 @@ export async function getOrCreateSession(conversationId: string): Promise<AgentS
 export async function resetSessions(): Promise<void> {
   const all = [...sessions.values()];
   sessions.clear();
-  await Promise.all(all.map((entry) => entry.session.toolset.close().catch(() => {})));
+  await Promise.all(all.map((session) => session.toolset.close().catch(() => {})));
 }
 
 export async function disposeSession(conversationId: string): Promise<void> {
-  const entry = sessions.get(conversationId);
-  if (!entry) return;
+  const session = sessions.get(conversationId);
+  if (!session) return;
   sessions.delete(conversationId);
-  await entry.session.toolset.close();
+  await session.toolset.close();
 }
 
 /** Create a throwaway session (used by scheduled automations). */
 export async function createEphemeralSession(): Promise<AgentSession> {
   const toolset = await loadEmailTools();
-  return { agent: await buildAgent(toolset), toolset };
+  try {
+    return createAgentSession(await buildAgent(toolset), toolset);
+  } catch (error) {
+    // buildAgent failing (bad model config, a settings read failing) must not
+    // leak the MCP connections loadEmailTools already opened — this runs on
+    // every scheduled automation tick.
+    await toolset.close().catch(() => {});
+    throw error;
+  }
 }
 
-// Re-exported so existing callers (scheduler.ts, routes/chat.ts) keep working.
-export { runPrompt, type RunHandlers } from "./run.js";
+// Re-exported so existing callers (scheduler.ts) keep working.
+export { runPrompt, type RunHandlers };

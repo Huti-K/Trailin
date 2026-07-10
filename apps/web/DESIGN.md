@@ -10,9 +10,12 @@ These rules are binding. If a change would break one, change the rule here first
 
 1. **No borders, outlines, or strokes.** Nothing has a visible edge line at rest — no
    `border`, no `divide-*`, no outlined buttons, no ring at rest, no hairline dividers.
-   Separation is achieved with surface tone and whitespace. (The one exception is the
-   keyboard `:focus-visible` ring, which exists only for accessibility and only appears
-   during keyboard navigation.)
+   Separation is achieved with surface tone and whitespace. (Two exceptions: the keyboard
+   `:focus-visible` ring, which exists only for accessibility and only appears during
+   keyboard navigation; and the `--border` hairline (`border-border`), allowed only as a
+   divider *inside* dense content — thread rails, markdown tables/blockquotes/hr, an
+   expanded row's meta section. Always use it plain, never with an opacity modifier, so
+   every line in the app is the same tone. It never outlines a shape.)
 2. **No card-in-card.** A surface is never nested inside another surface. Group content
    with a section heading + whitespace. If you need one elevated panel, it holds plain
    rows — not more panels.
@@ -67,14 +70,14 @@ a card in dark mode. Dialogs keep `.surface-soft` — the scrim already separate
 
 - Radius: `--radius` (0.7rem ≈ 11px) for panels/inputs/buttons; smaller for chips. No
   `rounded-full` on primary buttons or in-flow containers — pills are reserved for status
-  badges, filter chips (the shared `Chip`), and floating chrome (the dock).
+  badges, filter chips (the shared `Chip`), and tiny marks (avatars, count dots).
 - **Shadows are almost invisible.** Only elevated `surface` panels (composer, popover-like
   blocks) get a soft, low-opacity, warm-tinted shadow to lift them off the canvas without
   a line. Flat sections get none.
 
-## Floating chrome — dock, dialogs & command palette
+## Floating chrome — dialogs & command palette
 
-Elements that float *over* content (the dock nav, dialogs, the Cmd+K palette) get
+Elements that float *over* content (dialogs, the Cmd+K palette, select menus) get
 deeper elevation: a soft high-blur shadow lifts the panel, and everything modal shares
 the `.scrim` backdrop — a light dim plus a **2px** backdrop blur. Backdrop blur is
 welcome on floating chrome and scrims; just keep it turned down. The page underneath
@@ -119,3 +122,6 @@ panels still follows the rules above:
   the palette footer and on the header search trigger; any new shortcut surfaces the
   same way.
 - **Lists:** rows separated by spacing or a hover fill, never a divider line.
+- **Panel controls** are icon buttons in the panel header — never control rows inside
+  the content area, and no suggestion/template chips anywhere.
+- **Form actions** are right-aligned, primary action rightmost.

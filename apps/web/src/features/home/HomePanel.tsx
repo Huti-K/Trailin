@@ -17,9 +17,10 @@ import { GlanceStrip } from "@/features/home/GlanceStrip";
 import { WaitingSection } from "@/features/home/WaitingSection";
 import { DigestView, hasDigestShape, parseDigest } from "@/features/automations/DigestView";
 import { dateTimeLabel, dayLabel as formatDayLabel, timeLabel as formatTimeLabel } from "@/lib/dates";
+import { takePendingDraftFocus } from "@/lib/paletteFocus";
 import { openRunInChat } from "@/lib/runNavigation";
 import { useServerEvents } from "@/lib/serverEvents";
-import { errorMessage } from "@/lib/utils";
+import { errorMessage, UNASSIGNED_ACCOUNT_COLOR } from "@/lib/utils";
 
 /** Widening windows for the "Needs your review" drafts filter; defaults to "today". */
 type DraftRange = "today" | "7d" | "30d" | "all";
@@ -127,11 +128,18 @@ export function HomePanel({
   // Refetch in place when the agent or an automation changes data server-side.
   useServerEvents(["runs", "drafts", "automations"], () => void load());
 
-  // The search palette navigates here, then dispatches this with the hit's ids.
+  // The search palette navigates here, then dispatches this with the hit's
+  // ids — but only once this effect's listener is attached, which loses the
+  // race when Home wasn't already mounted. Catch that case by also reading
+  // the same payload stashed just before navigate (see lib/paletteFocus.ts).
   React.useEffect(() => {
+    const pending = takePendingDraftFocus();
+    if (pending) setFocusDraft(pending);
     const onOpenDraft = (e: Event) => {
       const detail = (e as CustomEvent<{ accountId: string; draftId: string }>).detail;
       if (detail) setFocusDraft(detail);
+      // Already handled live — discard so a later remount doesn't replay it.
+      takePendingDraftFocus();
     };
     window.addEventListener("trailin:open-draft", onOpenDraft);
     return () => window.removeEventListener("trailin:open-draft", onOpenDraft);
@@ -203,6 +211,7 @@ export function HomePanel({
           run={heroRun}
           runs={runs}
           onNavigate={onNavigate}
+          colors={colors}
           nextRunAt={
             pinned?.automation?.nextRunAt ??
             automations?.find((a) => a.id === heroRun.automationId)?.nextRunAt
@@ -255,6 +264,9 @@ function ReviewSection({
   const dateLabel = (iso: string) => dateTimeLabel(iso, i18n.language);
 
   const unfilteredTotal = drafts?.reduce((n, a) => n + a.drafts.length, 0) ?? 0;
+  // An account with a fetch error contributes 0 drafts, so unfiltered/filteredTotal
+  // alone can't be trusted to mean "nothing to show" — that would swallow the error.
+  const hasErroredAccount = drafts?.some((a) => a.error) ?? false;
 
   const filteredAccounts: AccountDrafts[] =
     drafts?.map((a) => ({ ...a, drafts: a.drafts.filter((d) => draftInRange(d.date, range)) })) ??
@@ -269,7 +281,7 @@ function ReviewSection({
           onClick={() => setIsExpanded(!isExpanded)}
           title={isExpanded ? "Collapse" : "Expand"}
         >
-          <div className="flex h-7 w-7 items-center justify-center rounded-md bg-accent/15 text-accent">
+          <div className="tint-accent flex h-7 w-7 items-center justify-center rounded-md">
             <FileText className="h-4 w-4" />
           </div>
           {t("home.reviewTitle")}
@@ -303,11 +315,11 @@ function ReviewSection({
 
           {!drafts ? (
             <LoadingRow />
-          ) : unfilteredTotal === 0 ? (
+          ) : unfilteredTotal === 0 && !hasErroredAccount ? (
             <p className="rounded-lg bg-surface-2 px-3.5 py-3 text-xs text-muted-foreground">
               {t("home.reviewEmpty")}
             </p>
-          ) : filteredTotal === 0 ? (
+          ) : filteredTotal === 0 && !hasErroredAccount ? (
             <p className="rounded-lg bg-surface-2 px-3.5 py-3 text-xs text-muted-foreground">
               {t("home.reviewEmptyFiltered")}
             </p>
@@ -324,12 +336,12 @@ function ReviewSection({
                           style={{
                             backgroundColor:
                               colors.find((c) => c.accountId === accountDrafts.accountId)?.hex ??
-                              undefined,
+                              UNASSIGNED_ACCOUNT_COLOR,
                           }}
                         />
                         <Mail className="h-3.5 w-3.5" />
                         {accountDrafts.account}
-                        <span className="text-muted-foreground/60">
+                        <span className="text-muted-foreground/70">
                           · {accountDrafts.drafts.length}
                         </span>
                       </h3>
@@ -415,7 +427,7 @@ function ActivitySection({
     <div className="flex flex-col gap-8">
       {[...groupByDay(list).entries()].map(([day, dayRuns]) => (
         <div key={day} className="flex flex-col gap-3">
-          <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground/80">
+          <h3 className="text-xs font-medium uppercase tracking-wider text-muted-foreground/70">
             {day}
           </h3>
           <div className="flex flex-col gap-3">
@@ -550,7 +562,7 @@ function ActivityRunCard({
         </div>
       </div>
       {expanded && hasResult && (
-        <div className="mt-1 pt-3 border-t border-border/40">
+        <div className="mt-1 pt-3 border-t border-border">
           <DigestView
             content={run.result}
             automationName={run.automationName}

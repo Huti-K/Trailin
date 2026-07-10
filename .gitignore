@@ -13,3 +13,5 @@ apps/server/data/
 *.db-wal
 *.db-shm
 *.db-journal
+CLAUDE.md
+CONTEXT.md

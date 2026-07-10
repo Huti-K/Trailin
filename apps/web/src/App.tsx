@@ -264,8 +264,9 @@ export default function App() {
 
       <main
         id="main-content"
-        className={cn("flex min-w-0 flex-1 flex-col overflow-hidden", onChatRoute && "hidden")}
+        className={cn("relative isolate flex min-w-0 flex-1 flex-col overflow-hidden", onChatRoute && "hidden")}
       >
+        <div aria-hidden className="aurora" />
         <header className="flex shrink-0 items-center gap-4 px-5 py-5 sm:px-8">
           <Button
             variant="ghost"

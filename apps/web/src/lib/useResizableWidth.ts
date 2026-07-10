@@ -45,9 +45,14 @@ export function useResizableWidth({
       document.body.style.userSelect = previousUserSelect;
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
+    // A drag can be interrupted (touch gesture takeover, pen leaving range, OS
+    // pointer steal) without a pointerup — without this the listener and the
+    // body cursor/user-select styles would leak past the drag.
+    window.addEventListener("pointercancel", onUp);
   };
 
   React.useEffect(() => {

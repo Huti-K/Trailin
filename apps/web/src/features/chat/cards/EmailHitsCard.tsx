@@ -41,7 +41,7 @@ export function EmailHitsCard({ card, color }: { card: EmailHitsData; color?: st
             </div>
           ))}
           {truncated && (
-            <p className="font-mono text-[11px] text-muted-foreground/80">
+            <p className="font-mono text-[11px] text-muted-foreground/70">
               {t("chat.cards.hits.truncatedLabel")}
             </p>
           )}

@@ -33,6 +33,24 @@ const cache = new Map<string, CacheEntry>();
 /** In-flight live fetches per account, so concurrent callers (including a background refresh) share one provider round-trip. */
 const inFlight = new Map<string, Promise<EmailDraft[]>>();
 
+/**
+ * Generation each account's in-flight fetch was dispatched under, paired
+ * with `generation` below. A fetch left over from before an
+ * invalidateDraftsCache call is stale: dedupedFetch won't let a new caller
+ * join it, and the write sites (listDraftsCached, scheduleBackgroundRefresh)
+ * won't let its result overwrite the cache once it resolves — otherwise a
+ * fetch started before a mutation could re-cache the pre-mutation list for a
+ * full TTL after the mutation's own invalidate + emit("drafts") already ran.
+ */
+const inFlightGeneration = new Map<string, number>();
+
+/** Bumped by invalidateDraftsCache; see inFlightGeneration above. */
+const generation = new Map<string, number>();
+
+function currentGeneration(accountId: string): number {
+  return generation.get(accountId) ?? 0;
+}
+
 /** Accounts with a background refresh already scheduled, so a second stale hit doesn't queue a second one. */
 const refreshing = new Set<string>();
 
@@ -51,17 +69,32 @@ function providerFor(account: ConnectedAccount) {
   return provider;
 }
 
-/** Live fetch, deduped per account: a second caller while one is already running joins it instead of firing another. */
-function dedupedFetch(account: ConnectedAccount): Promise<EmailDraft[]> {
+/**
+ * Live fetch, deduped per account: a second caller while one is already
+ * running joins it instead of firing another — unless that fetch was
+ * dispatched under an older generation (an invalidateDraftsCache landed
+ * since), in which case it's stale and a fresh fetch is started instead.
+ * Returns the generation the returned fetch was dispatched under, so the
+ * caller can gate its cache.set on nothing having invalidated in the
+ * meantime.
+ */
+function dedupedFetch(account: ConnectedAccount): { promise: Promise<EmailDraft[]>; generation: number } {
+  const gen = currentGeneration(account.id);
   const existing = inFlight.get(account.id);
-  if (existing) return existing;
+  if (existing && inFlightGeneration.get(account.id) === gen) return { promise: existing, generation: gen };
   const promise = providerFor(account)
     .listDrafts(account)
     .finally(() => {
-      inFlight.delete(account.id);
+      // Only clear our own entry — a fresh fetch dispatched after us (e.g.
+      // because we were already stale) may have replaced it in the map.
+      if (inFlight.get(account.id) === promise) {
+        inFlight.delete(account.id);
+        inFlightGeneration.delete(account.id);
+      }
     });
   inFlight.set(account.id, promise);
-  return promise;
+  inFlightGeneration.set(account.id, gen);
+  return { promise, generation: gen };
 }
 
 /**
@@ -74,8 +107,13 @@ function dedupedFetch(account: ConnectedAccount): Promise<EmailDraft[]> {
 function scheduleBackgroundRefresh(account: ConnectedAccount, previous: EmailDraft[]): void {
   if (refreshing.has(account.id)) return;
   refreshing.add(account.id);
-  dedupedFetch(account)
+  const fetch = dedupedFetch(account);
+  fetch.promise
     .then((drafts) => {
+      // A mutation invalidated the cache while this fetch was in flight — its
+      // result reflects pre-mutation state, so it must not overwrite the
+      // cache (the mutation's own invalidate + emit already covers this).
+      if (fetch.generation !== currentGeneration(account.id)) return;
       cache.set(account.id, { drafts, fetchedAt: Date.now() });
       // Only notify the UI when something actually changed — an account with
       // no external activity shouldn't trigger a refetch storm every TTL.
@@ -109,8 +147,9 @@ export async function listDraftsCached(
   if (env.demoMode) return providerFor(account).listDrafts(account);
 
   if (opts.refresh) {
-    const drafts = await dedupedFetch(account);
-    cache.set(account.id, { drafts, fetchedAt: Date.now() });
+    const fetch = dedupedFetch(account);
+    const drafts = await fetch.promise;
+    if (fetch.generation === currentGeneration(account.id)) cache.set(account.id, { drafts, fetchedAt: Date.now() });
     return drafts;
   }
 
@@ -121,17 +160,21 @@ export async function listDraftsCached(
     return entry.drafts;
   }
 
-  const drafts = await dedupedFetch(account);
-  cache.set(account.id, { drafts, fetchedAt: Date.now() });
+  const fetch = dedupedFetch(account);
+  const drafts = await fetch.promise;
+  if (fetch.generation === currentGeneration(account.id)) cache.set(account.id, { drafts, fetchedAt: Date.now() });
   return drafts;
 }
 
 /**
- * Drop one account's cached drafts list. Call this before emitting "drafts"
- * from any mutation path (create/update/delete draft, any app) so the
- * SSE-driven refetch it triggers doesn't race the cache write and see the
- * old list.
+ * Drop one account's cached drafts list and bump its generation. Call this
+ * before emitting "drafts" from any mutation path (create/update/delete
+ * draft, any app) so the SSE-driven refetch it triggers doesn't race the
+ * cache write and see the old list — the generation bump is what stops a
+ * fetch already in flight when this runs from re-caching its (now stale)
+ * result afterwards; see inFlightGeneration above.
  */
 export function invalidateDraftsCache(accountId: string): void {
   cache.delete(accountId);
+  generation.set(accountId, currentGeneration(accountId) + 1);
 }

@@ -3,80 +3,36 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { formatFileSize, type ConnectedAccount } from "@trailin/shared";
 import { LIBRARY_EXTENSIONS, saveUpload, SUPPORTED_FORMATS } from "../library/ingest.js";
 import { errorMessage } from "../util.js";
-import { proxyRequest } from "./connect.js";
+import type { AttachmentProvider, EmailAttachment } from "./attachmentProviders.js";
 
 /**
- * "Save attachment to library" tool: downloads one Gmail attachment through
- * the Connect proxy (plain Gmail REST API, same pattern as gmailDrafts.ts)
- * and hands the bytes to the library's saveUpload, so the file gets indexed
- * exactly like anything dropped into the library folder.
+ * "Save attachment to library" agent tool, generic over any app with an
+ * AttachmentProvider — the provider fetches attachment listings and bytes in
+ * its own wire format; everything here (attachment selection, extension
+ * validation, library ingest, result text) is provider-neutral. The caller
+ * (pipedream/mcp.ts) wires this once per live account whose app has a
+ * provider, alongside the MCP-bridged tools — copy the shape of
+ * buildDraftTool there.
  *
- * Live Gmail accounts only — the caller (pipedream/mcp.ts) only wires this
- * tool for a real connected account; demo mode has no live messages to
- * download attachments from, so there is no demo branch here.
+ * Live accounts only: demo mode swaps the entire email toolset
+ * (mcp.ts's loadEmailTools) before attachment tools are wired, and the demo
+ * mailbox has no attachments to download, so there is no demo path here.
  */
-
-const GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me";
 
 const text = (value: string) => ({
   content: [{ type: "text" as const, text: value }],
   details: undefined,
 });
 
-/** One Gmail MIME part — as much of it as attachment-walking needs. */
-interface MessagePart {
-  filename?: string;
-  mimeType?: string;
-  body?: { attachmentId?: string; data?: string; size?: number };
-  parts?: MessagePart[];
-}
-
-interface Attachment {
-  filename: string;
-  mimeType?: string;
-  size?: number;
-  attachmentId?: string;
-  /** Present when Gmail inlines the bytes directly in the part (small attachments). */
-  data?: string;
-}
-
-/**
- * Depth-first walk collecting every part with a non-empty filename — Gmail's
- * own definition of "this part is an attachment". Mirrors findPart's
- * recursion in gmailDrafts.ts, just collecting instead of stopping at a hit.
- */
-function collectAttachments(part: MessagePart | undefined, out: Attachment[]): void {
-  if (!part) return;
-  if (part.filename) {
-    out.push({
-      filename: part.filename,
-      mimeType: part.mimeType,
-      size: part.body?.size,
-      attachmentId: part.body?.attachmentId,
-      data: part.body?.data,
-    });
-  }
-  for (const child of part.parts ?? []) collectAttachments(child, out);
-}
-
 function hasSupportedExt(filename: string): boolean {
   return LIBRARY_EXTENSIONS.has(extname(filename).toLowerCase());
 }
 
-interface MessageGetResponse {
-  payload?: MessagePart;
-}
-
-interface AttachmentGetResponse {
-  data?: string;
-}
-
-/**
- * One connected Gmail account's "save attachment to library" tool. Copy the
- * shape of buildDraftTool in mcp.ts — the caller wires this once per live
- * Gmail account, alongside the MCP-bridged tools.
- */
-export function buildSaveAttachmentTool(account: ConnectedAccount, name: string): AgentTool {
+export function buildSaveAttachmentTool(
+  account: ConnectedAccount,
+  name: string,
+  provider: AttachmentProvider,
+): AgentTool {
   return {
     name,
     label: "Save attachment to library",
@@ -92,7 +48,7 @@ export function buildSaveAttachmentTool(account: ConnectedAccount, name: string)
       properties: {
         messageId: {
           type: "string",
-          description: "The Gmail message id, from find/list/get email tools.",
+          description: "The message id, from find/list/get email tools.",
         },
         filename: {
           type: "string",
@@ -105,17 +61,12 @@ export function buildSaveAttachmentTool(account: ConnectedAccount, name: string)
     execute: async (_toolCallId, params) => {
       const { messageId, filename } = params as { messageId: string; filename?: string };
 
-      // Hard failure on a bad messageId or a proxy error — thrown as-is; pi
-      // turns it into an error tool result.
-      const message = (await proxyRequest(account.id, "get", `${GMAIL_API}/messages/${messageId}`, {
-        params: { format: "full" },
-      })) as MessageGetResponse;
-
-      const attachments: Attachment[] = [];
-      collectAttachments(message.payload, attachments);
+      // Hard failure on a bad messageId or a provider error — thrown as-is;
+      // pi turns it into an error tool result.
+      const attachments = await provider.listAttachments(account, messageId);
       if (attachments.length === 0) return text("This message has no attachments.");
 
-      let picked: Attachment;
+      let picked: EmailAttachment;
       if (filename?.trim()) {
         const wanted = filename.trim().toLowerCase();
         const match = attachments.find((a) => a.filename.toLowerCase() === wanted);
@@ -147,21 +98,14 @@ export function buildSaveAttachmentTool(account: ConnectedAccount, name: string)
         );
       }
 
-      let data = picked.data;
-      if (!data) {
-        if (!picked.attachmentId) {
+      let buffer = picked.data;
+      if (!buffer) {
+        if (!picked.ref) {
           throw new Error(`Attachment "${picked.filename}" has no downloadable data.`);
         }
-        const fetched = (await proxyRequest(
-          account.id,
-          "get",
-          `${GMAIL_API}/messages/${messageId}/attachments/${picked.attachmentId}`,
-        )) as AttachmentGetResponse;
-        data = fetched.data;
+        buffer = await provider.downloadAttachment(account, messageId, picked.ref);
       }
-      if (!data) throw new Error(`Could not download "${picked.filename}" — Gmail returned no data.`);
 
-      const buffer = Buffer.from(data, "base64url");
       let stored: string;
       try {
         stored = await saveUpload(picked.filename, buffer);

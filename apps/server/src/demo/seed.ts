@@ -16,7 +16,7 @@ import {
   type DemoDraftRecord,
   type DemoDraftStore,
 } from "../db/settings.js";
-import { gmailDraftUrl } from "../pipedream/gmailDrafts.js";
+import { gmailDraftUrl } from "../email/webLinks.js";
 import { DEMO_PERSONAL_ACCOUNT_ID, DEMO_UNI_ACCOUNT_ID, DEMO_WORK_ACCOUNT_ID, getDemoAccounts } from "./accounts.js";
 import {
   buildEveningResult,

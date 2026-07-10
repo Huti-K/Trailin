@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { createMemory, deleteMemory, listMemories, updateMemory } from "../db/memories.js";
 import { resetSessions } from "../agent/emailAgent.js";
+import { badRequest, notFound } from "../errors.js";
 import { errorMessage } from "../util.js";
 
 /**
@@ -13,47 +14,49 @@ export async function memoryRoutes(app: FastifyInstance): Promise<void> {
 
   app.post<{ Body: { content?: string; accountId?: string | null } }>(
     "/api/memories",
-    async (req, reply) => {
+    async (req) => {
       const { accountId } = req.body ?? {};
       if (accountId !== undefined && accountId !== null && typeof accountId !== "string") {
-        return reply.code(400).send({ error: "accountId must be a string or null" });
+        throw badRequest("accountId must be a string or null");
       }
+      // Only createMemory's own validation (empty/too-long content, memory
+      // full) belongs to this catch — resetSessions below is a separate
+      // failure mode and must not be reported as a bad request too.
+      let result: Awaited<ReturnType<typeof createMemory>>;
       try {
-        const { entry, created } = await createMemory(
-          req.body?.content ?? "",
-          "user",
-          accountId ?? null,
-        );
-        // A dedup hit returns the existing entry unchanged — no need to reset sessions.
-        if (created) await resetSessions();
-        return entry;
+        result = await createMemory(req.body?.content ?? "", "user", accountId ?? null);
       } catch (error) {
-        return reply.code(400).send({ error: errorMessage(error) });
+        throw badRequest(errorMessage(error));
       }
+      // A dedup hit returns the existing entry unchanged — no need to reset sessions.
+      if (result.created) await resetSessions();
+      return result.entry;
     },
   );
 
   app.put<{ Params: { id: string }; Body: { content?: string; accountId?: string | null } }>(
     "/api/memories/:id",
-    async (req, reply) => {
+    async (req) => {
       const { accountId } = req.body ?? {};
       if (accountId !== undefined && accountId !== null && typeof accountId !== "string") {
-        return reply.code(400).send({ error: "accountId must be a string or null" });
+        throw badRequest("accountId must be a string or null");
       }
+      let entry: Awaited<ReturnType<typeof updateMemory>>;
       try {
         // accountId undefined (omitted from the body) keeps the entry's current scope.
-        const entry = await updateMemory(req.params.id, req.body?.content ?? "", accountId);
-        if (!entry) return reply.code(404).send({ error: "memory not found" });
-        await resetSessions();
-        return entry;
+        entry = await updateMemory(req.params.id, req.body?.content ?? "", accountId);
       } catch (error) {
-        return reply.code(400).send({ error: errorMessage(error) });
+        throw badRequest(errorMessage(error));
       }
+      if (!entry) throw notFound("memory not found");
+      await resetSessions();
+      return entry;
     },
   );
 
   app.delete<{ Params: { id: string } }>("/api/memories/:id", async (req) => {
-    await deleteMemory(req.params.id);
+    const deleted = await deleteMemory(req.params.id);
+    if (!deleted) throw notFound("memory not found");
     await resetSessions();
     return { ok: true };
   });

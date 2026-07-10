@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
-import { and, desc, eq, isNull, ne, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import { db, schema, sqlite } from "../db/index.js";
 import { parseStoredCards } from "../agent/cards.js";
 import { emitServerEvent } from "../events.js";
@@ -171,8 +171,20 @@ export async function automationRoutes(app: FastifyInstance): Promise<void> {
     "/api/automations/:id",
     async (req, reply) => {
       const updates: Record<string, unknown> = {};
-      if (req.body.name !== undefined) updates.name = req.body.name.trim();
-      if (req.body.instruction !== undefined) updates.instruction = req.body.instruction.trim();
+      if (req.body.name !== undefined) {
+        const name = req.body.name?.trim();
+        if (!name) {
+          return reply.code(400).send({ error: "name must not be empty" });
+        }
+        updates.name = name;
+      }
+      if (req.body.instruction !== undefined) {
+        const instruction = req.body.instruction?.trim();
+        if (!instruction) {
+          return reply.code(400).send({ error: "instruction must not be empty" });
+        }
+        updates.instruction = instruction;
+      }
       if (req.body.schedule !== undefined) {
         if (!isValidCron(req.body.schedule.trim())) {
           return reply.code(400).send({ error: `invalid cron expression: ${req.body.schedule}` });
@@ -184,6 +196,18 @@ export async function automationRoutes(app: FastifyInstance): Promise<void> {
       if (req.body.pinned !== undefined) updates.pinned = req.body.pinned;
       if (Object.keys(updates).length === 0) {
         return reply.code(400).send({ error: "nothing to update" });
+      }
+
+      // Must run before any mutation: pinExclusively unpins every other row,
+      // so a PATCH for a nonexistent id must never reach it — otherwise a
+      // pinned: true request for a bad id would unpin every real automation
+      // and then still 404.
+      const [existing] = await db
+        .select({ id: schema.automations.id })
+        .from(schema.automations)
+        .where(eq(schema.automations.id, req.params.id));
+      if (!existing) {
+        return reply.code(404).send({ error: "not found" });
       }
 
       await db
@@ -204,17 +228,40 @@ export async function automationRoutes(app: FastifyInstance): Promise<void> {
 
   app.delete<{ Params: { id: string } }>("/api/automations/:id", async (req) => {
     unschedule(req.params.id);
+
+    // Each run also created a conversation (id = run id) plus its user/
+    // assistant message rows (see automations/scheduler.ts) — nothing else
+    // ever cleans those up, so without this they'd linger forever in the
+    // chat sidebar's Automations section, orphaned from a deleted automation.
+    const runs = await db
+      .select({ id: schema.automationRuns.id })
+      .from(schema.automationRuns)
+      .where(eq(schema.automationRuns.automationId, req.params.id));
+    const runIds = runs.map((run) => run.id);
+    if (runIds.length > 0) {
+      await db.delete(schema.messages).where(inArray(schema.messages.conversationId, runIds));
+      await db.delete(schema.conversations).where(inArray(schema.conversations.id, runIds));
+    }
+
     await db.delete(schema.automations).where(eq(schema.automations.id, req.params.id));
     await db
       .delete(schema.automationRuns)
       .where(eq(schema.automationRuns.automationId, req.params.id));
     emitServerEvent("automations");
+    if (runIds.length > 0) emitServerEvent("conversations");
     return { ok: true };
   });
 
   app.post<{ Params: { id: string } }>("/api/automations/:id/run", async (req, reply) => {
+    const [automation] = await db
+      .select({ id: schema.automations.id })
+      .from(schema.automations)
+      .where(eq(schema.automations.id, req.params.id));
+    if (!automation) {
+      return reply.code(404).send({ error: "not found" });
+    }
     // Fire and forget; the UI polls the runs list.
-    runAutomation(req.params.id).catch((error) =>
+    runAutomation(req.params.id, { manual: true }).catch((error) =>
       req.log.error(error, `manual run of ${req.params.id} failed`),
     );
     return reply.code(202).send({ ok: true });

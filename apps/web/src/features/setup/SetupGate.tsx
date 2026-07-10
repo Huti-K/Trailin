@@ -174,7 +174,7 @@ function Step({
         <span
           className={cn(
             "mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full text-xs font-medium tabular-nums",
-            done ? "bg-success/15 text-success" : "bg-surface-2 text-muted-foreground",
+            done ? "tint-success" : "tint-neutral",
           )}
         >
           {done ? <Check className="h-3 w-3" /> : index}

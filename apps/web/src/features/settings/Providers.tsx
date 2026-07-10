@@ -10,6 +10,7 @@ import { LoadingRow } from "@/components/ui/feedback";
 import { Card } from "@/components/ui/card";
 import { ListRow } from "@/components/ui/list-row";
 import { IconButton } from "@/components/ui/icon-button";
+import { toast } from "@/lib/toast";
 import { cn, errorMessage } from "@/lib/utils";
 
 /**
@@ -58,8 +59,12 @@ export function Providers({
   };
 
   const logout = async (id: string) => {
-    await api.llmLogout(id);
-    await onChanged();
+    try {
+      await api.llmLogout(id);
+      await onChanged();
+    } catch (err) {
+      toast.error(errorMessage(err));
+    }
   };
 
   const busy = Boolean(flow && !flow.done);
@@ -293,7 +298,7 @@ function LoginFlowCard({ flow, onClose }: { flow: LoginFlowStatus; onClose: () =
   }
 
   return (
-    <div className="flex flex-col gap-3 rounded-lg bg-accent/8 p-3.5">
+    <div className="flex flex-col gap-3 rounded-lg bg-accent/10 p-3.5">
       <div className="flex items-center justify-between">
         <p className="flex items-center gap-2 text-sm font-medium">
           <Loader2 className="h-4 w-4 animate-spin text-accent" />
@@ -303,8 +308,13 @@ function LoginFlowCard({ flow, onClose }: { flow: LoginFlowStatus; onClose: () =
           variant="ghost"
           size="sm"
           onClick={async () => {
-            await api.loginCancel();
-            onClose();
+            try {
+              await api.loginCancel();
+            } catch {
+              // Flow may already be gone server-side — still dismiss the card.
+            } finally {
+              onClose();
+            }
           }}
         >
           {t("common.cancel")}
@@ -320,7 +330,9 @@ function LoginFlowCard({ flow, onClose }: { flow: LoginFlowStatus; onClose: () =
                 key={option.id}
                 variant="outline"
                 size="sm"
-                onClick={() => void api.loginSelect(option.id)}
+                onClick={() => {
+                  void api.loginSelect(option.id).catch((err) => toast.error(errorMessage(err)));
+                }}
               >
                 {option.label}
               </Button>
@@ -381,8 +393,12 @@ function LoginFlowCard({ flow, onClose }: { flow: LoginFlowStatus; onClose: () =
             variant="outline"
             disabled={!input.trim()}
             onClick={async () => {
-              await api.loginInput(input.trim());
-              setInput("");
+              try {
+                await api.loginInput(input.trim());
+                setInput("");
+              } catch (err) {
+                toast.error(errorMessage(err));
+              }
             }}
           >
             {t("common.submit")}

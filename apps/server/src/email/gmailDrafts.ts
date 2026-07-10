@@ -1,49 +1,38 @@
-import { randomUUID } from "node:crypto";
 import type { ConnectedAccount, EmailDraft, EmailThreadMessage } from "@trailin/shared";
-import { getDemoDraftStore, setDemoDraftStore, type DemoDraftRecord } from "../db/settings.js";
-import { daysAgo } from "../demo/content.js";
-import { MAILBOX, resolveThread } from "../demo/mailbox.js";
-import { env } from "../env.js";
 import { emitServerEvent } from "../events.js";
-import { invalidateDraftsCache } from "../email/draftsService.js";
-import { registerDraftProvider, type DraftProvider } from "../email/providers.js";
-import { proxyRequest } from "./connect.js";
+import { moduleLogger } from "../logger.js";
+import { proxyRequest } from "../pipedream/connect.js";
+import { invalidateDraftsCache } from "./draftsService.js";
+import {
+  decodeHtmlEntities,
+  GMAIL_API,
+  headerLookup,
+  plainTextBody,
+  type MessagePart,
+} from "./gmailMessage.js";
+import type { CreateDraftInput, DraftProvider, UpdateDraftPatch } from "./providers.js";
+import { splitAddressList } from "./textUtils.js";
+import { gmailDraftUrl } from "./webLinks.js";
 
 /**
  * Gmail drafts via the Connect proxy (plain Gmail REST API). Pipedream's
  * prebuilt create-draft component requires a paid workspace (File Stash);
  * the proxy works on every plan and returns clean JSON.
  *
- * Registered as the "gmail" DraftProvider at the bottom of this file so
- * routes/tools reach it through ../email/providers.ts's registry. Both the
- * live agent (pipedream/mcp.ts's buildDraftTool) and demo mode
- * (demo/emailTools.ts, always Gmail) build their create-draft tool from
- * gmailDraftProvider rather than calling anything in this file directly.
+ * Registered as the "gmail" DraftProvider by ./registerProviders.ts (the one
+ * registration point) so routes/tools reach it through ./providers.ts's
+ * registry — gmailDraftProvider is this module's entire interface. No demo
+ * branches in here: in demo mode, registerProviders.ts puts
+ * demo/demoDrafts.ts's provider over this one, so this file is only ever
+ * reached with a live connected account.
  *
- * `listGmailDrafts` is a pure live fetch — no caching in here. Caching lives
- * one layer up in ../email/draftsService.ts, shared across every provider;
- * every mutation below calls its `invalidateDraftsCache` before emitting
- * "drafts" so the SSE-driven refetch that follows isn't served the old list.
+ * `listDrafts` is a pure live fetch — no caching in here. Caching lives one
+ * layer up in ./draftsService.ts, shared across every provider; every
+ * mutation below calls its `invalidateDraftsCache` before emitting "drafts"
+ * so the SSE-driven refetch that follows isn't served the old list.
  */
 
-const GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me";
-
-/**
- * Deep link that opens a specific draft in the Gmail web UI.
- *
- * `authuser=<email>` is what makes this survive multiple signed-in Google
- * accounts: Gmail resolves it to the right account regardless of login order.
- * We deliberately avoid the `/mail/u/<N>/` path form — `N` is a per-browser
- * login-order index (not stable), and putting the email there (URL-encoded,
- * so `@` becomes `%40`) 404s when more than one account is signed in.
- * `authuser` must sit before the `#` fragment or Gmail's server never sees it.
- */
-export function gmailDraftUrl(accountName: string, messageId: string): string {
-  const auth = accountName.includes("@")
-    ? `?authuser=${encodeURIComponent(accountName)}`
-    : "";
-  return `https://mail.google.com/mail/${auth}#drafts?compose=${messageId}`;
-}
+const log = moduleLogger("gmail-drafts");
 
 interface DraftsListResponse {
   drafts?: { id: string; message: { id: string; threadId: string } }[];
@@ -59,50 +48,7 @@ interface DraftGetResponse {
   };
 }
 
-/**
- * Decode the common HTML entities Gmail escapes in `message.snippet`. Not a
- * full entity decoder — just enough for the handful Gmail actually emits.
- */
-const HTML_ENTITIES: Record<string, string> = {
-  "&amp;": "&",
-  "&lt;": "<",
-  "&gt;": ">",
-  "&quot;": '"',
-  "&#39;": "'",
-  "&nbsp;": " ",
-};
-
-function decodeHtmlEntities(text: string): string {
-  return text.replace(
-    /&amp;|&lt;|&gt;|&quot;|&#39;|&nbsp;/g,
-    (match) => HTML_ENTITIES[match] ?? match,
-  );
-}
-
-const SNIPPET_MAX_LENGTH = 140;
-
-/** One-line preview for list rows: collapse whitespace, cap length. */
-function snippetFromBody(body: string): string {
-  const collapsed = body.replace(/\s+/g, " ").trim();
-  if (collapsed.length <= SNIPPET_MAX_LENGTH) return collapsed;
-  return `${collapsed.slice(0, SNIPPET_MAX_LENGTH)}…`;
-}
-
-export async function listGmailDrafts(
-  account: ConnectedAccount,
-  limit = 15,
-): Promise<EmailDraft[]> {
-  if (env.demoMode) {
-    const store = await getDemoDraftStore();
-    return (store[account.id] ?? [])
-      .map(({ body, cc: _cc, bcc: _bcc, ...draft }) => {
-        const snippet = snippetFromBody(body);
-        return { ...draft, ...(snippet ? { snippet } : {}) };
-      })
-      .sort((a, b) => b.date.localeCompare(a.date))
-      .slice(0, limit);
-  }
-
+async function listGmailDrafts(account: ConnectedAccount, limit = 15): Promise<EmailDraft[]> {
   const list = (await proxyRequest(account.id, "get", `${GMAIL_API}/drafts`, {
     params: { maxResults: String(limit) },
   })) as DraftsListResponse;
@@ -116,16 +62,14 @@ export async function listGmailDrafts(
         const full = (await proxyRequest(account.id, "get", `${GMAIL_API}/drafts/${entry.id}`, {
           params: { format: "metadata" },
         })) as DraftGetResponse;
-        const headers = full.message?.payload?.headers ?? [];
-        const header = (name: string) =>
-          headers.find((h) => h.name.toLowerCase() === name.toLowerCase())?.value;
+        const header = headerLookup(full.message?.payload);
         const snippet = decodeHtmlEntities(full.message?.snippet ?? "").trim();
         return {
           id: entry.id,
           messageId: entry.message.id,
           threadId: entry.message.threadId,
-          subject: header("Subject") ?? "",
-          to: header("To") ?? "",
+          subject: header("Subject"),
+          to: header("To"),
           date: full.message?.internalDate
             ? new Date(Number(full.message.internalDate)).toISOString()
             : "",
@@ -144,64 +88,11 @@ export async function listGmailDrafts(
     .sort((a, b) => b.date.localeCompare(a.date));
 }
 
-interface MessagePart {
-  mimeType?: string;
-  body?: { data?: string };
-  parts?: MessagePart[];
-}
-
-/** Depth-first search for the first part of the wanted MIME type. */
-function findPart(part: MessagePart | undefined, mimeType: string): MessagePart | undefined {
-  if (!part) return undefined;
-  if (part.mimeType === mimeType && part.body?.data) return part;
-  for (const child of part.parts ?? []) {
-    const hit = findPart(child, mimeType);
-    if (hit) return hit;
-  }
-  return undefined;
-}
-
-function decodeBody(data: string): string {
-  return Buffer.from(data, "base64url").toString("utf8");
-}
-
-/**
- * Plain-text body of one message payload: text/plain if present, else
- * text/html with tags stripped (crude but serviceable for display). Shared by
- * getGmailDraftDetail and getGmailThread so there's exactly one MIME walker.
- */
-function plainTextBody(payload: MessagePart | undefined): string {
-  const plain = findPart(payload, "text/plain");
-  if (plain?.body?.data) return decodeBody(plain.body.data);
-  const html = findPart(payload, "text/html");
-  if (!html?.body?.data) return "";
-  return decodeBody(html.body.data)
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/p>/gi, "\n\n")
-    .replace(/<[^>]+>/g, "")
-    .trim();
-}
-
-type MessageHeaders = { headers?: { name: string; value: string }[] };
-
-/** Case-insensitive header lookup, the way Gmail's `payload.headers` needs to be read. */
-function headerLookup(payload: MessageHeaders | undefined) {
-  const headers = payload?.headers ?? [];
-  return (name: string) => headers.find((h) => h.name.toLowerCase() === name.toLowerCase())?.value ?? "";
-}
-
 /** Full content of one draft, for the in-app viewer. */
-export async function getGmailDraftDetail(
+async function getGmailDraftDetail(
   account: ConnectedAccount,
   draftId: string,
 ): Promise<{ body: string; cc: string; bcc: string }> {
-  if (env.demoMode) {
-    const store = await getDemoDraftStore();
-    const record = (store[account.id] ?? []).find((d) => d.id === draftId);
-    if (!record) throw new Error("draft not found");
-    return { body: record.body, cc: record.cc ?? "", bcc: record.bcc ?? "" };
-  }
-
   const full = (await proxyRequest(account.id, "get", `${GMAIL_API}/drafts/${draftId}`, {
     params: { format: "full" },
   })) as {
@@ -212,38 +103,13 @@ export async function getGmailDraftDetail(
   return { body: plainTextBody(payload), cc: header("Cc"), bcc: header("Bcc") };
 }
 
-function splitAddressList(value: string): string[] {
-  return value.split(",").map((s) => s.trim()).filter(Boolean);
-}
-
 interface ThreadGetResponse {
   messages?: {
     id?: string;
     internalDate?: string;
+    labelIds?: string[];
     payload?: MessagePart & { headers?: { name: string; value: string }[] };
   }[];
-}
-
-/**
- * Demo path for getGmailThread: reads the seeded MAILBOX exactly the way
- * demo/emailTools.ts's gmail-get-thread tool does (same resolveThread lookup,
- * same oldest-first message order), so a draft opened from the demo UI links
- * to the same thread content the agent would have read.
- */
-function demoGmailThread(accountId: string, threadId: string): EmailThreadMessage[] {
-  const threads = MAILBOX.filter((t) => t.accountId === accountId);
-  const thread = resolveThread(threads, threadId);
-  // A draft that starts a new conversation has a threadId no mailbox thread
-  // matches — that is "no history", not an error. Seeded demo drafts are all
-  // of this shape, so throwing here would break the demo drafts viewer.
-  if (!thread) return [];
-  return thread.messages.map((message) => ({
-    from: message.from,
-    to: message.to,
-    ...(message.cc?.length ? { cc: message.cc } : {}),
-    date: daysAgo(message.daysAgo, message.hour, message.minute ?? 0).toISOString(),
-    body: message.body,
-  }));
 }
 
 /**
@@ -252,13 +118,11 @@ function demoGmailThread(accountId: string, threadId: string): EmailThreadMessag
  * reply draft as a message of its own thread, so a viewer showing the draft
  * alongside its history would otherwise print the draft body twice.
  */
-export async function getGmailThread(
+async function getGmailThread(
   account: ConnectedAccount,
   threadId: string,
   opts: { excludeMessageId?: string } = {},
 ): Promise<EmailThreadMessage[]> {
-  if (env.demoMode) return demoGmailThread(account.id, threadId);
-
   const res = (await proxyRequest(account.id, "get", `${GMAIL_API}/threads/${threadId}`, {
     params: { format: "full" },
   })) as ThreadGetResponse;
@@ -281,19 +145,7 @@ export async function getGmailThread(
   return messages.sort((a, b) => a.date.localeCompare(b.date));
 }
 
-export async function deleteGmailDraft(
-  account: ConnectedAccount,
-  draftId: string,
-): Promise<void> {
-  if (env.demoMode) {
-    const store = await getDemoDraftStore();
-    store[account.id] = (store[account.id] ?? []).filter((d) => d.id !== draftId);
-    await setDemoDraftStore(store);
-    invalidateDraftsCache(account.id);
-    emitServerEvent("drafts");
-    return;
-  }
-
+async function deleteGmailDraft(account: ConnectedAccount, draftId: string): Promise<void> {
   await proxyRequest(account.id, "delete", `${GMAIL_API}/drafts/${draftId}`);
   invalidateDraftsCache(account.id);
   emitServerEvent("drafts");
@@ -302,6 +154,21 @@ export async function deleteGmailDraft(
 /** RFC 2047 B-encoding — safe for any subject, including umlauts. */
 function encodeHeaderWord(value: string): string {
   return `=?UTF-8?B?${Buffer.from(value, "utf8").toString("base64")}?=`;
+}
+
+/**
+ * To/Cc/Bcc reach buildRawMessage as raw strings interpolated straight into
+ * an RFC822 header line, and ultimately trace back to LLM tool params
+ * (mcp.ts's buildDraftTool passes model-supplied recipients through
+ * unchanged) — a prompt-injected email could steer the agent into a
+ * recipient value containing a CR/LF, smuggling an extra header (e.g. a
+ * hidden `Bcc:`) into the message. Reject rather than silently strip, so the
+ * caller sees a clear failure instead of a silently rewritten recipient list.
+ */
+function assertSafeHeaderValue(header: string, value: string): void {
+  if (/[\x00-\x1f\x7f]/.test(value)) {
+    throw new Error(`Invalid ${header} header value: contains a line break or control character.`);
+  }
 }
 
 /**
@@ -322,6 +189,10 @@ function buildRawMessage(input: {
   body: string;
   extraHeaders?: string[];
 }): string {
+  assertSafeHeaderValue("To", input.to);
+  if (input.cc) assertSafeHeaderValue("Cc", input.cc);
+  if (input.bcc) assertSafeHeaderValue("Bcc", input.bcc);
+
   const lines = [
     `To: ${input.to}`,
     ...(input.cc ? [`Cc: ${input.cc}`] : []),
@@ -345,41 +216,45 @@ function buildRawMessage(input: {
  */
 const PRESERVED_HEADERS = ["From", "Reply-To", "In-Reply-To", "References"] as const;
 
-export interface CreateDraftInput {
-  to: string[];
-  cc?: string[];
-  bcc?: string[];
-  subject: string;
-  body: string;
-  threadId?: string;
+/**
+ * In-Reply-To/References for a reply draft, read from the thread's last
+ * non-draft message — what non-Gmail clients thread on (Gmail itself relies
+ * on the threadId createGmailDraft already sets). Drafts already sitting in
+ * the thread (e.g. one started manually in Gmail) are skipped: they're
+ * unsent and have no meaningful Message-ID to reply to. Returns undefined on
+ * any failure, or if the thread has no usable message — createGmailDraft
+ * falls back silently to its current threadId-only behavior rather than
+ * blocking the draft on this lookup.
+ */
+async function lastMessageThreadingHeaders(
+  account: ConnectedAccount,
+  threadId: string,
+): Promise<{ inReplyTo: string; references: string } | undefined> {
+  try {
+    const res = (await proxyRequest(account.id, "get", `${GMAIL_API}/threads/${threadId}`, {
+      params: { format: "full" },
+    })) as ThreadGetResponse;
+    const messages = (res.messages ?? []).filter((m) => !m.labelIds?.includes("DRAFT"));
+    const last = messages[messages.length - 1];
+    if (!last) return undefined;
+    const header = headerLookup(last.payload);
+    const inReplyTo = header("Message-ID");
+    if (!inReplyTo) return undefined;
+    const references = [header("References"), inReplyTo].filter(Boolean).join(" ");
+    return { inReplyTo, references };
+  } catch (error) {
+    log.warn({ err: error, accountId: account.id, threadId }, "reply threading headers lookup failed");
+    return undefined;
+  }
 }
 
-export async function createGmailDraft(
+async function createGmailDraft(
   account: ConnectedAccount,
   input: CreateDraftInput,
 ): Promise<{ draftId: string; messageId: string; threadId: string }> {
-  if (env.demoMode) {
-    const messageId = randomUUID().replace(/-/g, "");
-    const threadId = input.threadId ?? randomUUID().replace(/-/g, "");
-    const record: DemoDraftRecord = {
-      id: randomUUID(),
-      messageId,
-      threadId,
-      subject: input.subject,
-      to: input.to.join(", "),
-      ...(input.cc?.length ? { cc: input.cc.join(", ") } : {}),
-      ...(input.bcc?.length ? { bcc: input.bcc.join(", ") } : {}),
-      date: new Date().toISOString(),
-      webUrl: gmailDraftUrl(account.name, messageId),
-      body: input.body,
-    };
-    const store = await getDemoDraftStore();
-    store[account.id] = [record, ...(store[account.id] ?? [])];
-    await setDemoDraftStore(store);
-    invalidateDraftsCache(account.id);
-    emitServerEvent("drafts");
-    return { draftId: record.id, messageId, threadId };
-  }
+  const threadingHeaders = input.threadId
+    ? await lastMessageThreadingHeaders(account, input.threadId)
+    : undefined;
 
   const raw = buildRawMessage({
     to: input.to.join(", "),
@@ -387,6 +262,14 @@ export async function createGmailDraft(
     ...(input.bcc?.length ? { bcc: input.bcc.join(", ") } : {}),
     subject: input.subject,
     body: input.body,
+    ...(threadingHeaders
+      ? {
+          extraHeaders: [
+            `In-Reply-To: ${threadingHeaders.inReplyTo}`,
+            `References: ${threadingHeaders.references}`,
+          ],
+        }
+      : {}),
   });
 
   const res = (await proxyRequest(account.id, "post", `${GMAIL_API}/drafts`, {
@@ -396,12 +279,6 @@ export async function createGmailDraft(
   invalidateDraftsCache(account.id);
   emitServerEvent("drafts");
   return { draftId: res.id, messageId: res.message.id, threadId: res.message.threadId };
-}
-
-/** Body of updateGmailDraft: only body/subject are overridable — everything else Gmail already has is preserved. */
-export interface UpdateDraftInput {
-  body?: string;
-  subject?: string;
 }
 
 /**
@@ -452,23 +329,11 @@ async function fetchGmailDraftFull(
  * the editor showed — lossy for markup, but never for anything the user could
  * see or type here.
  */
-export async function updateGmailDraft(
+async function updateGmailDraft(
   account: ConnectedAccount,
   draftId: string,
-  input: UpdateDraftInput,
+  input: UpdateDraftPatch,
 ): Promise<void> {
-  if (env.demoMode) {
-    const store = await getDemoDraftStore();
-    const record = (store[account.id] ?? []).find((d) => d.id === draftId);
-    if (!record) throw new Error("draft not found");
-    if (input.body !== undefined) record.body = input.body;
-    if (input.subject !== undefined) record.subject = input.subject;
-    await setDemoDraftStore(store);
-    invalidateDraftsCache(account.id);
-    emitServerEvent("drafts");
-    return;
-  }
-
   const current = await fetchGmailDraftFull(account, draftId);
   const raw = buildRawMessage({
     to: current.to,
@@ -487,7 +352,7 @@ export async function updateGmailDraft(
   emitServerEvent("drafts");
 }
 
-/** This module's DraftProvider, for ../email/providers.ts's registry. */
+/** This module's DraftProvider — and its entire interface (registered by ./registerProviders.ts). */
 export const gmailDraftProvider: DraftProvider = {
   listDrafts: listGmailDrafts,
   getDraftDetail: getGmailDraftDetail,
@@ -499,5 +364,3 @@ export const gmailDraftProvider: DraftProvider = {
   updateDraft: updateGmailDraft,
   getThread: getGmailThread,
 };
-
-registerDraftProvider("gmail", gmailDraftProvider);

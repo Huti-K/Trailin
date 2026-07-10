@@ -3,7 +3,7 @@ import type { ConnectedAccount, EmailDraft, EmailThreadMessage } from "@trailin/
 /**
  * Draft-provider abstraction: every mail app Trailin can list/create drafts
  * for implements this interface against its own REST API — Gmail via the
- * plain Gmail REST API (pipedream/gmailDrafts.ts), Outlook via Microsoft
+ * plain Gmail REST API (./gmailDrafts.ts), Outlook via Microsoft
  * Graph (./outlookDrafts.ts) — all through Pipedream's Connect proxy so no
  * OAuth tokens ever touch this codebase directly.
  *

@@ -1,28 +1,26 @@
 import type { FastifyInstance } from "fastify";
 import type { AccountWaiting } from "@trailin/shared";
-import "../email/registerWaitingProviders.js";
-import { getWaitingProvider } from "../email/waitingProviders.js";
+import { accountSupportsWaiting, listWaiting } from "../email/waiting.js";
 import { listAccounts, pipedreamConfigured } from "../pipedream/connect.js";
+import { upstreamError } from "../errors.js";
 import { errorMessage } from "../util.js";
 
 export async function waitingRoutes(app: FastifyInstance): Promise<void> {
-  /** Sent threads still awaiting a reply, per connected account with a WaitingProvider (Gmail today), for the Home page. */
+  /** Sent threads still awaiting a reply, computed from the mailbox mirror, per synced account, for the Home page. */
   app.get<{ Querystring: { refresh?: string } }>(
     "/api/waiting",
-    async (req, reply): Promise<AccountWaiting[] | void> => {
+    async (req): Promise<AccountWaiting[]> => {
       if (!(await pipedreamConfigured())) return [];
       const refresh = req.query.refresh === "1";
       try {
-        const accounts = (await listAccounts()).filter((a) => getWaitingProvider(a.app) !== null);
+        const accounts = (await listAccounts()).filter((a) => accountSupportsWaiting(a.app));
         return await Promise.all(
           accounts.map(async (account): Promise<AccountWaiting> => {
-            // Filtered above, so this is never null — non-null asserted for TS.
-            const provider = getWaitingProvider(account.app)!;
             try {
               return {
                 account: account.name,
                 accountId: account.id,
-                items: await provider.listWaiting(account, { refresh }),
+                items: await listWaiting(account, { refresh }),
               };
             } catch (error) {
               return {
@@ -35,8 +33,7 @@ export async function waitingRoutes(app: FastifyInstance): Promise<void> {
           }),
         );
       } catch (error) {
-        req.log.error(error, "listing waiting threads failed");
-        return reply.code(502).send({ error: errorMessage(error) });
+        throw upstreamError(errorMessage(error), error);
       }
     },
   );

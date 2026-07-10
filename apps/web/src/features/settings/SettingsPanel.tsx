@@ -1,5 +1,15 @@
 import * as React from "react";
-import { Check, Loader2, Mail, ShieldCheck, SlidersHorizontal, Sparkles, TriangleAlert } from "lucide-react";
+import {
+  Check,
+  DatabaseBackup,
+  Download,
+  Loader2,
+  Mail,
+  ShieldCheck,
+  SlidersHorizontal,
+  Sparkles,
+  TriangleAlert,
+} from "lucide-react";
 import { Trans, useTranslation } from "react-i18next";
 import {
   LANGUAGE_LABELS,
@@ -11,6 +21,7 @@ import {
 } from "@trailin/shared";
 import { api } from "@/lib/api";
 import { rememberLanguage } from "@/lib/i18n";
+import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { ListRow } from "@/components/ui/list-row";
@@ -145,7 +156,36 @@ export function SettingsPanel({ onStatusChanged }: { onStatusChanged?: () => voi
           <QuickActionsRow />
         </div>
       </Section>
+
+      <Section
+        index={4}
+        className="animate-in-up"
+        icon={<DatabaseBackup />}
+        title={t("settings.sections.data.title")}
+        description={t("settings.sections.data.description")}
+      >
+        <BackupRow />
+      </Section>
     </div>
+  );
+}
+
+/* ---------------- Local data ---------------- */
+
+/** Local database snapshot — everything except connection credentials, which live outside the DB. */
+function BackupRow() {
+  const { t } = useTranslation();
+  return (
+    <ListRow>
+      <div className="min-w-0">
+        <Label className="text-sm font-medium">{t("settings.backup.label")}</Label>
+        <p className="text-xs text-muted-foreground">{t("settings.backup.description")}</p>
+      </div>
+      <Button variant="secondary" size="sm" className="shrink-0" onClick={() => api.downloadBackup()}>
+        <Download />
+        {t("settings.backup.cta")}
+      </Button>
+    </ListRow>
   );
 }
 

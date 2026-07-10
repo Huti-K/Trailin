@@ -6,6 +6,7 @@ import "../email/registerProviders.js";
 import { listDraftsCached } from "../email/draftsService.js";
 import { getDraftProvider, type DraftProvider } from "../email/providers.js";
 import { listAccounts, pipedreamConfigured } from "../pipedream/connect.js";
+import { AppError, badRequest, notFound, upstreamError, upstreamStatusCode } from "../errors.js";
 import { errorMessage } from "../util.js";
 
 /** Resolve a connected account (any app with a draft provider) by its Pipedream account id. */
@@ -17,6 +18,19 @@ async function findDraftAccount(
   if (!account) return null;
   const provider = getDraftProvider(account.app);
   return provider ? { account, provider } : null;
+}
+
+/**
+ * A provider (Gmail/Outlook, via the Pipedream proxy) throwing 404 means the
+ * id doesn't exist there anymore — that's a client-facing 404, not an
+ * outage. Anything else genuinely failed upstream and stays a 502. An
+ * AppError already thrown deliberately below (e.g. notFound("account not
+ * found"), badRequest for an unsupported capability) passes through as-is.
+ */
+function toProviderError(error: unknown, notFoundMessage: string): AppError {
+  if (error instanceof AppError) return error;
+  if (upstreamStatusCode(error) === 404) return notFound(notFoundMessage);
+  return upstreamError(errorMessage(error), error);
 }
 
 /**
@@ -52,48 +66,50 @@ export async function draftRoutes(app: FastifyInstance): Promise<void> {
   /** Live drafts per connected account that has a DraftProvider (Gmail, Outlook, ...). */
   app.get<{ Querystring: { refresh?: string } }>(
     "/api/drafts",
-    async (req, reply): Promise<AccountDrafts[] | void> => {
+    async (req): Promise<AccountDrafts[]> => {
       if (!(await pipedreamConfigured())) return [];
       const refresh = req.query.refresh === "1";
+      let accounts: ConnectedAccount[];
       try {
-        const accounts = (await listAccounts()).filter((a) => getDraftProvider(a.app) !== null);
-        const byAccount = await Promise.all(
-          accounts.map(async (account): Promise<AccountDrafts> => {
-            try {
-              return {
-                account: account.name,
-                accountId: account.id,
-                drafts: await listDraftsCached(account, { refresh }),
-              };
-            } catch (error) {
-              return {
-                account: account.name,
-                accountId: account.id,
-                drafts: [],
-                error: errorMessage(error),
-              };
-            }
-          }),
-        );
-        return await attachConversationLinks(byAccount);
+        accounts = (await listAccounts()).filter((a) => getDraftProvider(a.app) !== null);
       } catch (error) {
-        req.log.error(error, "listing drafts failed");
-        return reply.code(502).send({ error: errorMessage(error) });
+        // Listing accounts is the one genuinely-upstream (Pipedream) step
+        // here; attachConversationLinks below is a local DB join and must
+        // not be misreported the same way if it fails.
+        throw upstreamError(errorMessage(error), error);
       }
+      const byAccount = await Promise.all(
+        accounts.map(async (account): Promise<AccountDrafts> => {
+          try {
+            return {
+              account: account.name,
+              accountId: account.id,
+              drafts: await listDraftsCached(account, { refresh }),
+            };
+          } catch (error) {
+            return {
+              account: account.name,
+              accountId: account.id,
+              drafts: [],
+              error: errorMessage(error),
+            };
+          }
+        }),
+      );
+      return attachConversationLinks(byAccount);
     },
   );
 
   /** Full draft content for the in-app viewer. */
   app.get<{ Params: { accountId: string; draftId: string } }>(
     "/api/drafts/:accountId/:draftId",
-    async (req, reply) => {
+    async (req) => {
       try {
         const found = await findDraftAccount(req.params.accountId);
-        if (!found) return reply.code(404).send({ error: "account not found" });
+        if (!found) throw notFound("account not found");
         return await found.provider.getDraftDetail(found.account, req.params.draftId);
       } catch (error) {
-        req.log.error(error, "reading draft failed");
-        return reply.code(502).send({ error: errorMessage(error) });
+        throw toProviderError(error, "draft not found");
       }
     },
   );
@@ -101,15 +117,14 @@ export async function draftRoutes(app: FastifyInstance): Promise<void> {
   /** Discard a draft (user-initiated from the UI; the agent has no such tool). */
   app.delete<{ Params: { accountId: string; draftId: string } }>(
     "/api/drafts/:accountId/:draftId",
-    async (req, reply) => {
+    async (req) => {
       try {
         const found = await findDraftAccount(req.params.accountId);
-        if (!found) return reply.code(404).send({ error: "account not found" });
+        if (!found) throw notFound("account not found");
         await found.provider.deleteDraft(found.account, req.params.draftId);
         return { ok: true };
       } catch (error) {
-        req.log.error(error, "deleting draft failed");
-        return reply.code(502).send({ error: errorMessage(error) });
+        throw toProviderError(error, "draft not found");
       }
     },
   );
@@ -124,21 +139,18 @@ export async function draftRoutes(app: FastifyInstance): Promise<void> {
   app.patch<{
     Params: { accountId: string; draftId: string };
     Body: { body?: string; subject?: string };
-  }>("/api/drafts/:accountId/:draftId", async (req, reply) => {
+  }>("/api/drafts/:accountId/:draftId", async (req) => {
     try {
       const found = await findDraftAccount(req.params.accountId);
-      if (!found) return reply.code(404).send({ error: "account not found" });
+      if (!found) throw notFound("account not found");
       if (!found.provider.updateDraft) {
-        return reply.code(400).send({ error: "editing a draft is not supported for this account" });
+        throw badRequest("editing a draft is not supported for this account");
       }
-      await found.provider.updateDraft(found.account, req.params.draftId, {
-        body: req.body.body,
-        subject: req.body.subject,
-      });
+      const { body, subject } = req.body ?? {};
+      await found.provider.updateDraft(found.account, req.params.draftId, { body, subject });
       return { ok: true };
     } catch (error) {
-      req.log.error(error, "updating draft failed");
-      return reply.code(502).send({ error: errorMessage(error) });
+      throw toProviderError(error, "draft not found");
     }
   });
 
@@ -153,12 +165,12 @@ export async function draftRoutes(app: FastifyInstance): Promise<void> {
     Querystring: { excludeMessageId?: string };
   }>(
     "/api/threads/:accountId/:threadId",
-    async (req, reply): Promise<EmailThread | void> => {
+    async (req): Promise<EmailThread> => {
       try {
         const found = await findDraftAccount(req.params.accountId);
-        if (!found) return reply.code(404).send({ error: "account not found" });
+        if (!found) throw notFound("account not found");
         if (!found.provider.getThread) {
-          return reply.code(400).send({ error: "reading the thread is not supported for this account" });
+          throw badRequest("reading the thread is not supported for this account");
         }
         const exclude = req.query.excludeMessageId?.trim();
         const messages = await found.provider.getThread(found.account, req.params.threadId, {
@@ -166,8 +178,7 @@ export async function draftRoutes(app: FastifyInstance): Promise<void> {
         });
         return { messages };
       } catch (error) {
-        req.log.error(error, "reading thread failed");
-        return reply.code(502).send({ error: errorMessage(error) });
+        throw toProviderError(error, "thread not found");
       }
     },
   );

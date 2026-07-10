@@ -1,5 +1,6 @@
 import { Client as McpClient } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { AccountDescription, AgentCard, ConnectedAccount } from "@trailin/shared";
 import { cardFromMcpResult, toCardAccount } from "../agent/cards.js";
@@ -8,10 +9,12 @@ import { getVoiceFor } from "../agent/voice.js";
 import { buildDemoEmailToolset } from "../demo/emailTools.js";
 import { getAccountDescriptions, getEmailWriteSetting } from "../db/settings.js";
 import "../email/registerProviders.js";
+import "../email/registerAttachmentProviders.js";
 import { getDraftProvider, type CreateDraftInput, type DraftProvider } from "../email/providers.js";
+import { getAttachmentProvider } from "../email/attachmentProviders.js";
 import { env } from "../env.js";
 import { moduleLogger } from "../logger.js";
-import { buildSaveAttachmentTool } from "./gmailAttachments.js";
+import { buildSaveAttachmentTool } from "../email/attachmentTool.js";
 import {
   getConnectConfig,
   getPipedreamAccessToken,
@@ -29,6 +32,29 @@ interface McpSession {
 }
 
 /**
+ * StreamableHTTPClientTransport calls this for every HTTP request it makes
+ * (initial SSE probe, each tool call POST, session teardown) — see its
+ * `send`/`_startOrAuthSse`/`terminateSession`, which all do
+ * `(this._fetch ?? fetch)(url, init)`. Injecting the Authorization header
+ * here, instead of baking a snapshot into `requestInit.headers` once at
+ * transport construction, is what keeps a long-lived cached MCP session
+ * (agent sessions are cached upstream with an idle-refreshing TTL, so a busy
+ * session can live indefinitely) authorized past the token's original expiry.
+ *
+ * getPipedreamAccessToken() is cheap to call per request: it resolves through
+ * @pipedream/sdk's OAuthTokenProvider (core/auth/OAuthTokenProvider), which
+ * caches the token in memory and only performs a network refresh once it's
+ * within its own 2-minute safety buffer of expiring — so this is an in-memory
+ * read almost every time, not a token fetch per tool call.
+ */
+const fetchWithFreshToken: FetchLike = async (url, init) => {
+  const token = await getPipedreamAccessToken();
+  const headers = new Headers(init?.headers);
+  headers.set("Authorization", `Bearer ${token}`);
+  return fetch(url, { ...init, headers });
+};
+
+/**
  * Open an MCP session pinned to ONE connected account. "tools-only" mode
  * exposes tools with real structured parameters (no sub-agent indirection);
  * x-pd-account-id makes every tool act as exactly this account, which is what
@@ -37,12 +63,11 @@ interface McpSession {
 async function connectForAccount(
   account: ConnectedAccount,
   config: ConnectConfig,
-  accessToken: string,
 ): Promise<McpSession> {
   const transport = new StreamableHTTPClientTransport(new URL(MCP_BASE_URL), {
+    fetch: fetchWithFreshToken,
     requestInit: {
       headers: {
-        Authorization: `Bearer ${accessToken}`,
         "x-pd-project-id": config.projectId,
         "x-pd-environment": config.environment,
         "x-pd-external-user-id": config.externalUserId,
@@ -113,22 +138,44 @@ function mcpContentToText(content: unknown): string {
     .join("\n");
 }
 
+/** Element type of session.client.listTools()'s `tools` array. */
+type McpToolInfo = Awaited<ReturnType<McpClient["listTools"]>>["tools"][number];
+
 /**
- * Wrap every tool of one account's session as a pi AgentTool. Also returns
- * the strict read-only subset (see isReadAction) so callers can build the
- * separate toolset background delegate workers get.
+ * One account's outcome from the parallel connect+listTools phase in
+ * loadEmailTools. `session: null` means connectForAccount itself failed
+ * (skip the account entirely); `session` set but `mcpTools: null` means the
+ * session opened but listTools failed (still build the account's non-MCP
+ * tools — draft/attachment — same as before parallelizing this).
  */
-async function bridgeAccountTools(
+interface AccountConnectResult {
+  account: ConnectedAccount;
+  session: McpSession | null;
+  mcpTools: McpToolInfo[] | null;
+}
+
+/**
+ * Wrap one account's already-fetched MCP tool list as pi AgentTools. Also
+ * returns the strict read-only subset (see isReadAction) so callers can
+ * build the separate toolset background delegate workers get.
+ *
+ * Takes `mcpTools` rather than fetching it itself — that fetch now runs in
+ * parallel across accounts (see loadEmailTools) — so this naming/dedup pass
+ * stays synchronous and can still run strictly in account order: which
+ * account "wins" a bare tool name on a seenNames collision depends on
+ * processing order, and parallelizing the network fetch must not change that.
+ */
+function buildAccountTools(
+  mcpTools: McpToolInfo[],
   session: McpSession,
   account: ConnectedAccount,
   needsSuffix: boolean,
   seenNames: Set<string>,
   allowWrite: boolean,
   purpose: string | undefined,
-): Promise<{ tools: AgentTool[]; readTools: AgentTool[] }> {
+): { tools: AgentTool[]; readTools: AgentTool[] } {
   const tools: AgentTool[] = [];
   const readTools: AgentTool[] = [];
-  const { tools: mcpTools } = await session.client.listTools();
   const suffix = needsSuffix ? `__${accountSlug(account)}` : "";
   // The user's note on why this account is connected — appended to every tool
   // so the model understands what the connection is meant for.
@@ -310,12 +357,16 @@ export async function loadEmailTools(): Promise<EmailToolset> {
   if (!config) return EMPTY_TOOLSET;
 
   let accounts: ConnectedAccount[];
-  let accessToken: string;
   let allowWrite: boolean;
   let descriptions: AccountDescription[];
   try {
-    [accounts, accessToken, allowWrite, descriptions] = await Promise.all([
+    [accounts, , allowWrite, descriptions] = await Promise.all([
       listAccounts(),
+      // Warm/validate the token cache before opening N MCP sessions below —
+      // bad credentials fail here once instead of as N identical connect
+      // failures. Each session's transport re-fetches through
+      // getPipedreamAccessToken() per request (see fetchWithFreshToken)
+      // rather than reusing this snapshot.
       getPipedreamAccessToken(),
       getEmailWriteSetting(),
       getAccountDescriptions(),
@@ -331,34 +382,63 @@ export async function loadEmailTools(): Promise<EmailToolset> {
   const perApp = new Map<string, number>();
   for (const account of accounts) perApp.set(account.app, (perApp.get(account.app) ?? 0) + 1);
 
+  // Connect + list tools for every account in parallel — two independent
+  // network round-trips per account (a remote MCP handshake, then a
+  // listTools call) that don't depend on any other account. Each attempt
+  // resolves to a per-account result rather than rejecting, so one account's
+  // failure can't drop or reorder the others, and every log line below still
+  // carries its own account/app fields. The naming/dedup pass that consumes
+  // these results stays a separate, synchronous, account-ordered loop (see
+  // buildAccountTools) so tool naming is exactly as deterministic as it was
+  // running fully sequentially.
+  const connectResults = await Promise.all(
+    accounts.map(async (account): Promise<AccountConnectResult> => {
+      let session: McpSession;
+      try {
+        session = await connectForAccount(account, config);
+      } catch (error) {
+        log.warn({ err: error, app: account.app, account: account.name }, "MCP session failed for account");
+        return { account, session: null, mcpTools: null };
+      }
+      try {
+        const { tools: mcpTools } = await session.client.listTools();
+        return { account, session, mcpTools };
+      } catch (error) {
+        log.warn({ err: error, app: account.app, account: account.name }, "listing tools failed for account");
+        return { account, session, mcpTools: null };
+      }
+    }),
+  );
+
   const sessions: McpSession[] = [];
   const tools: AgentTool[] = [];
   const readTools: AgentTool[] = [];
   const seenNames = new Set<string>();
 
-  for (const account of accounts) {
-    let session: McpSession;
-    try {
-      session = await connectForAccount(account, config, accessToken);
-    } catch (error) {
-      log.warn({ err: error, app: account.app, account: account.name }, "MCP session failed for account");
-      continue;
-    }
+  for (const { account, session, mcpTools } of connectResults) {
+    if (!session) continue;
     sessions.push(session);
     const needsSuffix = (perApp.get(account.app) ?? 0) > 1;
-    try {
-      const bridged = await bridgeAccountTools(
-        session,
-        account,
-        needsSuffix,
-        seenNames,
-        allowWrite,
-        purposeByAccount.get(account.id),
-      );
-      tools.push(...bridged.tools);
-      readTools.push(...bridged.readTools);
-    } catch (error) {
-      log.warn({ err: error, app: account.app, account: account.name }, "listing tools failed for account");
+    if (mcpTools) {
+      // buildAccountTools is now pure sync (its own listTools call already
+      // succeeded above), but keep it guarded the way the combined
+      // fetch+build step was before splitting them: one account's tool
+      // assembly failing must not abort the accounts after it in this loop.
+      try {
+        const bridged = buildAccountTools(
+          mcpTools,
+          session,
+          account,
+          needsSuffix,
+          seenNames,
+          allowWrite,
+          purposeByAccount.get(account.id),
+        );
+        tools.push(...bridged.tools);
+        readTools.push(...bridged.readTools);
+      } catch (error) {
+        log.warn({ err: error, app: account.app, account: account.name }, "building tools failed for account");
+      }
     }
     const suffix = needsSuffix ? `__${accountSlug(account)}` : "";
     const draftProvider = getDraftProvider(account.app);
@@ -371,14 +451,15 @@ export async function loadEmailTools(): Promise<EmailToolset> {
         tools.push(buildDraftTool(account, name, draftProvider));
       }
     }
-    if (account.app === "gmail") {
-      const name = sanitizeToolName(`gmail-save-attachment${suffix}`);
+    const attachmentProvider = getAttachmentProvider(account.app);
+    if (attachmentProvider) {
+      const name = sanitizeToolName(`${account.app}-save-attachment${suffix}`);
       if (!seenNames.has(name)) {
         seenNames.add(name);
         // Reads mail but writes only into the local document library, so it's
         // fine in read-only mode; kept out of readTools so background workers
         // can't grow the library.
-        tools.push(buildSaveAttachmentTool(account, name));
+        tools.push(buildSaveAttachmentTool(account, name, attachmentProvider));
       }
     }
   }

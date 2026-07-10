@@ -17,8 +17,8 @@ const defaultLog = moduleLogger("compaction");
 /** Fraction of the model's context window that triggers compaction. */
 const COMPACT_TRIGGER_FRACTION = 0.8;
 
-/** Approximate recent-context tokens kept verbatim after compaction. */
-const KEEP_RECENT_TOKENS = 20_000;
+/** Approximate recent-context tokens kept verbatim after compaction. Exported for testing findCutIndex. */
+export const KEEP_RECENT_TOKENS = 20_000;
 
 /** Prefixes shorter than this aren't worth the summarizer round trip. */
 const MIN_PREFIX_MESSAGES = 4;
@@ -56,12 +56,25 @@ function estimateStateTokens(systemPrompt: string, messages: AgentMessage[]): nu
 
 /**
  * Index of the first message to keep. Walks backward accumulating estimated
- * tokens until KEEP_RECENT_TOKENS is reached, then keeps walking back to the
- * nearest user message so the kept slice never opens on an orphaned
- * assistant/tool-result pair. Returns 0 (nothing to compact) when the whole
+ * tokens until KEEP_RECENT_TOKENS is reached, then nudges the index back over
+ * any toolResult messages so the kept slice never opens mid-tool-call-pair (a
+ * toolResult whose originating assistant tool_use was left in the compacted
+ * prefix — most providers reject that shape outright). Deliberately not
+ * "walk back to the nearest user message": one tool-heavy turn (a single user
+ * message followed by a long assistant/toolResult run, e.g. a many-thread
+ * digest) has no user message anywhere near the token cut point, and walking
+ * back that far collapses the cut to ~0 — nothing compacted, so the next
+ * prompt overflows again. Stepping back only over toolResult messages is
+ * bounded by one tool-call batch, so the cut point stays close to the
+ * token-based index and always makes progress; message 0 is never a
+ * toolResult (it always has a preceding assistant tool_use), so the loop is
+ * guaranteed to terminate. Returns 0 (nothing to compact) when the whole
  * transcript fits within KEEP_RECENT_TOKENS.
+ *
+ * Exported for direct unit testing — this walk is pure and LLM-free, unlike
+ * the rest of maybeCompact.
  */
-function findCutIndex(messages: AgentMessage[]): number {
+export function findCutIndex(messages: AgentMessage[]): number {
   let tokens = 0;
   let index = messages.length;
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -71,7 +84,7 @@ function findCutIndex(messages: AgentMessage[]): number {
     tokens += estimateTokens(message);
     index = i;
   }
-  while (index > 0 && messages[index]?.role !== "user") index--;
+  while (index > 0 && messages[index]?.role === "toolResult") index--;
   return index;
 }
 

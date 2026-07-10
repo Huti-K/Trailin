@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { and, desc, eq, ne, or } from "drizzle-orm";
 import type { SearchResult } from "@trailin/shared";
-import { db, schema } from "../db/index.js";
+import { db, schema, sqlite } from "../db/index.js";
 import { escapeLikeInput, likePattern } from "../util.js";
 import { getDemoDraftStore } from "../db/settings.js";
 import { env } from "../env.js";
@@ -11,6 +11,9 @@ import "../email/registerProviders.js";
 import { listDraftsCached } from "../email/draftsService.js";
 import { getDraftProvider } from "../email/providers.js";
 import { listAccounts } from "../pipedream/connect.js";
+import { moduleLogger } from "../logger.js";
+
+const log = moduleLogger("search");
 
 /**
  * Global search across chats, automation runs (digests), drafts, library
@@ -77,23 +80,49 @@ function buildSnippet(text: string, query: string): string {
 }
 
 /**
+ * Turn free text into a safe FTS5 MATCH expression: every term double-quoted,
+ * so FTS5 query syntax in the user's own input (`-`, `"`, `*`, ...) can't
+ * break or redirect the query. Same quoting approach as library/store.ts's
+ * buildMatch. Null when the query has no word/number characters to search on.
+ */
+export function buildMessagesMatch(query: string): string | null {
+  const terms = query.match(/[\p{L}\p{N}]+/gu)?.slice(0, 12);
+  if (!terms || terms.length === 0) return null;
+  return terms.map((t) => `"${t}"`).join(" ");
+}
+
+interface MessageHitRow {
+  id: string;
+  title: string;
+  createdAt: string;
+  content: string;
+}
+
+// messages_fts is external-content (see db/index.ts) — it holds no text of its
+// own, so every hit is joined back to `messages` by rowid to read `content`,
+// and to `conversations` for the title/type/id the palette actually shows.
+// The MATCH operand must be the FTS5 table's own name, not an alias, or
+// SQLite treats it as a plain (nonexistent) column reference.
+const messageHitsStmt = sqlite.prepare(`
+  SELECT c.id AS id, c.title AS title, c.created_at AS createdAt, m.content AS content
+  FROM messages_fts
+  JOIN messages m ON m.rowid = messages_fts.rowid
+  JOIN conversations c ON c.id = m.conversation_id
+  WHERE messages_fts MATCH ? AND c.type != 'automation'
+  ORDER BY m.created_at DESC
+  LIMIT ?
+`);
+
+/**
  * Chat conversations (type != "automation"): matches on title or any message
  * content, one hit per conversation. Message matches are checked first (they
  * carry a more useful snippet); title-only matches fill the remaining slots.
  */
 async function searchChats(query: string, pattern: string): Promise<SearchResult[]> {
-  const messageHits = await db
-    .select({
-      id: schema.conversations.id,
-      title: schema.conversations.title,
-      createdAt: schema.conversations.createdAt,
-      content: schema.messages.content,
-    })
-    .from(schema.messages)
-    .innerJoin(schema.conversations, eq(schema.conversations.id, schema.messages.conversationId))
-    .where(and(ne(schema.conversations.type, "automation"), likePattern(schema.messages.content, pattern)))
-    .orderBy(desc(schema.messages.createdAt))
-    .limit(PER_TYPE_LIMIT * 4);
+  const match = buildMessagesMatch(query);
+  const messageHits = match
+    ? (messageHitsStmt.all(match, PER_TYPE_LIMIT * 4) as MessageHitRow[])
+    : [];
 
   const results: SearchResult[] = [];
   const seen = new Set<string>();
@@ -289,6 +318,18 @@ async function searchMemories(query: string): Promise<SearchResult[]> {
   }));
 }
 
+/**
+ * Runs one source, logging and falling back to an empty list on failure
+ * instead of throwing — so a corrupt index or a downed provider blanks only
+ * its own heading in the palette rather than the whole `Promise.all`.
+ */
+function safeSource(source: string, run: Promise<SearchResult[]>): Promise<SearchResult[]> {
+  return run.catch((err: unknown) => {
+    log.warn({ err, source }, "search source failed");
+    return [];
+  });
+}
+
 export async function searchRoutes(app: FastifyInstance): Promise<void> {
   app.get<{ Querystring: { q?: string } }>("/api/search", async (req) => {
     const query = (req.query.q ?? "").trim();
@@ -296,11 +337,11 @@ export async function searchRoutes(app: FastifyInstance): Promise<void> {
     const pattern = `%${escapeLikeInput(query)}%`;
 
     const [runs, chats, drafts, documents, memories] = await Promise.all([
-      searchRuns(query, pattern).catch(() => []),
-      searchChats(query, pattern).catch(() => []),
-      searchDrafts(query).catch(() => []),
-      searchDocuments(query).catch(() => []),
-      searchMemories(query).catch(() => []),
+      safeSource("runs", searchRuns(query, pattern)),
+      safeSource("chats", searchChats(query, pattern)),
+      safeSource("drafts", searchDrafts(query)),
+      safeSource("documents", searchDocuments(query)),
+      safeSource("memories", searchMemories(query)),
     ]);
 
     // Grouped by type in a fixed order: run, chat, draft, document, memory.

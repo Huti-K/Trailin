@@ -10,10 +10,20 @@ const demoMode = optional("TRAILIN_DEMO") === "1";
 
 export const env = {
   port: Number(optional("PORT") ?? 3001),
+  // Loopback by default: the API has no authentication, so it must not be
+  // reachable from the LAN out of the box. Set HOST=0.0.0.0 to expose it
+  // deliberately (e.g. a container or a trusted host).
+  host: optional("HOST") ?? "127.0.0.1",
   demoMode,
   isProduction: process.env.NODE_ENV === "production",
   /** pino level: fatal | error | warn | info | debug | trace | silent. */
   logLevel: optional("LOG_LEVEL") ?? "info",
+  // Opt-in file sink for logs (rotated daily / at 10MB, 14 files kept), so an
+  // unattended run's output survives past the terminal. Unset = stdout only.
+  logFile: optional("LOG_FILE"),
+  // Hard deadline for a single automation run before its agent turn is
+  // aborted, so a stuck model/MCP call can't wedge a schedule forever.
+  automationRunTimeoutMs: Number(optional("AUTOMATION_RUN_TIMEOUT_MS") ?? 300_000),
   // Demo mode defaults to a sibling database file so it can never touch the
   // user's real data — an explicit DATABASE_PATH still always wins.
   databasePath:
@@ -23,6 +33,20 @@ export const env = {
 
   agentProvider: optional("AGENT_PROVIDER") ?? "anthropic",
   agentModel: optional("AGENT_MODEL") ?? "claude-opus-4-8",
+
+  /** Mailbox mirror (email/sync/): poll cadence, initial backfill window, page size. */
+  sync: {
+    intervalMs: Number(optional("SYNC_INTERVAL_MS") ?? 180_000),
+    backfillDays: Number(optional("SYNC_BACKFILL_DAYS") ?? 30),
+    pageSize: Number(optional("SYNC_PAGE_SIZE") ?? 50),
+  },
+  /** Thread enrichment (email/enrich/): cheap-tier model override + cycle caps. */
+  enrich: {
+    /** Model id tried against the active provider before the built-in cheap candidates. */
+    model: optional("ENRICH_MODEL"),
+    batch: Number(optional("ENRICH_BATCH") ?? 20),
+    concurrency: Number(optional("ENRICH_CONCURRENCY") ?? 2),
+  },
 
   // Fallbacks only — credentials saved in the app (Settings → Connect email)
   // take precedence; see pipedream/connect.ts.

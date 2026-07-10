@@ -1,5 +1,5 @@
 import { createRequire } from "node:module";
-import { pino, type Logger } from "pino";
+import { pino, type Logger, type TransportSingleOptions, type TransportMultiOptions } from "pino";
 import { env } from "./env.js";
 
 /**
@@ -70,6 +70,44 @@ function prettyTransport(): { target: string; options: Record<string, unknown> }
 }
 
 /**
+ * Where logs go. With no LOG_FILE this is unchanged: pino-pretty in a dev TTY,
+ * or `undefined` (pino's fast direct-to-stdout JSON) otherwise. When LOG_FILE
+ * is set, tee the same stream to a rotating file (pino-roll: daily or at 10MB,
+ * 14 files kept) so an unattended run's output survives the terminal closing.
+ */
+function buildTransport(): TransportSingleOptions | TransportMultiOptions | undefined {
+  const pretty = prettyTransport();
+  if (!env.logFile) return pretty;
+  // pino loads transport targets in a worker thread that doesn't inherit this
+  // package's pnpm resolution, so resolve pino-roll to an absolute path (same
+  // reason prettyTransport does). If it isn't installed, keep console logging
+  // rather than taking the whole logger — and boot — down over a file sink.
+  let rollTarget: string;
+  try {
+    rollTarget = require_.resolve("pino-roll");
+  } catch {
+    return pretty;
+  }
+  const consoleTarget = pretty ?? { target: "pino/file", options: { destination: 1 } };
+  return {
+    targets: [
+      { ...consoleTarget, level },
+      {
+        target: rollTarget,
+        level,
+        options: {
+          file: env.logFile,
+          frequency: "daily",
+          size: "10m",
+          limit: { count: 14 },
+          mkdir: true,
+        },
+      },
+    ],
+  };
+}
+
+/**
  * The process-wide logger. Fastify is handed this instance (see index.ts), so
  * `req.log` is a child of it and every line — request, route, agent, scheduler
  * — shares one level, one format and one redaction policy.
@@ -77,7 +115,7 @@ function prettyTransport(): { target: string; options: Record<string, unknown> }
 export const logger: Logger = pino({
   level,
   redact: { paths: REDACT_PATHS, censor: "[redacted]" },
-  transport: prettyTransport(),
+  transport: buildTransport(),
 });
 
 /**

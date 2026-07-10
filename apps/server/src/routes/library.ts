@@ -3,15 +3,10 @@ import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { FastifyInstance } from "fastify";
 import type { LibraryStatus } from "@trailin/shared";
-import {
-  deleteDocument,
-  getLibraryDir,
-  saveUpload,
-  scanLibrary,
-  setLibraryFolder,
-} from "../library/ingest.js";
+import { deleteDocument, getLibraryDir, saveUpload, setLibraryFolder } from "../library/ingest.js";
 import { pickFolder } from "../library/pickFolder.js";
 import { getDocument, listDocuments, searchChunks, type SearchHit } from "../library/store.js";
+import { badRequest, notFound } from "../errors.js";
 import { errorMessage } from "../util.js";
 
 const UPLOAD_LIMIT = 64 * 1024 * 1024;
@@ -81,12 +76,27 @@ function mimeForExt(ext: string): string {
       return "text/plain; charset=utf-8";
     case "html":
     case "htm":
-      return "text/html; charset=utf-8";
+      // Never text/html: library folders hold sender-controlled content
+      // (saved email exports), and serving that inline as HTML on the app
+      // origin would let its script call every /api endpoint.
+      return "text/plain; charset=utf-8";
     case "docx":
       return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
     default:
       return "application/octet-stream";
   }
+}
+
+/**
+ * Build a Content-Disposition header value for a filename that may contain
+ * non-Latin1 or quote characters, which Node's raw header serializer rejects
+ * (ERR_INVALID_CHAR) or which would otherwise malform the quoted-string.
+ * Ships an ASCII `filename` fallback plus the exact name via RFC 5987/6266
+ * `filename*`.
+ */
+function contentDisposition(kind: "inline" | "attachment", filename: string): string {
+  const ascii = filename.replace(/[\\"]/g, "").replace(/[^\x20-\x7e]/g, "_");
+  return `${kind}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
 }
 
 /** The document library: list, upload into the drop folder, rescan, delete. */
@@ -112,11 +122,11 @@ export async function libraryRoutes(app: FastifyInstance): Promise<void> {
     return { results: searchDocuments(q) };
   });
 
-  app.put<{ Body: { folder?: string } }>("/api/library/folder", async (req, reply) => {
+  app.put<{ Body: { folder?: string } }>("/api/library/folder", async (req) => {
     try {
       await setLibraryFolder(req.body?.folder ?? "");
     } catch (error) {
-      return reply.code(400).send({ error: errorMessage(error) });
+      throw badRequest(errorMessage(error));
     }
     return status();
   });
@@ -124,33 +134,28 @@ export async function libraryRoutes(app: FastifyInstance): Promise<void> {
   // Opens the OS's native folder-picker dialog on the server's machine and,
   // unless the user cancels, applies the chosen folder — same validation as
   // the manual PUT above, since setLibraryFolder does the actual switching.
-  app.post("/api/library/folder/pick", async (req, reply) => {
+  app.post("/api/library/folder/pick", async () => {
     try {
       const picked = await pickFolder();
       if ("canceled" in picked) return { canceled: true };
       await setLibraryFolder(picked.path);
     } catch (error) {
-      return reply.code(400).send({ error: errorMessage(error) });
+      throw badRequest(errorMessage(error));
     }
-    return status();
-  });
-
-  app.post("/api/library/scan", async () => {
-    await scanLibrary();
     return status();
   });
 
   app.post<{ Querystring: { name?: string } }>(
     "/api/library/files",
     { bodyLimit: UPLOAD_LIMIT },
-    async (req, reply) => {
+    async (req) => {
       if (!Buffer.isBuffer(req.body)) {
-        return reply.code(400).send({ error: "send the file as application/octet-stream" });
+        throw badRequest("send the file as application/octet-stream");
       }
       try {
         await saveUpload(req.query.name ?? "", req.body);
       } catch (error) {
-        return reply.code(400).send({ error: errorMessage(error) });
+        throw badRequest(errorMessage(error));
       }
       return status();
     },
@@ -159,21 +164,24 @@ export async function libraryRoutes(app: FastifyInstance): Promise<void> {
   // Stream the original file so the browser can view/download it.
   app.get<{ Params: { id: string } }>("/api/library/documents/:id/open", async (req, reply) => {
     const doc = await getDocument(req.params.id);
-    if (!doc) return reply.code(404).send({ error: "document not found" });
+    if (!doc) throw notFound("document not found");
 
     const absPath = join(getLibraryDir(), doc.path);
     try {
       await stat(absPath);
     } catch {
-      return reply.code(404).send({ error: "file not found on disk" });
+      throw notFound("file not found on disk");
     }
 
     const mime = mimeForExt(doc.ext);
-    // PDFs and text open in-browser ("inline"); everything else downloads.
-    const inline = /^(application\/pdf|text\/)/.test(mime);
-    const disposition = inline
-      ? `inline; filename="${doc.title}.${doc.ext}"`
-      : `attachment; filename="${doc.title}.${doc.ext}"`;
+    // PDFs and plain text (html/htm included, mapped to text/plain above so
+    // it renders as inert source rather than executing) open in-browser;
+    // everything else downloads.
+    const inline = /^(application\/pdf|text\/plain)/.test(mime);
+    const disposition = contentDisposition(
+      inline ? "inline" : "attachment",
+      `${doc.title}.${doc.ext}`,
+    );
 
     return reply
       .header("Content-Type", mime)
@@ -181,9 +189,9 @@ export async function libraryRoutes(app: FastifyInstance): Promise<void> {
       .send(createReadStream(absPath));
   });
 
-  app.delete<{ Params: { id: string } }>("/api/library/documents/:id", async (req, reply) => {
+  app.delete<{ Params: { id: string } }>("/api/library/documents/:id", async (req) => {
     if (!(await deleteDocument(req.params.id))) {
-      return reply.code(404).send({ error: "document not found" });
+      throw notFound("document not found");
     }
     return status();
   });

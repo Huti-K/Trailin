@@ -11,7 +11,9 @@
     surface-2   — one step down (inputs, chips, hover)
 
   Ink is the brand (near-black CTAs). Indigo is the single spot accent.
-  No borders at rest anywhere; the only stroke is the a11y focus ring.
+  No borders at rest anywhere; the only strokes are the a11y focus ring and
+  the --border hairline, reserved for dividers inside dense content
+  (thread rails, markdown tables, meta rows).
 */
 :root, .light {
   color-scheme: light;
@@ -46,6 +48,9 @@
   --filetype-c: 0.1375;
 
   --ring: oklch(0.535 0.2876 286.97);
+  /* The ONE hairline tone — every divider/rail/table rule uses it as-is,
+     never with an opacity modifier, so all lines match. */
+  --border: color-mix(in oklch, var(--foreground) 12%, transparent);
   /* Clean white nav rail — sits a touch brighter than the canvas, no border needed. */
   --sidebar: oklch(1 0 0);
 
@@ -65,14 +70,17 @@
 
 .dark {
   color-scheme: dark;
-  --background: oklch(0.2867 0.015 260);
-  --surface: oklch(0.3293 0.018 260);
-  --surface-2: oklch(0.3755 0.02 260);
+  /* True near-black canvas with only a whisper of the accent's cool hue —
+     reads black, not tinted grey. Same three-step spacing as light: each
+     surface sits ~0.04 L above the one behind it. */
+  --background: oklch(0.16 0.006 287);
+  --surface: oklch(0.205 0.007 287);
+  --surface-2: oklch(0.25 0.008 287);
   --foreground: oklch(0.96 0.004 255);
 
-  --muted: oklch(0.3084 0.009 260);
+  --muted: oklch(0.185 0.005 287);
   --muted-foreground: oklch(0.7008 0.012 258);
-  --secondary: oklch(0.3274 0.009 260);
+  --secondary: oklch(0.2 0.005 287);
   --secondary-foreground: oklch(0.924 0.005 255);
 
   /* Ink flips to light-on-dark for CTAs. */
@@ -92,10 +100,11 @@
   --filetype-c: 0.1375;
 
   --ring: oklch(0.6987 0.2104 286.13);
-  --sidebar: oklch(0.2096 0.006 260);
+  --border: color-mix(in oklch, var(--foreground) 12%, transparent);
+  --sidebar: oklch(0.12 0.005 287);
 
   --grain-opacity: 0.028;
-  --shadow-ink: 0.02 0.01 260;
+  --shadow-ink: 0.02 0.01 287;
 
   --surface-2-fill: var(--surface-2);
   --secondary-fill: var(--secondary);
@@ -126,6 +135,7 @@
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
   --color-ring: var(--ring);
+  --color-border: var(--border);
 
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
@@ -321,6 +331,22 @@
   animation: enter-up 0.36s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
+/* Mirror of enter-up for popovers flipped above their anchor — the motion
+   still originates at the field. */
+@keyframes enter-down {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.animate-in-down {
+  animation: enter-down 0.36s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
 /*
   Command palette (Cmd+K). Radix flips `data-state` on the overlay and the
   panel, and its Presence keeps the node mounted while the exit animation
@@ -429,11 +455,102 @@
   }
 }
 
+/* Ambient aurora behind the center pane. Deliberately cheap: two soft
+   radial-gradient blobs (no blur filter — the gradient falloff IS the blur),
+   each promoted to its own layer and moved only with transform, so after the
+   first paint the browser composites cached textures and never repaints.
+   Hidden tabs pause compositor animations, so idle cost is zero. */
+.aurora {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+  /* Clear the reading column: the glow lives at the pane's edges and fades
+     to nothing where the centered content sits, so text never loses contrast. */
+  -webkit-mask-image: radial-gradient(110% 110% at 50% 42%, transparent 34%, black 80%);
+  mask-image: radial-gradient(110% 110% at 50% 42%, transparent 34%, black 80%);
+}
+.aurora::before,
+.aurora::after {
+  content: "";
+  position: absolute;
+  width: 36rem;
+  height: 36rem;
+  border-radius: 50%;
+  will-change: transform;
+}
+.aurora::before {
+  top: -14rem;
+  left: -10rem;
+  background: radial-gradient(
+    closest-side,
+    color-mix(in oklch, var(--accent) 9%, transparent),
+    transparent 72%
+  );
+  animation: aurora-a 70s ease-in-out infinite alternate;
+}
+.aurora::after {
+  bottom: -16rem;
+  right: -12rem;
+  background: radial-gradient(
+    closest-side,
+    color-mix(in oklch, var(--accent-soft) 7%, transparent),
+    transparent 72%
+  );
+  animation: aurora-b 90s ease-in-out infinite alternate;
+}
+/* The dark canvas swallows low-chroma tints; the bloom needs a touch more ink. */
+.dark .aurora::before {
+  background: radial-gradient(
+    closest-side,
+    color-mix(in oklch, var(--accent) 13%, transparent),
+    transparent 72%
+  );
+}
+.dark .aurora::after {
+  background: radial-gradient(
+    closest-side,
+    color-mix(in oklch, var(--accent-soft) 10%, transparent),
+    transparent 72%
+  );
+}
+/* Short travel: the blobs breathe along their own edge instead of drifting
+   under the content column. */
+@keyframes aurora-a {
+  0% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(4rem, 3rem, 0) scale(1.14);
+  }
+  100% {
+    transform: translate3d(1rem, 6rem, 0) scale(0.96);
+  }
+}
+@keyframes aurora-b {
+  0% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(-5rem, -3rem, 0) scale(1.1);
+  }
+  100% {
+    transform: translate3d(-2rem, -6rem, 0) scale(1.2);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
+  /* Static tint stays; only the drift stops. */
+  .aurora::before,
+  .aurora::after {
+    animation: none;
+  }
   html {
     scroll-behavior: auto;
   }
-  .animate-in-up {
+  .animate-in-up,
+  .animate-in-down {
     animation: none;
   }
   .skeleton::after {

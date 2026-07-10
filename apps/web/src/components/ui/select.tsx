@@ -3,6 +3,24 @@ import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import { ChevronDown, Check } from "lucide-react";
 
+const LIST_MAX_HEIGHT = 240; // matches the old max-h-60 cap
+const LIST_MIN_HEIGHT = 128; // never squeeze below ~4 rows, even on short windows
+const LIST_VIEWPORT_MARGIN = 12; // field↔list gap plus breathing room at the viewport edge
+const LIST_ROW_HEIGHT = 34; // pre-render estimate of one option row incl. gap
+const LIST_CHROME = 10; // listbox padding + border
+
+// Scroll only the listbox. scrollIntoView would also scroll every scrollable
+// ancestor, yanking the whole page whenever the list pokes past the viewport.
+function scrollRowIntoView(list: HTMLDivElement | null, selector: string) {
+  const el = list?.querySelector<HTMLElement>(selector);
+  if (!list || !el) return;
+  if (el.offsetTop < list.scrollTop) {
+    list.scrollTop = el.offsetTop;
+  } else if (el.offsetTop + el.offsetHeight > list.scrollTop + list.clientHeight) {
+    list.scrollTop = el.offsetTop + el.offsetHeight - list.clientHeight;
+  }
+}
+
 /**
  * Dropdown select. Plain by default; pass `searchable` for a type-to-filter
  * combobox — only worth it on long lists (languages, timezones), not on
@@ -36,6 +54,7 @@ export function Select({
   const [isOpen, setIsOpen] = React.useState(false);
   const [search, setSearch] = React.useState("");
   const [highlighted, setHighlighted] = React.useState(0);
+  const [placement, setPlacement] = React.useState({ dropUp: false, maxHeight: LIST_MAX_HEIGHT });
   const containerRef = React.useRef<HTMLDivElement>(null);
   const listRef = React.useRef<HTMLDivElement>(null);
   const inputRef = React.useRef<HTMLInputElement>(null);
@@ -50,7 +69,25 @@ export function Select({
     ? options.filter((o) => o.label.toLowerCase().includes(search.toLowerCase()))
     : options;
 
+  // Measured once per open. Below is home: a list that doesn't fully fit
+  // shrinks and scrolls there first, and only flips above the field when
+  // below can't even show a comfortable minimum and above offers more room.
+  const measurePlacement = () => {
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const spaceBelow = window.innerHeight - rect.bottom - LIST_VIEWPORT_MARGIN;
+    const spaceAbove = rect.top - LIST_VIEWPORT_MARGIN;
+    const needed = Math.min(LIST_MAX_HEIGHT, options.length * LIST_ROW_HEIGHT + LIST_CHROME);
+    const dropUp = spaceBelow < needed && spaceBelow < LIST_MIN_HEIGHT && spaceAbove > spaceBelow;
+    const maxHeight = Math.min(
+      LIST_MAX_HEIGHT,
+      Math.max(LIST_MIN_HEIGHT, dropUp ? spaceAbove : spaceBelow)
+    );
+    setPlacement({ dropUp, maxHeight });
+  };
+
   const open = () => {
+    measurePlacement();
     setSearch("");
     setHighlighted(Math.max(0, options.findIndex((o) => o.value === value)));
     setIsOpen(true);
@@ -78,17 +115,13 @@ export function Select({
   // Anchor the eye on open: the current value starts visible.
   React.useEffect(() => {
     if (!isOpen) return;
-    listRef.current
-      ?.querySelector('[data-selected="true"]')
-      ?.scrollIntoView({ block: "nearest" });
+    scrollRowIntoView(listRef.current, '[data-selected="true"]');
   }, [isOpen]);
 
   // Keep the active row visible while arrowing through a long list.
   React.useEffect(() => {
     if (!isOpen || !keyNav.current) return;
-    listRef.current
-      ?.querySelector('[data-highlighted="true"]')
-      ?.scrollIntoView({ block: "nearest" });
+    scrollRowIntoView(listRef.current, '[data-highlighted="true"]');
   }, [highlighted, isOpen]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -143,7 +176,10 @@ export function Select({
           onChange={(e) => {
             setSearch(e.target.value);
             setHighlighted(0);
-            if (!isOpen) setIsOpen(true);
+            if (!isOpen) {
+              measurePlacement();
+              setIsOpen(true);
+            }
           }}
           onClick={() => {
             if (searchable) {
@@ -173,7 +209,11 @@ export function Select({
           ref={listRef}
           id={`${id}-listbox`}
           role="listbox"
-          className="surface-pop animate-in-up absolute z-50 mt-1 flex max-h-60 w-full flex-col gap-0.5 overflow-y-auto p-1"
+          style={{ maxHeight: placement.maxHeight }}
+          className={cn(
+            "surface-pop absolute z-50 flex w-full flex-col gap-0.5 overflow-y-auto p-1",
+            placement.dropUp ? "animate-in-down bottom-full mb-1" : "animate-in-up mt-1"
+          )}
         >
           {filteredOptions.length === 0 ? (
             <div className="p-2 text-center text-sm text-muted-foreground">

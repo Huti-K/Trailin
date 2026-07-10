@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Inbox, Loader2, Mail, Plus, Trash2 } from "lucide-react";
+import { Inbox, Loader2, Mail, Pencil, Plus, Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import {
   EMAIL_APPS,
@@ -21,7 +21,7 @@ import { ListRow } from "@/components/ui/list-row";
 import { ColorPicker } from "@/components/ui/color-picker";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { toast } from "@/lib/toast";
-import { cn, errorMessage } from "@/lib/utils";
+import { cn, errorMessage, UNASSIGNED_ACCOUNT_COLOR } from "@/lib/utils";
 
 
 /** App logo from Pipedream, falling back to a generic mail glyph. */
@@ -135,6 +135,9 @@ export function Accounts({ onChanged }: { onChanged?: () => void }) {
   const [removing, setRemoving] = React.useState(false);
   const [colors, setColors] = React.useState<AccountColor[]>([]);
   const [descriptions, setDescriptions] = React.useState<AccountDescription[]>([]);
+  const [editingId, setEditingId] = React.useState<string | null>(null);
+  const [noteDraft, setNoteDraft] = React.useState("");
+  const noteHandled = React.useRef(false);
 
   // Debounced catalog search; empty query shows the e-mail suggestions.
   React.useEffect(() => {
@@ -238,7 +241,12 @@ export function Accounts({ onChanged }: { onChanged?: () => void }) {
         token: token.token,
         onSuccess: () => {
           setConnecting(false);
-          void load().then(() => onChanged?.());
+          // The new account has no color yet — assign one against the latest
+          // saved colors rather than waiting for a remount to pick it up.
+          void load().then((next) => {
+            if (next) void loadColors().then((saved) => ensureColors(next, saved));
+            onChanged?.();
+          });
         },
         onError: (err) => {
           setConnecting(false);
@@ -267,18 +275,46 @@ export function Accounts({ onChanged }: { onChanged?: () => void }) {
     }
   };
 
-  const updateColor = async (
-    accountId: string,
-    hex: string,
-  ) => {
-    const next = colors.filter((c) => c.accountId !== accountId);
-    next.push({ accountId, hex });
-    setColors(next);
+  // react-colorful fires onChange on every pointer-move tick while dragging, and
+  // the hex input fires on every keystroke — persisting each one issues dozens of
+  // concurrent POSTs whose responses can land out of order. Debounce the persist
+  // (the swatch itself still updates immediately via setColors below) and replay
+  // it once more if a newer color arrived while a write was in flight, so the
+  // last color the user picked is always the one that ends up saved.
+  const colorPersistRef = React.useRef<{
+    timer: ReturnType<typeof setTimeout> | null;
+    saving: boolean;
+    pending: AccountColor[] | null;
+  }>({ timer: null, saving: false, pending: null });
+
+  const flushColorPersist = async () => {
+    const state = colorPersistRef.current;
+    if (state.saving || !state.pending) return;
+    const next = state.pending;
+    state.pending = null;
+    state.saving = true;
     try {
       await api.setAccountColors(next);
     } catch (err) {
       toast.error(errorMessage(err));
+    } finally {
+      state.saving = false;
+      if (state.pending) void flushColorPersist();
     }
+  };
+
+  const updateColor = (accountId: string, hex: string) => {
+    const next = colors.filter((c) => c.accountId !== accountId);
+    next.push({ accountId, hex });
+    setColors(next);
+
+    const state = colorPersistRef.current;
+    state.pending = next;
+    if (state.timer) clearTimeout(state.timer);
+    state.timer = setTimeout(() => {
+      state.timer = null;
+      void flushColorPersist();
+    }, 300);
   };
 
   const colorFor = (accountId: string): AccountColor | undefined =>
@@ -286,6 +322,28 @@ export function Accounts({ onChanged }: { onChanged?: () => void }) {
 
   const noteFor = (accountId: string) =>
     descriptions.find((d) => d.accountId === accountId)?.text ?? "";
+
+  const startEditingNote = (accountId: string) => {
+    // Enter/Escape set this true and unmount the input without firing blur
+    // (browsers don't dispatch focusout for a removed element), so a stale
+    // true would swallow the next edit's blur-commit. Clear it up front.
+    noteHandled.current = false;
+    setNoteDraft(noteFor(accountId));
+    setEditingId(accountId);
+  };
+
+  const commitNote = async (accountId: string) => {
+    setEditingId(null);
+    const text = noteDraft.trim();
+    const next = descriptions.filter((d) => d.accountId !== accountId);
+    if (text) next.push({ accountId, text });
+    setDescriptions(next);
+    try {
+      await api.setAccountDescriptions(next);
+    } catch (err) {
+      toast.error(errorMessage(err));
+    }
+  };
 
   // Split the pre-search suggestions into "email apps" and "everything else",
   // so the picker shows email providers plus a taste of the wider catalog.
@@ -390,17 +448,44 @@ export function Accounts({ onChanged }: { onChanged?: () => void }) {
                 <ListRow className="relative">
                   <div className="flex min-w-0 items-center gap-3">
                     <ColorPicker
-                      color={colorFor(account.id)?.hex ?? "#616161"}
-                      onSelect={(hex) => void updateColor(account.id, hex)}
+                      color={colorFor(account.id)?.hex ?? UNASSIGNED_ACCOUNT_COLOR}
+                      onSelect={(hex) => updateColor(account.id, hex)}
                     />
                     <AppIcon src={account.imgSrc} />
                     <div className="min-w-0">
                       <p className="truncate text-sm font-medium">{account.name}</p>
                       <p className="text-xs text-muted-foreground">{appLabel(account)}</p>
-                      {noteFor(account.id) && (
-                        <p className="mt-0.5 truncate text-xs italic text-muted-foreground">
-                          {noteFor(account.id)}
-                        </p>
+                      {editingId === account.id ? (
+                        <Input
+                          autoFocus
+                          value={noteDraft}
+                          onChange={(e) => setNoteDraft(e.target.value)}
+                          onFocus={(e) => e.currentTarget.select()}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              noteHandled.current = true;
+                              void commitNote(account.id);
+                            } else if (e.key === "Escape") {
+                              noteHandled.current = true;
+                              setEditingId(null);
+                            }
+                          }}
+                          onBlur={() => {
+                            if (noteHandled.current) {
+                              noteHandled.current = false;
+                              return;
+                            }
+                            void commitNote(account.id);
+                          }}
+                          placeholder={t("connections.notePlaceholder")}
+                          className="mt-0.5 h-6 w-full min-w-0 px-1.5 py-0 text-xs"
+                        />
+                      ) : (
+                        noteFor(account.id) && (
+                          <p className="mt-0.5 truncate text-xs italic text-muted-foreground">
+                            {noteFor(account.id)}
+                          </p>
+                        )
                       )}
                     </div>
                   </div>
@@ -408,6 +493,14 @@ export function Accounts({ onChanged }: { onChanged?: () => void }) {
                     <Badge variant={account.healthy ? "success" : "destructive"}>
                       {account.healthy ? t("connections.healthy") : t("connections.unhealthy")}
                     </Badge>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => startEditingNote(account.id)}
+                      title={t("connections.editNote")}
+                    >
+                      <Pencil className="h-4 w-4 text-muted-foreground" />
+                    </Button>
                     <Button
                       variant="ghost"
                       size="icon"

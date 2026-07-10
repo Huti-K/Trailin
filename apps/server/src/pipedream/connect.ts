@@ -262,10 +262,21 @@ let accountsCache: { accounts: ConnectedAccount[]; expiresAt: number } | null = 
 // refresh landing mid-fetch) join the one request already in flight instead
 // of firing a second one at Pipedream.
 let accountsInFlight: Promise<ConnectedAccount[]> | null = null;
+/**
+ * Generation accountsInFlight was dispatched under, paired with
+ * accountsGeneration below — same bug shape (and same fix) as
+ * draftsService.ts's per-account generation counter: a fetch dispatched
+ * under old credentials/state must not repopulate accountsCache, or be
+ * joined by a new caller, once invalidateAccountsCache has moved the
+ * generation on.
+ */
+let accountsInFlightGeneration = 0;
+let accountsGeneration = 0;
 
 /** Drop the cache so the next call fetches live. Call on anything that changes which accounts exist or which Pipedream project is active. */
 export function invalidateAccountsCache(): void {
   accountsCache = null;
+  accountsGeneration++;
 }
 
 async function fetchAccountsLive(): Promise<ConnectedAccount[]> {
@@ -311,16 +322,29 @@ export async function listAccounts(opts: { refresh?: boolean } = {}): Promise<Co
     return accountsCache.accounts;
   }
 
-  if (accountsInFlight) return accountsInFlight;
+  // Only join an in-flight fetch dispatched under the current generation —
+  // one left over from before an invalidateAccountsCache call is stale, so
+  // fall through and start a fresh fetch instead of joining it.
+  if (accountsInFlight && accountsInFlightGeneration === accountsGeneration) return accountsInFlight;
 
-  accountsInFlight = fetchAccountsLive()
+  const gen = accountsGeneration;
+  const promise: Promise<ConnectedAccount[]> = fetchAccountsLive()
     .then((accounts) => {
-      accountsCache = { accounts, expiresAt: Date.now() + ACCOUNTS_TTL_MS };
+      // Only cache if nothing invalidated since this fetch was dispatched —
+      // otherwise it reflects the old project/account list and must be
+      // discarded rather than re-cached as fresh.
+      if (gen === accountsGeneration) {
+        accountsCache = { accounts, expiresAt: Date.now() + ACCOUNTS_TTL_MS };
+      }
       return accounts;
     })
     .finally(() => {
-      accountsInFlight = null;
+      // Only clear our own slot — a fresh fetch dispatched after us (because
+      // we were already stale) may have replaced it.
+      if (accountsInFlight === promise) accountsInFlight = null;
     });
+  accountsInFlight = promise;
+  accountsInFlightGeneration = gen;
 
   return accountsInFlight;
 }

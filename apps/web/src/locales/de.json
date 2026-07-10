@@ -227,7 +227,9 @@
     "colorPresets": "Farbvorlagen",
     "advanced": "Erweitert",
     "advancedBuiltin": "Eingebautes Pipedream",
-    "advancedCustom": "Eigenes Pipedream-Projekt"
+    "advancedCustom": "Eigenes Pipedream-Projekt",
+    "editNote": "Notiz bearbeiten",
+    "notePlaceholder": "Wofür dieses Konto ist — der Assistent liest diese Notiz"
   },
   "home": {
     "setupBanner": "Trailin ist noch nicht fertig eingerichtet, der Assistent erreicht Ihre E-Mails noch nicht.",
@@ -437,6 +439,10 @@
         "title": "Darstellung & Sprache",
         "description": "Wie Trailin aussieht, spricht und die Uhrzeit anzeigt."
       },
+      "data": {
+        "title": "Lokale Daten",
+        "description": "Alles, was Trailin auf diesem Computer gespeichert hat, und wie Sie es sichern."
+      },
       "language": {
         "title": "Sprache",
         "description": "Gilt für die App und für die Antworten des Assistenten, im Chat und in Automatisierungen."
@@ -469,6 +475,11 @@
       "label": "Zeitzone",
       "description": "Automatisierungen laufen und Zeiten werden in dieser Zeitzone angezeigt",
       "localTime": "Ortszeit {{time}}"
+    },
+    "backup": {
+      "label": "Sicherung",
+      "description": "Ein Abbild der lokalen Datenbank — Chats, Entwürfe, Erinnerungen und Automatisierungen, aber nicht die Zugangsdaten Ihrer verbundenen Konten.",
+      "cta": "Herunterladen"
     },
     "provider": "Anbieter",
     "model": "Modell",
@@ -503,7 +514,8 @@
   "markdown": {
     "openInMailbox": "Im Postfach öffnen",
     "copyEmailAddress": "E-Mail-Adresse kopieren",
-    "copiedToClipboard": "{{email}} in die Zwischenablage kopiert"
+    "copiedToClipboard": "{{email}} in die Zwischenablage kopiert",
+    "copyFailed": "{{email}} konnte nicht kopiert werden — bitte manuell kopieren"
   },
   "errorBoundary": {
     "title": "Etwas ist schiefgelaufen",

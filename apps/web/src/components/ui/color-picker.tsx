@@ -89,7 +89,7 @@ export function ColorPicker({ color, onSelect }: ColorPickerProps) {
           e.stopPropagation();
           setOpen((o) => !o);
         }}
-        className="h-4 w-4 shrink-0 rounded-full transition-transform hover:scale-110 border border-black/10 shadow-sm"
+        className="h-4 w-4 shrink-0 rounded-full transition-transform hover:scale-110 border border-border shadow-sm"
         style={{ backgroundColor: color }}
         title={t("connections.accountColor")}
       />
@@ -111,7 +111,7 @@ export function ColorPicker({ color, onSelect }: ColorPickerProps) {
                 type="text"
                 value={color}
                 onChange={(e) => onSelect(e.target.value)}
-                className="w-full bg-surface-2 px-2 py-1 text-xs rounded border border-transparent hover:border-border focus:border-ring focus:outline-none font-mono uppercase"
+                className="field w-full px-2 py-1 text-xs font-mono uppercase"
                 spellCheck={false}
               />
             </div>
