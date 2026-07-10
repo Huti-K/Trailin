@@ -56,7 +56,8 @@
     "history": "Verlauf",
     "noConversations": "Noch keine Unterhaltungen.",
     "untitled": "(ohne Titel)",
-    "thinking": "Denkt nach…",
+    "thinking": "Denkt nach...",
+    "working": "Agent arbeitet",
     "emptyTitle": "Fragen Sie Ihren Posteingang alles",
     "emptyBody": "Der Assistent kann in Ihren verbundenen Konten suchen, E-Mails beschriften und Entwürfe schreiben.",
     "placeholder": "Schreiben Sie Ihrem E-Mail-Assistenten…",
@@ -77,6 +78,14 @@
     "delete": "Löschen",
     "deleteConfirmTitle": "Diese Unterhaltung löschen?",
     "deleteConfirmBody": "Dies löscht die Unterhaltung und alle ihre Nachrichten endgültig.",
+    "systemPrompt": {
+      "title": "System-Prompt",
+      "search": "Prompt durchsuchen...",
+      "matches_one": "{{count}} Treffer",
+      "matches_other": "{{count}} Treffer",
+      "copy": "Kopieren",
+      "copied": "Kopiert"
+    },
     "cards": {
       "noSubject": "(kein Betreff)",
       "emptyBody": "(leere Nachricht)",

@@ -56,7 +56,8 @@
     "history": "History",
     "noConversations": "No conversations yet.",
     "untitled": "(untitled)",
-    "thinking": "Thinking…",
+    "thinking": "Thinking...",
+    "working": "Agent is working",
     "emptyTitle": "Ask your inbox anything",
     "emptyBody": "The agent can search, label, and draft across your connected accounts.",
     "placeholder": "Message your email agent…",
@@ -77,6 +78,14 @@
     "delete": "Delete",
     "deleteConfirmTitle": "Delete this conversation?",
     "deleteConfirmBody": "This permanently deletes the conversation and its messages.",
+    "systemPrompt": {
+      "title": "System prompt",
+      "search": "Search prompt...",
+      "matches_one": "{{count}} match",
+      "matches_other": "{{count}} matches",
+      "copy": "Copy",
+      "copied": "Copied"
+    },
     "cards": {
       "noSubject": "(no subject)",
       "emptyBody": "(empty message)",

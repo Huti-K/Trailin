@@ -14,6 +14,10 @@ export const messages = sqliteTable("messages", {
   content: text("content").notNull(),
   /** JSON-encoded MessageCard[] — the cards an assistant turn produced; null for none. */
   cards: text("cards"),
+  /** JSON-encoded ChatToolCall[] for restoring tool activity in history. */
+  toolCalls: text("tool_calls"),
+  /** Turn-level agent/provider error, if the response ended unsuccessfully. */
+  error: text("error"),
   createdAt: text("created_at").notNull(),
 });
 

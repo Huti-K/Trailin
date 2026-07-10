@@ -119,6 +119,18 @@ try {
 }
 
 try {
+  sqlite.exec("ALTER TABLE messages ADD COLUMN tool_calls TEXT");
+} catch (e) {
+  if (!isDuplicateColumnError(e)) throw e;
+}
+
+try {
+  sqlite.exec("ALTER TABLE messages ADD COLUMN error TEXT");
+} catch (e) {
+  if (!isDuplicateColumnError(e)) throw e;
+}
+
+try {
   sqlite.exec("ALTER TABLE memories ADD COLUMN account_id TEXT");
 } catch (e) {
   if (!isDuplicateColumnError(e)) throw e;

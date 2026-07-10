@@ -173,6 +173,7 @@ export const api = {
   },
   conversationMessages: (id: string) =>
     get<ChatMessage[]>(`/api/conversations/${encodeURIComponent(id)}/messages`),
+  systemPrompt: () => get<{ prompt: string }>("/api/chat/system-prompt"),
   renameConversation: (id: string, title: string) =>
     http<{ ok: boolean }>("PATCH", `/api/conversations/${encodeURIComponent(id)}`, { title }),
   deleteConversation: (id: string) =>
@@ -249,13 +250,13 @@ export async function streamChat(
     body: JSON.stringify(body),
     signal,
   });
-  if (!res.ok || !res.body) {
-    throw new Error(`chat request failed: ${res.status}`);
-  }
+  await throwOnError(res);
+  if (!res.body) throw new Error("The chat response did not include a stream.");
 
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let terminalEvent = false;
 
   for (;;) {
     const { done, value } = await reader.read();
@@ -268,14 +269,19 @@ export async function streamChat(
       buffer = buffer.slice(boundary + 2);
       for (const line of frame.split("\n")) {
         if (line.startsWith("data: ")) {
+          let event: ChatStreamEvent;
           try {
-            onEvent(JSON.parse(line.slice(6)) as ChatStreamEvent);
+            event = JSON.parse(line.slice(6)) as ChatStreamEvent;
           } catch {
-            // ignore malformed frames
+            throw new Error("The server sent an invalid chat event.");
           }
+          if (event.type === "done" || event.type === "error") terminalEvent = true;
+          onEvent(event);
         }
       }
       boundary = buffer.indexOf("\n\n");
     }
   }
+
+  if (!terminalEvent) throw new Error("The chat response ended unexpectedly.");
 }

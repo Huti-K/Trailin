@@ -1,10 +1,15 @@
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { desc, eq, inArray, or, sql } from "drizzle-orm";
-import type { ChatStreamEvent } from "@trailin/shared";
+import type { ChatStreamEvent, ChatToolCall } from "@trailin/shared";
 import { db, schema } from "../db/index.js";
 import { parseStoredCards } from "../agent/cards.js";
-import { disposeSession, getOrCreateSession, runPrompt } from "../agent/emailAgent.js";
+import {
+  buildSystemPrompt,
+  disposeSession,
+  getOrCreateSession,
+  runPrompt,
+} from "../agent/emailAgent.js";
 import { collectTurnCards, serializeTurnCards } from "../agent/turnCards.js";
 import { emitServerEvent } from "../events.js";
 import { errorMessage, escapeLikeInput, likePattern } from "../util.js";
@@ -12,6 +17,26 @@ import { errorMessage, escapeLikeInput, likePattern } from "../util.js";
 interface ChatBody {
   conversationId?: string;
   message: string;
+}
+
+/** In-flight turns, used by the history rail's live working indicator. */
+const runningConversations = new Set<string>();
+
+function parseToolCalls(value: string | null): ChatToolCall[] | undefined {
+  if (!value) return undefined;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) return undefined;
+    return parsed.filter(
+      (call): call is ChatToolCall =>
+        typeof call === "object" &&
+        call !== null &&
+        typeof (call as ChatToolCall).id === "string" &&
+        typeof (call as ChatToolCall).name === "string",
+    );
+  } catch {
+    return undefined;
+  }
 }
 
 export async function chatRoutes(app: FastifyInstance): Promise<void> {
@@ -46,7 +71,10 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
       const totalQuery = db.select({ count: sql<number>`count(*)` }).from(schema.conversations);
       const [totalRow] = await (where ? totalQuery.where(where) : totalQuery);
 
-      return { items, total: Number(totalRow?.count ?? 0) };
+      return {
+        items: items.map((item) => ({ ...item, running: runningConversations.has(item.id) })),
+        total: Number(totalRow?.count ?? 0),
+      };
     },
   );
 
@@ -76,6 +104,8 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
     return { ok: true };
   });
 
+  app.get("/api/chat/system-prompt", async () => ({ prompt: await buildSystemPrompt() }));
+
   app.get<{ Params: { id: string } }>("/api/conversations/:id/messages", async (req) => {
     const rows = await db
       .select()
@@ -84,9 +114,10 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
       .orderBy(schema.messages.createdAt);
 
     // The cards column is a JSON blob internally; the API ships parsed cards.
-    let msgs = rows.map(({ cards, ...row }) => ({
+    let msgs = rows.map(({ cards, toolCalls, ...row }) => ({
       ...row,
       cards: parseStoredCards(cards),
+      toolCalls: parseToolCalls(toolCalls),
     }));
 
     if (msgs.length === 0) {
@@ -118,6 +149,8 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
                 content: `Scheduled automation "${auto.name}". Execute this instruction now and report the outcome:\n\n${auto.instruction}`,
                 createdAt: run.startedAt,
                 cards: undefined,
+                toolCalls: undefined,
+                error: null,
               },
               {
                 id: req.params.id + "-assistant",
@@ -126,6 +159,8 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
                 content: run.result || "Run failed or no result.",
                 createdAt: run.finishedAt || run.startedAt,
                 cards: undefined,
+                toolCalls: undefined,
+                error: null,
               },
             ];
           }
@@ -140,6 +175,10 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
     const message = req.body?.message?.trim();
     if (!message) {
       return reply.code(400).send({ error: "message is required" });
+    }
+
+    if (req.body.conversationId && runningConversations.has(req.body.conversationId)) {
+      return reply.code(409).send({ error: "This conversation is already responding." });
     }
 
     // We stream on the raw socket; tell Fastify the reply is ours now.
@@ -172,6 +211,12 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
 
     const now = () => new Date().toISOString();
 
+    let runningConversationId: string | undefined;
+    let userMessagePersisted = false;
+    let assistantMessagePersisted = false;
+    let streamedText = "";
+    const toolCalls: ChatToolCall[] = [];
+    let turnCards: ReturnType<typeof collectTurnCards> | undefined;
     try {
       let conversationId = req.body.conversationId;
       if (!conversationId) {
@@ -184,6 +229,9 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
         emitServerEvent("conversations");
       }
       send({ type: "conversation", conversationId });
+      runningConversationId = conversationId;
+      runningConversations.add(conversationId);
+      emitServerEvent("conversations");
 
       // Build the session before persisting the new message: a session rebuilt
       // from the DB must seed only *prior* turns, not the one being sent.
@@ -196,15 +244,20 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
         content: message,
         createdAt: now(),
       });
+      userMessagePersisted = true;
       let thinkingSent = false;
       // Collects this turn's cards (persisted with the assistant message below)
       // and links any created draft back to this conversation.
-      const turnCards = collectTurnCards(conversationId);
+      const currentTurnCards = collectTurnCards(conversationId);
+      turnCards = currentTurnCards;
       const text = await runPrompt(
         session,
         message,
         {
-          onTextDelta: (delta) => send({ type: "text_delta", delta }),
+          onTextDelta: (delta) => {
+            streamedText += delta;
+            send({ type: "text_delta", delta });
+          },
           // At most one per turn — it only drives the UI's "thinking…" placeholder.
           onThinking: () => {
             if (!thinkingSent) {
@@ -212,11 +265,22 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
               send({ type: "thinking" });
             }
           },
-          onToolStart: (toolName) => send({ type: "tool_start", toolName }),
-          onToolUpdate: (toolName, detail) => send({ type: "tool_update", toolName, detail }),
-          onToolEnd: (toolName, isError) => send({ type: "tool_end", toolName, isError }),
+          onToolStart: (toolCallId, toolName) => {
+            toolCalls.push({ id: toolCallId, name: toolName, isError: false, done: false });
+            send({ type: "tool_start", toolCallId, toolName });
+          },
+          onToolUpdate: (toolCallId, toolName, detail) => {
+            const call = toolCalls.find((item) => item.id === toolCallId);
+            if (call) call.detail = detail;
+            send({ type: "tool_update", toolCallId, toolName, detail });
+          },
+          onToolEnd: (toolCallId, toolName, isError) => {
+            const call = toolCalls.find((item) => item.id === toolCallId);
+            if (call) Object.assign(call, { done: true, isError });
+            send({ type: "tool_end", toolCallId, toolName, isError });
+          },
           onCard: (toolCallId, card) => {
-            turnCards.onCard(toolCallId, card);
+            currentTurnCards.onCard(toolCallId, card);
             send({ type: "card", toolCallId, card });
           },
         },
@@ -229,9 +293,11 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
         conversationId,
         role: "assistant",
         content: text,
-        cards: serializeTurnCards(turnCards.cards),
+        cards: serializeTurnCards(currentTurnCards.cards),
+        toolCalls: toolCalls.length > 0 ? JSON.stringify(toolCalls) : null,
         createdAt: now(),
       });
+      assistantMessagePersisted = true;
       emitServerEvent("conversations");
 
       send({ type: "done", text });
@@ -239,8 +305,33 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
       // A client-disconnect abort surfaces here too (runPrompt rethrows the
       // agent's "aborted" failure); clientClosed already suppressed send().
       req.log.error(error, "chat failed");
-      send({ type: "error", message: errorMessage(error) });
+      const message = errorMessage(error);
+      // Keep partial text, tool activity and the failure itself visible after a
+      // reload. If persistence is what failed, don't hide the original error
+      // behind a second database exception.
+      if (runningConversationId && userMessagePersisted && !assistantMessagePersisted) {
+        try {
+          await db.insert(schema.messages).values({
+            id: randomUUID(),
+            conversationId: runningConversationId,
+            role: "assistant",
+            content: streamedText.trim(),
+            cards: serializeTurnCards(turnCards?.cards ?? []),
+            toolCalls: toolCalls.length > 0 ? JSON.stringify(toolCalls) : null,
+            error: message,
+            createdAt: now(),
+          });
+          emitServerEvent("conversations");
+        } catch (persistError) {
+          req.log.error(persistError, "failed to persist chat error");
+        }
+      }
+      send({ type: "error", message });
     } finally {
+      if (runningConversationId) {
+        runningConversations.delete(runningConversationId);
+        emitServerEvent("conversations");
+      }
       reply.raw.off("close", onClientClose);
       if (!reply.raw.writableEnded) reply.raw.end();
     }

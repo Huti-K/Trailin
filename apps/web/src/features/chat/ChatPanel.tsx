@@ -1,7 +1,25 @@
 import * as React from "react";
-import { Loader2, MessagesSquare, Pencil, Send, Trash2, Wrench, Plus } from "lucide-react";
+import {
+  Check,
+  Copy,
+  Loader2,
+  MessagesSquare,
+  Pencil,
+  Plus,
+  Search,
+  Send,
+  Trash2,
+  Wrench,
+  X,
+} from "lucide-react";
 import { useTranslation } from "react-i18next";
-import type { AccountColor, AgentCard, ChatStreamEvent, Conversation } from "@trailin/shared";
+import type {
+  AccountColor,
+  AgentCard,
+  ChatStreamEvent,
+  ChatToolCall,
+  Conversation,
+} from "@trailin/shared";
 import { api, streamChat } from "@/lib/api";
 import { AgentCardView } from "@/features/chat/cards";
 import { SHOWCASE_TURNS } from "@/features/chat/cards/samples";
@@ -22,6 +40,7 @@ const LAST_CONVERSATION_KEY = "trailin-last-conversation";
 
 /** Renders one of every agent card locally. Never reaches the agent or the DB. */
 const SHOWCASE_COMMAND = "/showcase";
+const SYSTEM_PROMPT_COMMAND = "/sys";
 
 /** First page size for the history rail; "Load more" fetches in the same increments. */
 const CONVERSATIONS_PAGE_SIZE = 50;
@@ -56,11 +75,19 @@ interface DisplayMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
-  toolCalls: { name: string; isError: boolean; done: boolean; detail?: string }[];
+  toolCalls: ChatToolCall[];
   /** Structured tool results, keyed by tool call so a retried tool replaces its card. */
   cards: { toolCallId: string; card: AgentCard }[];
   streaming: boolean;
   thinking?: boolean;
+  error?: string;
+  /** Local-only /sys result. */
+  systemPrompt?: string;
+}
+
+interface ActiveRun {
+  conversationId?: string;
+  messages: DisplayMessage[];
 }
 
 export function ChatPanel({
@@ -89,6 +116,11 @@ export function ChatPanel({
   const [accountColors, setAccountColors] = React.useState<AccountColor[]>([]);
   const bottomRef = React.useRef<HTMLDivElement>(null);
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
+  const activeConversationRef = React.useRef<string | undefined>(undefined);
+  const messagesRef = React.useRef<DisplayMessage[]>([]);
+  const activeRunRef = React.useRef<ActiveRun | null>(null);
+  const runByConversationRef = React.useRef(new Map<string, ActiveRun>());
+  const messageCacheRef = React.useRef(new Map<string, DisplayMessage[]>());
 
   React.useEffect(() => {
     let cancelled = false;
@@ -103,8 +135,8 @@ export function ChatPanel({
     };
   }, []);
 
-  // Pick up where this device left off. Cards are persisted with each turn
-  // and re-render; only the tool badges are live-turn-only.
+  // Pick up where this device left off. Text, cards, tool activity and turn
+  // errors are persisted together and restored here.
   React.useEffect(() => {
     const savedId = localStorage.getItem(LAST_CONVERSATION_KEY);
     if (!savedId) {
@@ -116,20 +148,24 @@ export function ChatPanel({
       .conversationMessages(savedId)
       .then((msgs) => {
         if (cancelled || msgs.length === 0) return;
-        setMessages(
-          msgs.map((m) => ({
-            id: m.id,
-            role: m.role,
-            content: m.content,
-            toolCalls: [],
-            cards: m.cards ?? [],
-            streaming: false,
-          })),
-        );
+        const restored: DisplayMessage[] = msgs.map((m) => ({
+          id: m.id,
+          role: m.role,
+          content: m.content,
+          toolCalls: m.toolCalls ?? [],
+          cards: m.cards ?? [],
+          streaming: false,
+          error: m.error,
+        }));
+        activeConversationRef.current = savedId;
+        messagesRef.current = restored;
+        messageCacheRef.current.set(savedId, restored);
+        setMessages(restored);
         setConversationId(savedId);
       })
-      .catch(() => {
-        // Unreachable or gone — start fresh.
+      .catch((err) => {
+        // Unreachable or gone — start fresh, but don't make the failure silent.
+        toast.error(errorMessage(err));
       })
       .finally(() => {
         if (!cancelled) setRestoring(false);
@@ -163,66 +199,74 @@ export function ChatPanel({
     el.style.height = `${el.scrollHeight}px`;
   }, [input]);
 
-  const updateAssistant = (updater: (m: DisplayMessage) => DisplayMessage) => {
-    setMessages((prev) => {
-      const next = [...prev];
-      const last = next[next.length - 1];
-      if (last && last.role === "assistant" && last.streaming) {
-        next[next.length - 1] = updater(last);
-      }
-      return next;
-    });
+  const updateRunAssistant = (
+    run: ActiveRun,
+    updater: (message: DisplayMessage) => DisplayMessage,
+  ) => {
+    const next = [...run.messages];
+    const last = next[next.length - 1];
+    if (last && last.role === "assistant" && last.streaming) {
+      next[next.length - 1] = updater(last);
+    }
+    run.messages = next;
+    if (run.conversationId) messageCacheRef.current.set(run.conversationId, next);
+    if (
+      activeRunRef.current === run ||
+      (run.conversationId !== undefined && activeConversationRef.current === run.conversationId)
+    ) {
+      messagesRef.current = next;
+      setMessages(next);
+    }
   };
 
-  const handleEvent = (event: ChatStreamEvent) => {
+  const handleRunEvent = (run: ActiveRun, event: ChatStreamEvent) => {
     switch (event.type) {
       case "conversation":
-        setConversationId(event.conversationId);
-        localStorage.setItem(LAST_CONVERSATION_KEY, event.conversationId);
+        run.conversationId = event.conversationId;
+        runByConversationRef.current.set(event.conversationId, run);
+        messageCacheRef.current.set(event.conversationId, run.messages);
+        if (activeRunRef.current === run) {
+          activeConversationRef.current = event.conversationId;
+          setConversationId(event.conversationId);
+          localStorage.setItem(LAST_CONVERSATION_KEY, event.conversationId);
+        }
         break;
       case "thinking":
-        updateAssistant((m) => ({ ...m, thinking: true }));
+        updateRunAssistant(run, (m) => ({ ...m, thinking: true }));
         break;
       case "text_delta":
-        updateAssistant((m) => ({ ...m, content: m.content + event.delta, thinking: false }));
+        updateRunAssistant(run, (m) => ({ ...m, content: m.content + event.delta, thinking: false }));
         break;
       case "tool_start":
-        updateAssistant((m) => ({
+        updateRunAssistant(run, (m) => ({
           ...m,
           thinking: false,
-          toolCalls: [...m.toolCalls, { name: event.toolName, isError: false, done: false }],
+          toolCalls: [
+            ...m.toolCalls,
+            { id: event.toolCallId, name: event.toolName, isError: false, done: false },
+          ],
         }));
         break;
       case "tool_update":
-        // Progress text for the newest still-running call of that tool.
-        updateAssistant((m) => {
-          let last = -1;
-          for (let i = m.toolCalls.length - 1; i >= 0; i--) {
-            const t = m.toolCalls[i];
-            if (t && t.name === event.toolName && !t.done) {
-              last = i;
-              break;
-            }
-          }
-          if (last === -1) return m;
-          return {
-            ...m,
-            toolCalls: m.toolCalls.map((t, i) => (i === last ? { ...t, detail: event.detail } : t)),
-          };
-        });
+        updateRunAssistant(run, (m) => ({
+          ...m,
+          toolCalls: m.toolCalls.map((call) =>
+            call.id === event.toolCallId ? { ...call, detail: event.detail } : call,
+          ),
+        }));
         break;
       case "tool_end":
-        updateAssistant((m) => ({
+        updateRunAssistant(run, (m) => ({
           ...m,
-          toolCalls: m.toolCalls.map((t, i) =>
-            i === m.toolCalls.length - 1 && t.name === event.toolName
-              ? { ...t, done: true, isError: event.isError }
-              : t,
+          toolCalls: m.toolCalls.map((call) =>
+            call.id === event.toolCallId
+              ? { ...call, done: true, isError: event.isError }
+              : call,
           ),
         }));
         break;
       case "card":
-        updateAssistant((m) => ({
+        updateRunAssistant(run, (m) => ({
           ...m,
           thinking: false,
           cards: [
@@ -232,7 +276,7 @@ export function ChatPanel({
         }));
         break;
       case "done":
-        updateAssistant((m) => ({
+        updateRunAssistant(run, (m) => ({
           ...m,
           content: event.text || m.content,
           streaming: false,
@@ -241,14 +285,20 @@ export function ChatPanel({
         break;
       case "error":
         toast.error(event.message);
-        updateAssistant((m) => ({ ...m, streaming: false, thinking: false }));
+        updateRunAssistant(run, (m) => ({
+          ...m,
+          error: event.message,
+          streaming: false,
+          thinking: false,
+        }));
         break;
     }
   };
 
   /** Answers `/showcase` client-side: one sample turn per thing the assistant can render. */
   const showcase = (message: string) => {
-    setMessages((prev) => [
+    setMessages((prev) => {
+      const next: DisplayMessage[] = [
       ...prev,
       {
         id: crypto.randomUUID(),
@@ -262,7 +312,10 @@ export function ChatPanel({
         id: crypto.randomUUID(),
         role: "assistant" as const,
         content: turn.contentKey ? String(t(turn.contentKey as any)) : (turn.content ?? ""),
-        toolCalls: turn.toolCalls ?? [],
+        toolCalls: (turn.toolCalls ?? []).map((call, i) => ({
+          ...call,
+          id: `showcase-tool-${turnIndex}-${i}`,
+        })),
         cards: (turn.cards ?? []).map((card, i) => ({
           toolCallId: `showcase-${turnIndex}-${i}`,
           card,
@@ -270,7 +323,57 @@ export function ChatPanel({
         streaming: turn.thinking ?? false,
         thinking: turn.thinking,
       })),
-    ]);
+      ];
+      messagesRef.current = next;
+      return next;
+    });
+  };
+
+  const showSystemPrompt = async (message: string) => {
+    setBusy(true);
+    const userMessage: DisplayMessage = {
+      id: crypto.randomUUID(),
+      role: "user",
+      content: message,
+      toolCalls: [],
+      cards: [],
+      streaming: false,
+    };
+    const loadingMessage: DisplayMessage = {
+      id: crypto.randomUUID(),
+      role: "assistant",
+      content: "",
+      toolCalls: [],
+      cards: [],
+      streaming: true,
+      thinking: true,
+    };
+    const next = [...messagesRef.current, userMessage, loadingMessage];
+    messagesRef.current = next;
+    setMessages(next);
+    try {
+      const { prompt } = await api.systemPrompt();
+      const done = next.map((item) =>
+        item.id === loadingMessage.id
+          ? { ...item, streaming: false, thinking: false, systemPrompt: prompt }
+          : item,
+      );
+      messagesRef.current = done;
+      setMessages(done);
+    } catch (err) {
+      const messageText = errorMessage(err);
+      toast.error(messageText);
+      const failed = next.map((item) =>
+        item.id === loadingMessage.id
+          ? { ...item, streaming: false, thinking: false, error: messageText }
+          : item,
+      );
+      messagesRef.current = failed;
+      setMessages(failed);
+    } finally {
+      setBusy(false);
+      requestAnimationFrame(() => textareaRef.current?.focus());
+    }
   };
 
   /** Sends a message in the open conversation (or starts one server-side). */
@@ -282,10 +385,14 @@ export function ChatPanel({
       showcase(message);
       return;
     }
+    if (message.toLowerCase() === SYSTEM_PROMPT_COMMAND) {
+      await showSystemPrompt(message);
+      return;
+    }
 
     setBusy(true);
-    setMessages((prev) => [
-      ...prev,
+    const next: DisplayMessage[] = [
+      ...messagesRef.current,
       {
         id: crypto.randomUUID(),
         role: "user",
@@ -302,15 +409,35 @@ export function ChatPanel({
         cards: [],
         streaming: true,
       },
-    ]);
+    ];
+    const run: ActiveRun = { conversationId: activeConversationRef.current, messages: next };
+    activeRunRef.current = run;
+    if (run.conversationId) {
+      runByConversationRef.current.set(run.conversationId, run);
+      messageCacheRef.current.set(run.conversationId, next);
+    }
+    messagesRef.current = next;
+    setMessages(next);
 
     try {
-      await streamChat({ conversationId, message }, handleEvent);
+      await streamChat(
+        { conversationId: activeConversationRef.current, message },
+        (event) => handleRunEvent(run, event),
+      );
     } catch (err) {
-      toast.error(errorMessage(err));
-      updateAssistant((m) => ({ ...m, streaming: false }));
+      const messageText = errorMessage(err);
+      toast.error(messageText);
+      updateRunAssistant(run, (m) => ({
+        ...m,
+        error: messageText,
+        streaming: false,
+        thinking: false,
+      }));
     } finally {
+      if (run.conversationId) runByConversationRef.current.delete(run.conversationId);
+      if (activeRunRef.current === run) activeRunRef.current = null;
       setBusy(false);
+      requestAnimationFrame(() => textareaRef.current?.focus());
     }
   };
 
@@ -322,21 +449,34 @@ export function ChatPanel({
   };
 
   const openConversation = async (id: string) => {
+    activeConversationRef.current = id;
+    setConversationId(id);
+    localStorage.setItem(LAST_CONVERSATION_KEY, id);
+    setHistoryOpen(false);
+    const liveRun = runByConversationRef.current.get(id) ?? null;
+    activeRunRef.current = liveRun;
+    const cached = messageCacheRef.current.get(id);
+    if (cached) {
+      messagesRef.current = cached;
+      setMessages(cached);
+      textareaRef.current?.focus();
+      return;
+    }
     try {
       const msgs = await api.conversationMessages(id);
-      setMessages(
-        msgs.map((m) => ({
-          id: m.id,
-          role: m.role,
-          content: m.content,
-          toolCalls: [],
-          cards: m.cards ?? [],
-          streaming: false,
-        })),
-      );
-      setConversationId(id);
-      localStorage.setItem(LAST_CONVERSATION_KEY, id);
-      setHistoryOpen(false);
+      if (activeConversationRef.current !== id) return;
+      const restored: DisplayMessage[] = msgs.map((m) => ({
+        id: m.id,
+        role: m.role,
+        content: m.content,
+        toolCalls: m.toolCalls ?? [],
+        cards: m.cards ?? [],
+        streaming: false,
+        error: m.error,
+      }));
+      messageCacheRef.current.set(id, restored);
+      messagesRef.current = restored;
+      setMessages(restored);
       // Opening a conversation means continuing it — put the caret where the
       // user's next message goes (e.g. the Drafts page's refine jump).
       textareaRef.current?.focus();
@@ -346,6 +486,9 @@ export function ChatPanel({
   };
 
   const newConversation = React.useCallback(() => {
+    activeConversationRef.current = undefined;
+    activeRunRef.current = null;
+    messagesRef.current = [];
     setConversationId(undefined);
     setMessages([]);
     setHistoryOpen(false);
@@ -423,25 +566,25 @@ export function ChatPanel({
                 key={m.id}
                 className={cn(
                   "animate-in-up flex flex-col gap-2",
-                  m.role === "user" ? "items-end" : "items-start",
+                  m.role === "user" ? "items-end" : "w-full items-start",
                 )}
               >
                 {/* Cards sit outside the bubble: they carry their own surface tone,
                     and tool results deserve more room than a reply bubble allows. */}
                 {m.cards.length > 0 && (
-                  <div className="flex w-full max-w-[95%] flex-col gap-2">
+                  <div className="flex w-full flex-col gap-2">
                     {m.cards.map((c) => (
                       <AgentCardView key={c.toolCallId} card={c.card} colors={accountColors} />
                     ))}
                   </div>
                 )}
-                {(m.content || m.streaming || m.toolCalls.length > 0) && (
+                {(m.content || m.streaming || m.toolCalls.length > 0 || m.error || m.systemPrompt) && (
                   <div
                     className={cn(
-                      "max-w-[85%] rounded-2xl px-4 py-2.5 text-sm",
+                      "text-sm",
                       m.role === "user"
-                        ? "rounded-br-md bg-accent text-accent-foreground"
-                        : "rounded-bl-md bg-surface-2 text-foreground",
+                        ? "max-w-[85%] rounded-2xl rounded-br-md bg-accent px-4 py-2.5 text-accent-foreground"
+                        : "w-full py-1 text-foreground",
                     )}
                   >
                     {m.toolCalls.length > 0 && (
@@ -461,25 +604,27 @@ export function ChatPanel({
                         ))}
                       </div>
                     )}
-                    {m.content ? (
+                    {m.systemPrompt ? (
+                      <SystemPromptView prompt={m.systemPrompt} />
+                    ) : m.content ? (
                       m.role === "assistant" ? (
                         <Markdown content={m.content} />
                       ) : (
                         <div className="whitespace-pre-wrap leading-relaxed">{m.content}</div>
                       )
                     ) : (
-                      m.toolCalls.length === 0 && (
+                      m.toolCalls.length === 0 && m.streaming && (
                         <div className="leading-relaxed">
-                          {m.streaming &&
-                            (m.thinking ? (
-                              <span className="animate-pulse text-muted-foreground">
-                                {t("chat.thinking")}
-                              </span>
-                            ) : (
-                              "…"
-                            ))}
+                          <span className="animate-pulse text-muted-foreground">
+                            {t("chat.thinking")}
+                          </span>
                         </div>
                       )
+                    )}
+                    {m.error && (
+                      <div role="alert" className={cn("text-destructive", (m.content || m.toolCalls.length > 0) && "mt-2")}>
+                        {m.error}
+                      </div>
                     )}
                   </div>
                 )}
@@ -508,20 +653,106 @@ export function ChatPanel({
           }}
           placeholder={t("chat.placeholder")}
           rows={1}
-          className="max-h-40 min-h-[36px] flex-1 resize-none overflow-y-auto bg-transparent py-2 text-base md:text-sm leading-relaxed [scrollbar-width:none] [-webkit-scrollbar]:hidden placeholder:text-muted-foreground focus:outline-none disabled:opacity-50"
-          disabled={busy}
+          className="max-h-40 min-h-[36px] flex-1 resize-none overflow-y-auto bg-transparent py-2 text-base md:text-sm leading-relaxed [scrollbar-width:none] [-webkit-scrollbar]:hidden placeholder:text-muted-foreground focus:outline-none"
+          aria-busy={busy}
         />
         <Button
           onClick={() => void send()}
           disabled={busy || !input.trim()}
           size="icon"
-          className="h-8 w-8 shrink-0 rounded-xl"
+          className="mb-1 h-8 w-8 shrink-0 rounded-xl"
           aria-label={t("chat.send")}
         >
-          {busy ? <Loader2 className="animate-spin" /> : <Send />}
+          {busy ? (
+            <Loader2 className="animate-spin" />
+          ) : (
+            <Send className="-translate-x-px translate-y-px" />
+          )}
         </Button>
       </div>
     </div>
+  );
+}
+
+function HighlightedPrompt({ text, query }: { text: string; query: string }) {
+  if (!query) return <>{text}</>;
+  const lowerText = text.toLocaleLowerCase();
+  const lowerQuery = query.toLocaleLowerCase();
+  const parts: React.ReactNode[] = [];
+  let cursor = 0;
+  let match = lowerText.indexOf(lowerQuery);
+  while (match !== -1) {
+    parts.push(text.slice(cursor, match));
+    parts.push(
+      <mark key={`${match}-${cursor}`} className="rounded-sm bg-accent/25 text-foreground">
+        {text.slice(match, match + query.length)}
+      </mark>,
+    );
+    cursor = match + query.length;
+    match = lowerText.indexOf(lowerQuery, cursor);
+  }
+  parts.push(text.slice(cursor));
+  return <>{parts}</>;
+}
+
+/** Compact inspector returned by /sys, with literal prompt text and in-place matches. */
+function SystemPromptView({ prompt }: { prompt: string }) {
+  const { t } = useTranslation();
+  const [query, setQuery] = React.useState("");
+  const [copied, setCopied] = React.useState(false);
+  const normalized = query.trim().toLocaleLowerCase();
+  const matchCount = normalized
+    ? prompt.toLocaleLowerCase().split(normalized).length - 1
+    : 0;
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(prompt);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch (err) {
+      toast.error(errorMessage(err));
+    }
+  };
+
+  return (
+    <section className="overflow-hidden rounded-xl bg-surface-2" aria-label={t("chat.systemPrompt.title")}>
+      <div className="flex flex-wrap items-center gap-2 p-2.5">
+        <span className="px-1 text-xs font-semibold">{t("chat.systemPrompt.title")}</span>
+        <div className="relative ml-auto min-w-40 flex-1 sm:max-w-64">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder={t("chat.systemPrompt.search")}
+            aria-label={t("chat.systemPrompt.search")}
+            className="field h-8 w-full pl-8 pr-8 text-xs"
+          />
+          {query && (
+            <button
+              type="button"
+              onClick={() => setQuery("")}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              aria-label={t("common.close")}
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+        {normalized && (
+          <span className="text-xs tabular-nums text-muted-foreground">
+            {t("chat.systemPrompt.matches", { count: matchCount })}
+          </span>
+        )}
+        <Button type="button" variant="ghost" size="sm" onClick={() => void copy()}>
+          {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+          {copied ? t("chat.systemPrompt.copied") : t("chat.systemPrompt.copy")}
+        </Button>
+      </div>
+      <pre className="max-h-[28rem] overflow-auto whitespace-pre-wrap break-words bg-background/55 p-4 font-mono text-xs leading-relaxed">
+        <HighlightedPrompt text={prompt} query={query.trim()} />
+      </pre>
+    </section>
   );
 }
 
@@ -672,13 +903,21 @@ export function HistoryList({
           onClick={() => onPick(c.id)}
           className="flex min-w-0 flex-1 flex-col items-start gap-0.5 px-3 py-2 text-left"
         >
-          <span
-            className={cn(
-              "w-full truncate text-sm",
-              c.id === activeId ? "font-medium text-accent" : "text-foreground",
+          <span className="flex w-full min-w-0 items-center gap-1.5">
+            {c.running && (
+              <Loader2
+                className="h-3.5 w-3.5 shrink-0 animate-spin text-accent"
+                aria-label={t("chat.working")}
+              />
             )}
-          >
-            {c.title || t("chat.untitled")}
+            <span
+              className={cn(
+                "min-w-0 flex-1 truncate text-sm",
+                c.id === activeId ? "font-medium text-accent" : "text-foreground",
+              )}
+            >
+              {c.title || t("chat.untitled")}
+            </span>
           </span>
           <span className="text-xs tabular-nums text-muted-foreground">
             {dateLabel(c.createdAt)}

@@ -128,7 +128,7 @@ function formatNow(timezone: string, locale: string): string {
 }
 
 /** The base prompt plus the Settings rules (scheduled runs rely on them too). */
-async function buildSystemPrompt(): Promise<string> {
+export async function buildSystemPrompt(): Promise<string> {
   let prompt = SYSTEM_PROMPT;
 
   if (!(await getEmailWriteSetting())) {
@@ -236,7 +236,8 @@ async function buildAgent(toolset: EmailToolset, history: Message[] = []): Promi
 /**
  * Rebuild a conversation's prior turns from the message log, so continuing an
  * older conversation (after a restart or session reset) keeps the agent's
- * memory. Tool calls aren't persisted — the seeded context is text-only.
+ * memory. The model history is intentionally reconstructed as text; persisted
+ * tool activity is presentation metadata for the chat UI.
  */
 async function loadHistory(conversationId: string): Promise<Message[]> {
   const rows = await db
