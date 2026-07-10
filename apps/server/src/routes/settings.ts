@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { isLanguage, SUPPORTED_LANGUAGES, THINKING_LEVELS, type ThinkingLevelSetting } from "@trailin/shared";
+import { isLanguage, SUPPORTED_LANGUAGES } from "@trailin/shared";
 import {
   EMAIL_WRITE_SETTING_KEY,
   getAccountColors,
@@ -7,7 +7,6 @@ import {
   getAccountVoices,
   getEmailWriteSetting,
   getLanguageSetting,
-  getThinkingLevelSetting,
   getTimezoneSetting,
   isValidTimezone,
   LANGUAGE_SETTING_KEY,
@@ -15,7 +14,6 @@ import {
   setAccountDescriptions,
   setAccountVoices,
   setSetting,
-  setThinkingLevelSetting,
   TIMEZONE_SETTING_KEY,
 } from "../db/settings.js";
 import { resetSessions } from "../agent/emailAgent.js";
@@ -67,26 +65,6 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
     await resetSessions();
     return { allowWrite: req.body.allowWrite };
   });
-
-  app.get("/api/settings/thinking-level", async () => ({
-    thinkingLevel: await getThinkingLevelSetting(),
-  }));
-
-  app.put<{ Body: { thinkingLevel: string } }>(
-    "/api/settings/thinking-level",
-    async (req, reply) => {
-      const thinkingLevel = req.body?.thinkingLevel;
-      if (!(THINKING_LEVELS as readonly string[]).includes(thinkingLevel)) {
-        return reply
-          .code(400)
-          .send({ error: `thinkingLevel must be one of: ${THINKING_LEVELS.join(", ")}` });
-      }
-      await setThinkingLevelSetting(thinkingLevel as ThinkingLevelSetting);
-      // The agent re-reads this setting per prompt (see emailAgent.ts) — no
-      // session reset needed.
-      return { thinkingLevel };
-    },
-  );
 
   // ---- Account colors ----
 

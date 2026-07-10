@@ -461,16 +461,6 @@
       "description": "Automations run and times are shown in this timezone",
       "localTime": "Local time {{time}}"
     },
-    "thinkingLevel": {
-      "label": "Thinking",
-      "description": "How much the model reasons before answering. Higher is more thorough but slower.",
-      "options": {
-        "off": "Off",
-        "low": "Low",
-        "medium": "Medium",
-        "high": "High"
-      }
-    },
     "provider": "Provider",
     "model": "Model",
     "signInFirst": "Sign in to a provider above, then choose its model here.",

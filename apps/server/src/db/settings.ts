@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import { isLanguage, THINKING_LEVELS, type Language, type ThinkingLevelSetting } from "@trailin/shared";
+import { isLanguage, type Language } from "@trailin/shared";
 import { db, schema } from "./index.js";
 
 /** Simple key/value settings persisted in SQLite. */
@@ -55,23 +55,6 @@ export const EMAIL_WRITE_SETTING_KEY = "agent.allowEmailWrite";
  */
 export async function getEmailWriteSetting(): Promise<boolean> {
   return (await getSetting(EMAIL_WRITE_SETTING_KEY)) === "true";
-}
-
-export const THINKING_LEVEL_SETTING_KEY = "model.thinkingLevel";
-
-/**
- * How much the model reasons before answering. Defaults to "off"; the agent
- * re-reads this per prompt, so no session reset is needed when it changes.
- */
-export async function getThinkingLevelSetting(): Promise<ThinkingLevelSetting> {
-  const value = await getSetting(THINKING_LEVEL_SETTING_KEY);
-  return (THINKING_LEVELS as readonly string[]).includes(value ?? "")
-    ? (value as ThinkingLevelSetting)
-    : "off";
-}
-
-export async function setThinkingLevelSetting(level: ThinkingLevelSetting): Promise<void> {
-  await setSetting(THINKING_LEVEL_SETTING_KEY, level);
 }
 
 export const LIBRARY_FOLDER_SETTING_KEY = "library.folder";

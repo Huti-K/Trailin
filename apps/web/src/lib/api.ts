@@ -24,7 +24,6 @@ import type {
   PipedreamStatus,
   RunFeedItem,
   SearchResult,
-  ThinkingLevelSetting,
 } from "@trailin/shared";
 
 /** One document match from GET /api/library/search. */
@@ -80,13 +79,6 @@ export const api = {
   emailWrite: () => get<{ allowWrite: boolean }>("/api/settings/email-write"),
   setEmailWrite: (allowWrite: boolean) =>
     http<{ allowWrite: boolean }>("PUT", "/api/settings/email-write", { allowWrite }),
-
-  thinkingLevel: () =>
-    get<{ thinkingLevel: ThinkingLevelSetting }>("/api/settings/thinking-level"),
-  setThinkingLevel: (thinkingLevel: ThinkingLevelSetting) =>
-    http<{ thinkingLevel: ThinkingLevelSetting }>("PUT", "/api/settings/thinking-level", {
-      thinkingLevel,
-    }),
 
   accountColors: () => get<{ colors: AccountColor[] }>("/api/settings/account-colors"),
   setAccountColors: (colors: AccountColor[]) =>

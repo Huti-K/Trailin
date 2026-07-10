@@ -3,12 +3,7 @@ import type { Message } from "@earendil-works/pi-ai";
 import { eq } from "drizzle-orm";
 import { LANGUAGE_ENGLISH_NAMES, type Language } from "@trailin/shared";
 import { db, schema } from "../db/index.js";
-import {
-  getEmailWriteSetting,
-  getLanguageSetting,
-  getThinkingLevelSetting,
-  getTimezoneSetting,
-} from "../db/settings.js";
+import { getEmailWriteSetting, getLanguageSetting, getTimezoneSetting } from "../db/settings.js";
 import { modelRegistry, resolveActiveModel } from "../llm/registry.js";
 import { loadEmailTools, type EmailToolset } from "../pipedream/mcp.js";
 import { buildBriefingTool } from "./briefingTool.js";
@@ -206,9 +201,9 @@ function sweepSessions(): void {
 const sweepTimer = setInterval(sweepSessions, SESSION_SWEEP_INTERVAL_MS);
 sweepTimer.unref();
 
-/** The Settings thinking level, but only where the model can reason at all. */
-async function resolveThinkingLevel(model: { reasoning: boolean }): Promise<"off" | "low" | "medium" | "high"> {
-  return model.reasoning ? getThinkingLevelSetting() : "off";
+/** Fixed at a balanced default, not user-configurable — "medium" wherever the model can reason at all. */
+function resolveThinkingLevel(model: { reasoning: boolean }): "off" | "low" | "medium" | "high" {
+  return model.reasoning ? "medium" : "off";
 }
 
 async function buildAgent(toolset: EmailToolset, history: Message[] = []): Promise<Agent> {
@@ -218,7 +213,7 @@ async function buildAgent(toolset: EmailToolset, history: Message[] = []): Promi
     initialState: {
       systemPrompt: await buildSystemPrompt(),
       model,
-      thinkingLevel: await resolveThinkingLevel(model),
+      thinkingLevel: resolveThinkingLevel(model),
       // Email tools from Pipedream, the local memory/library tools, and the
       // delegate fan-out tool for spreading independent lookups across
       // parallel background workers.
@@ -304,10 +299,9 @@ export async function getOrCreateSession(conversationId: string): Promise<AgentS
   if (existing) {
     existing.lastUsed = Date.now();
     // The current date/time (and memory/library context) can go stale on a
-    // long-lived session — recompute the system prompt (and the Settings
-    // thinking level) before every prompt.
+    // long-lived session — recompute the system prompt before every prompt.
     existing.session.agent.state.systemPrompt = await buildSystemPrompt();
-    existing.session.agent.state.thinkingLevel = await resolveThinkingLevel(
+    existing.session.agent.state.thinkingLevel = resolveThinkingLevel(
       existing.session.agent.state.model,
     );
     return existing.session;

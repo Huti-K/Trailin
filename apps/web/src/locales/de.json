@@ -461,16 +461,6 @@
       "description": "Automatisierungen laufen und Zeiten werden in dieser Zeitzone angezeigt",
       "localTime": "Ortszeit {{time}}"
     },
-    "thinkingLevel": {
-      "label": "Denken",
-      "description": "Wie gründlich das Modell vor dem Antworten nachdenkt. Höher ist gründlicher, aber langsamer.",
-      "options": {
-        "off": "Aus",
-        "low": "Niedrig",
-        "medium": "Mittel",
-        "high": "Hoch"
-      }
-    },
     "provider": "Anbieter",
     "model": "Modell",
     "signInFirst": "Melden Sie sich oben bei einem Anbieter an und wählen Sie dann hier dessen Modell.",

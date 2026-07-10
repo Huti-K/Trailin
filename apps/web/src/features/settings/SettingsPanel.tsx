@@ -4,12 +4,10 @@ import { Trans, useTranslation } from "react-i18next";
 import {
   LANGUAGE_LABELS,
   SUPPORTED_LANGUAGES,
-  THINKING_LEVELS,
   isLanguage,
   type AppStatus,
   type LlmProviderInfo,
   type ModelSettings,
-  type ThinkingLevelSetting,
 } from "@trailin/shared";
 import { api } from "@/lib/api";
 import { rememberLanguage } from "@/lib/i18n";
@@ -99,7 +97,6 @@ export function SettingsPanel({ onStatusChanged }: { onStatusChanged?: () => voi
         <div className="flex flex-col gap-5">
           <Providers providers={providers} onChanged={refresh} />
           <ModelPicker connectedIds={connectedIds} onSaved={refresh} />
-          <ThinkingLevelRow />
         </div>
       </Section>
 
@@ -372,55 +369,6 @@ function QuickActionsRow() {
         { value: "send", label: t("settings.sections.quickActions.send") },
         { value: "prefill", label: t("settings.sections.quickActions.prefill") },
       ]}
-    />
-  );
-}
-
-function ThinkingLevelRow() {
-  const { t } = useTranslation();
-  const [level, setLevel] = React.useState<ThinkingLevelSetting | null>(null);
-  const [state, setState] = React.useState<"idle" | "saving" | "error">("idle");
-  const [error, setError] = React.useState<string | null>(null);
-
-  React.useEffect(() => {
-    api
-      .thinkingLevel()
-      .then((r) => setLevel(r.thinkingLevel))
-      .catch((err) => setError(errorMessage(err)));
-  }, []);
-
-  // Auto-save like the model picker: persist on change, no Save button.
-  const persist = async (next: string) => {
-    if (!(THINKING_LEVELS as readonly string[]).includes(next) || next === level) return;
-    setState("saving");
-    setError(null);
-    try {
-      const { thinkingLevel } = await api.setThinkingLevel(next as ThinkingLevelSetting);
-      setLevel(thinkingLevel);
-      setState("idle");
-    } catch (err) {
-      setState("error");
-      setError(errorMessage(err));
-    }
-  };
-
-  if (level === null) {
-    return error ? <ErrorBanner>{error}</ErrorBanner> : <LoadingRow />;
-  }
-
-  return (
-    <PreferenceRow
-      id="settings-thinking-level"
-      label={t("settings.thinkingLevel.label")}
-      description={t("settings.thinkingLevel.description")}
-      error={state === "error" ? error : null}
-      saving={state === "saving"}
-      value={level}
-      onChange={(value) => void persist(value)}
-      options={THINKING_LEVELS.map((lvl) => ({
-        value: lvl,
-        label: t(`settings.thinkingLevel.options.${lvl}`),
-      }))}
     />
   );
 }

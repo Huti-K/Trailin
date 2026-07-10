@@ -428,10 +428,6 @@ export interface ModelSettings {
   catalog: { id: string; name: string; models: string[] }[];
 }
 
-/** How much the model reasons before answering, from no extended thinking to the most thorough. */
-export const THINKING_LEVELS = ["off", "low", "medium", "high"] as const;
-export type ThinkingLevelSetting = (typeof THINKING_LEVELS)[number];
-
 export interface AppStatus {
   pipedreamConfigured: boolean;
   /** Whether the active model's provider has working credentials. */
