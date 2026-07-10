@@ -2,13 +2,15 @@ import * as React from "react";
 import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
-// The shared elevated container. Wraps `.surface`/`.surface-soft` (index.css)
-// with a standard padding scale so call sites stop picking their own.
+// The shared elevated container. Wraps `.surface`/`.surface-soft`/`.surface-pop`
+// (index.css) with a standard padding scale so call sites stop picking their own.
 const cardVariants = cva("", {
   variants: {
     tone: {
       flat: "surface shadow-sm",
       soft: "surface-soft",
+      /* The floating tier — what Select menus and popovers paint on. */
+      pop: "surface-pop",
     },
     padding: {
       sm: "p-3",

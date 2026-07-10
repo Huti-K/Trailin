@@ -20,9 +20,9 @@ function resolve(pref: ThemePref): "light" | "dark" {
 }
 
 /**
- * Three-way theme preference (light/dark/system). Mirrors useNavLayout's
- * localStorage + window-event pattern so every hook instance (header toggle,
- * Settings row) stays in sync without lifting state.
+ * Three-way theme preference (light/dark/system). Uses a localStorage +
+ * window-event pattern so every hook instance (header toggle, Settings row)
+ * stays in sync without lifting state.
  */
 export function useTheme() {
   const [pref, setPref] = React.useState<ThemePref>(readPref);

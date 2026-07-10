@@ -1,10 +1,9 @@
 import * as React from "react";
-import { Routes, Route, Navigate, useNavigate, useLocation, Link } from "react-router-dom";
+import { Routes, Route, Navigate, useNavigate, useLocation } from "react-router-dom";
 import { History, Menu, MessagesSquare, Moon, Sun, X, Plus, Search, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { isLanguage, isSetupComplete, type AppStatus } from "@trailin/shared";
 import { Sidebar } from "@/components/Sidebar";
-import { DockNav } from "@/components/DockNav";
 import { Kbd, SearchPalette } from "@/components/SearchPalette";
 import { ChatPanel, HistoryList } from "@/features/chat/ChatPanel";
 import { SettingsPanel } from "@/features/settings/SettingsPanel";
@@ -21,7 +20,6 @@ import { cn, MOD_LABEL } from "@/lib/utils";
 import { api } from "@/lib/api";
 import { rememberLanguage } from "@/lib/i18n";
 import { useResizableWidth } from "@/lib/useResizableWidth";
-import { useNavLayout } from "@/lib/useNavLayout";
 import { useTheme } from "@/lib/useTheme";
 import { CursorTooltip } from "@/components/ui/cursor-tooltip";
 
@@ -88,7 +86,6 @@ export default function App() {
   const [historyQuery, setHistoryQuery] = React.useState("");
   const [, theme, setThemePref] = useTheme();
   const toggleTheme = () => setThemePref(theme === "dark" ? "light" : "dark");
-  const [navLayout] = useNavLayout();
   const { width: chatWidth, onPointerDown: onChatResizeStart } = useResizableWidth({
     storageKey: "trailin-chat-width",
     defaultWidth: 384,
@@ -199,55 +196,43 @@ export default function App() {
         {t("app.skipToContent")}
       </a>
 
-      {navLayout === "sidebar" && mobileOpen && (
+      {mobileOpen && (
         <div
           className="scrim fixed inset-0 z-40 md:hidden"
           onClick={() => setMobileOpen(false)}
         />
       )}
 
-      {navLayout === "sidebar" && (
-        <div
-          className={cn(
-            "fixed inset-y-0 left-0 z-50 shadow-lg transition-transform duration-200 ease-out md:static md:z-auto md:translate-x-0 md:shadow-none",
-            mobileOpen ? "translate-x-0" : "-translate-x-full",
-          )}
-        >
-          <Sidebar
-            status={status}
-            onClose={() => setMobileOpen(false)}
-          />
-        </div>
-      )}
-
-      {/* Floating Dock Nav — centered over the content column, not the viewport */}
-      {navLayout === "dock" && <DockNav status={status} theme={theme} />}
+      <div
+        className={cn(
+          "fixed inset-y-0 left-0 z-50 shadow-lg transition-transform duration-200 ease-out md:static md:z-auto md:translate-x-0 md:shadow-none",
+          mobileOpen ? "translate-x-0" : "-translate-x-full",
+        )}
+      >
+        <Sidebar
+          status={status}
+          onClose={() => setMobileOpen(false)}
+        />
+      </div>
 
       <main
         id="main-content"
         className={cn("flex min-w-0 flex-1 flex-col overflow-hidden", onChatRoute && "hidden")}
       >
         <header className="flex shrink-0 items-center gap-4 px-5 py-5 sm:px-8">
-          {navLayout === "dock" && (
-            <Link to="/" title="Go to Homepage" className="shrink-0 flex items-center">
-              <img src="/logo.svg" alt="Trailin" className="h-8 w-auto object-contain transition-opacity hover:opacity-80" />
-            </Link>
-          )}
-          {navLayout === "sidebar" && (
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => {
-                setChatOpen(false);
-                setMobileOpen(true);
-              }}
-              className="shrink-0 md:hidden"
-              aria-label={t("app.openMenu")}
-              data-tooltip={t("app.openMenu")}
-            >
-              <Menu />
-            </Button>
-          )}
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => {
+              setChatOpen(false);
+              setMobileOpen(true);
+            }}
+            className="shrink-0 md:hidden"
+            aria-label={t("app.openMenu")}
+            data-tooltip={t("app.openMenu")}
+          >
+            <Menu />
+          </Button>
           <div className="min-w-0 flex-1">
             <h1 className="text-xl font-bold tracking-tight text-foreground">{meta.title}</h1>
             <p className="truncate text-sm text-muted-foreground">{meta.description}</p>
@@ -299,21 +284,8 @@ export default function App() {
           </div>
         </header>
 
-        <div
-          className={cn(
-            "min-h-0 flex-1 overflow-y-auto scroll-stable px-5 pt-1 sm:px-8",
-            navLayout === "dock" ? "pb-28" : "pb-10",
-          )}
-        >
-          <div
-            className={cn(
-              "mx-auto max-w-3xl",
-              // Dock mode: chat is a floating overlay, so content stays viewport-centered.
-              // Cap its width so it shrinks symmetrically rather than sliding under the chat.
-              navLayout === "dock" &&
-                "md:max-w-[max(20rem,min(48rem,calc(100vw_-_2*var(--chat-width)_-_4rem)))]",
-            )}
-          >
+        <div className="min-h-0 flex-1 overflow-y-auto scroll-stable px-5 pb-10 pt-1 sm:px-8">
+          <div className="mx-auto max-w-3xl">
             <Routes>
               {/* The full-page Chat tab is rendered by the persistent chat instance below,
                   not here — this route just keeps the URL valid so it isn't redirected home. */}
@@ -362,11 +334,8 @@ export default function App() {
         aria-orientation="vertical"
         aria-label={t("chat.resize")}
         className={cn(
-          "group z-40 hidden cursor-col-resize touch-none items-center justify-center md:flex",
+          "group z-40 hidden w-2 shrink-0 cursor-col-resize touch-none items-center justify-center md:flex",
           onChatRoute && "md:hidden",
-          navLayout === "dock"
-            ? "fixed inset-y-0 right-[var(--chat-width)] w-4"
-            : "w-2 shrink-0",
         )}
       >
         <div className="h-8 w-1 rounded-full bg-foreground/10 transition-colors group-hover:bg-foreground/30 group-active:bg-accent/60" />
@@ -382,11 +351,8 @@ export default function App() {
           onChatRoute
             ? "static z-auto min-w-0 flex-1 translate-x-0"
             : cn(
-                "fixed inset-y-0 right-0 w-full max-w-sm transition-transform duration-200 ease-out md:w-[var(--chat-width)] md:max-w-none md:translate-x-0",
+                "fixed inset-y-0 right-0 w-full max-w-sm transition-transform duration-200 ease-out md:static md:z-auto md:w-[var(--chat-width)] md:max-w-none md:translate-x-0",
                 chatOpen ? "z-50 translate-x-0" : "z-40 translate-x-full md:translate-x-0",
-                navLayout === "dock"
-                  ? "md:fixed md:z-40 md:py-4 md:pr-4 md:pointer-events-none"
-                  : "md:static md:z-auto",
               ),
         )}
         style={{ "--chat-width": `${chatWidth}px` } as React.CSSProperties}
@@ -394,14 +360,7 @@ export default function App() {
         <div
           className={cn(
             "flex min-h-0 min-w-0 flex-1 overflow-hidden pointer-events-auto",
-            onChatRoute
-              ? "flex-row bg-surface"
-              : cn(
-                  "flex-col",
-                  navLayout === "dock"
-                    ? "md:bg-white dark:md:bg-sidebar md:rounded-2xl"
-                    : "bg-sidebar",
-                ),
+            onChatRoute ? "flex-row bg-surface" : "flex-col bg-sidebar",
           )}
         >
           {/* History rail — Chat tab only. Static column on desktop, slide-over drawer on mobile. */}
@@ -486,16 +445,10 @@ export default function App() {
           )}
 
           {/* Chat column — always present; the stable slot that owns the ChatPanel instance. */}
-          <div
-            className={cn(
-              "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
-              // In dock mode the floating nav sits over the bottom-center, so lift the input clear of it.
-              onChatRoute && navLayout === "dock" && "pb-24",
-            )}
-          >
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
             <div className="flex shrink-0 items-center gap-2.5 px-5 pb-4 pt-6">
               {/* Full-page tab has no app header, so mobile users still need a way into the nav drawer. */}
-              {onChatRoute && navLayout === "sidebar" && (
+              {onChatRoute && (
                 <Button
                   variant="ghost"
                   size="icon"

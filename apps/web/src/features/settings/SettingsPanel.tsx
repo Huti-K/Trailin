@@ -19,7 +19,6 @@ import { ListRow } from "@/components/ui/list-row";
 import { Section } from "@/components/ui/section-header";
 import { StatusChip } from "@/components/ui/status-chip";
 import { ErrorBanner, LoadingRow } from "@/components/ui/feedback";
-import { useNavLayout, type NavLayout } from "@/lib/useNavLayout";
 import { useQuickActionMode, type QuickActionMode } from "@/lib/quickActions";
 import { useTheme, type ThemePref } from "@/lib/useTheme";
 import { ConnectionsPanel } from "@/features/connections/ConnectionsPanel";
@@ -146,7 +145,6 @@ export function SettingsPanel({ onStatusChanged }: { onStatusChanged?: () => voi
           <AppearanceRow />
           <LanguageRow />
           <TimezoneRow />
-          <NavigationRow />
           <QuickActionsRow />
         </div>
       </Section>
@@ -166,6 +164,7 @@ function PreferenceRow({
   value,
   onChange,
   options,
+  searchable,
 }: {
   id: string;
   label: string;
@@ -175,6 +174,7 @@ function PreferenceRow({
   value: string;
   onChange: (value: string) => void;
   options: { value: string; label: string }[];
+  searchable?: boolean;
 }) {
   return (
     <ListRow>
@@ -194,6 +194,7 @@ function PreferenceRow({
           value={value}
           onChange={onChange}
           options={options}
+          searchable={searchable}
         />
       </div>
     </ListRow>
@@ -255,6 +256,7 @@ function LanguageRow() {
         value: code,
         label: LANGUAGE_LABELS[code],
       }))}
+      searchable
     />
   );
 }
@@ -350,25 +352,7 @@ function TimezoneRow() {
       value={value}
       onChange={(next) => void persist(next)}
       options={options}
-    />
-  );
-}
-
-function NavigationRow() {
-  const { t } = useTranslation();
-  const [layout, setLayout] = useNavLayout();
-
-  return (
-    <PreferenceRow
-      id="settings-nav-layout"
-      label={t("settings.sections.navigation.title")}
-      description={t("settings.sections.navigation.description")}
-      value={layout}
-      onChange={(value) => setLayout(value as NavLayout)}
-      options={[
-        { value: "dock", label: t("settings.sections.navigation.dock") },
-        { value: "sidebar", label: t("settings.sections.navigation.sidebar") },
-      ]}
+      searchable
     />
   );
 }
@@ -524,6 +508,7 @@ function ModelPicker({
             value={model}
             onChange={(value) => void persist(provider, value)}
             options={(activeCatalog?.models ?? []).map((m) => ({ value: m, label: m }))}
+            searchable
           />
         </div>
       </div>

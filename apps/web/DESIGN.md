@@ -28,6 +28,19 @@ These rules are binding. If a change would break one, change the rule here first
 Never stack `surface` on `surface`. A grouped block is `surface`; the rows inside it are
 bare or `surface-2` on hover — that is the maximum depth.
 
+**Fills recess against what they sit on, not against the page.** Raw `surface-2` on a
+`surface` panel is near-invisible (worst in dark, ~0.04 L apart), so recessed and tonal
+fills are painted through derived variables (`--surface-2-fill`, `--secondary-fill`)
+that step one tone further inside any `.surface`/`.surface-soft`/`.surface-pop`. This is
+automatic — `bg-surface-2`, `bg-secondary`, `.field`, `.tint-neutral`, and `.skeleton`
+all route through it. Never hand-pick a darker gray to make a control read inside a
+card; if contrast is still short, the fix belongs in the fill variables in `index.css`.
+
+**Anchored floating panels use `.surface-pop`, not `.surface-soft`.** Select menus and
+the color picker float over content with no scrim: in light mode the shadow lifts them,
+but dark shadows vanish, so `.surface-pop` steps the panel itself one tone brighter than
+a card in dark mode. Dialogs keep `.surface-soft` — the scrim already separates them.
+
 ## Color
 
 - **Ink is the brand.** Primary actions (buttons, the send control, the user's chat

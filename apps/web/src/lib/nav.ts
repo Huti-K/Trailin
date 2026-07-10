@@ -9,7 +9,7 @@ export interface NavItem {
 }
 
 /**
- * Single source of truth for the 5-item primary nav. Sidebar, DockNav, the
+ * Single source of truth for the 5-item primary nav. The Sidebar, the
  * command palette's shortcut list, and App.tsx's route-name validation all
  * read from this one array instead of keeping their own copies in sync.
  */

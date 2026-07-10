@@ -10,42 +10,42 @@
     surface     — one step up (elevated panels)
     surface-2   — one step down (inputs, chips, hover)
 
-  Ink is the brand (near-black CTAs). Slate blue is the single spot accent.
+  Ink is the brand (near-black CTAs). Indigo is the single spot accent.
   No borders at rest anywhere; the only stroke is the a11y focus ring.
 */
 :root, .light {
   color-scheme: light;
-  --background: oklch(0.986 0.006 255);
-  --surface: oklch(0.999 0.003 255);
-  --surface-2: oklch(0.955 0.008 255);
-  --foreground: oklch(0.255 0.008 260);
+  --background: oklch(0.9892 0.0033 296.35);
+  --surface: oklch(1 0 0);
+  --surface-2: oklch(0.9576 0.0104 281.33);
+  --foreground: oklch(0.2923 0.01 270);
 
-  --muted: oklch(0.955 0.004 255);
-  --muted-foreground: oklch(0.545 0.018 258);
-  --secondary: oklch(0.948 0.005 255);
-  --secondary-foreground: oklch(0.34 0.012 260);
+  --muted: oklch(0.9572 0.005 265);
+  --muted-foreground: oklch(0.5678 0.0225 268);
+  --secondary: oklch(0.9506 0.0063 265);
+  --secondary-foreground: oklch(0.373 0.015 270);
 
   /* Ink primary — near-black charcoal, near-white text. */
-  --primary: oklch(0.27 0.01 260);
-  --primary-foreground: oklch(0.99 0.002 255);
+  --primary: oklch(0.2978 0.0297 277.11);
+  --primary-foreground: oklch(0.9905 0.0025 265);
 
-  /* Slate blue — the single accent. Used sparingly; -soft is its tint fill. */
-  --accent: oklch(0.53 0.11 256);
-  --accent-foreground: oklch(0.99 0.002 255);
-  --accent-soft: oklch(0.57 0.11 256);
+  /* Indigo — the single accent. Used sparingly; -soft is its tint fill. */
+  --accent: oklch(0.535 0.2876 286.97);
+  --accent-foreground: oklch(0.9905 0.0025 265);
+  --accent-soft: oklch(0.575 0.2876 286.97);
 
   /* Muted semantic pastels (text tones; backgrounds mixed at call site). */
-  --success: oklch(0.55 0.1 155);
-  --warning: oklch(0.62 0.11 70);
-  --destructive: oklch(0.55 0.17 27);
-  --destructive-foreground: oklch(0.99 0.004 255);
+  --success: oklch(0.5725 0.125 165);
+  --warning: oklch(0.639 0.1375 80);
+  --destructive: oklch(0.5725 0.2125 37);
+  --destructive-foreground: oklch(0.9905 0.005 265);
 
   /* File-type ink. Only the hue varies (per format, set on the element as
      --filetype-h); lightness and chroma are fixed so the family stays even. */
-  --filetype-l: 0.55;
-  --filetype-c: 0.11;
+  --filetype-l: 0.5725;
+  --filetype-c: 0.1375;
 
-  --ring: oklch(0.53 0.11 256);
+  --ring: oklch(0.535 0.2876 286.97);
   /* Clean white nav rail — sits a touch brighter than the canvas, no border needed. */
   --sidebar: oklch(1 0 0);
 
@@ -53,41 +53,52 @@
   --grain-opacity: 0.018;
   /* Cool, near-invisible shadow ink for the few elevated panels. */
   --shadow-ink: 0.28 0.02 260;
+  /* Scales every shadow's opacity at once. 0 flattens the UI completely. */
+  --shadow-strength: 1;
+
+  /* Painted fills — what recessed/tonal shapes actually use. On the canvas
+     they ARE the raw tokens; elevated panels re-scope them one step further
+     (see .surface below) so a fill never melts into the panel behind it. */
+  --surface-2-fill: var(--surface-2);
+  --secondary-fill: var(--secondary);
 }
 
 .dark {
   color-scheme: dark;
-  --background: oklch(0.192 0.015 260);
-  --surface: oklch(0.234 0.018 260);
-  --surface-2: oklch(0.272 0.02 260);
-  --foreground: oklch(0.94 0.004 255);
+  --background: oklch(0.2867 0.015 260);
+  --surface: oklch(0.3293 0.018 260);
+  --surface-2: oklch(0.3755 0.02 260);
+  --foreground: oklch(0.96 0.004 255);
 
-  --muted: oklch(0.272 0.009 260);
-  --muted-foreground: oklch(0.685 0.012 258);
-  --secondary: oklch(0.292 0.009 260);
-  --secondary-foreground: oklch(0.92 0.005 255);
+  --muted: oklch(0.3084 0.009 260);
+  --muted-foreground: oklch(0.7008 0.012 258);
+  --secondary: oklch(0.3274 0.009 260);
+  --secondary-foreground: oklch(0.924 0.005 255);
 
   /* Ink flips to light-on-dark for CTAs. */
-  --primary: oklch(0.93 0.004 255);
-  --primary-foreground: oklch(0.22 0.008 260);
+  --primary: oklch(0.9335 0.004 255);
+  --primary-foreground: oklch(0.259 0.008 260);
 
-  --accent: oklch(0.68 0.12 253);
-  --accent-foreground: oklch(0.2 0.01 260);
-  --accent-soft: oklch(0.64 0.12 253);
+  --accent: oklch(0.6987 0.2104 286.13);
+  --accent-foreground: oklch(0.24 0.01 260);
+  --accent-soft: oklch(0.6587 0.2104 286.13);
 
-  --success: oklch(0.72 0.11 158);
-  --warning: oklch(0.8 0.11 78);
-  --destructive: oklch(0.64 0.18 27);
-  --destructive-foreground: oklch(0.99 0.004 255);
+  --success: oklch(0.734 0.1375 168);
+  --warning: oklch(0.81 0.1375 88);
+  --destructive: oklch(0.658 0.225 37);
+  --destructive-foreground: oklch(0.9905 0.004 255);
 
-  --filetype-l: 0.72;
-  --filetype-c: 0.11;
+  --filetype-l: 0.734;
+  --filetype-c: 0.1375;
 
-  --ring: oklch(0.68 0.12 253);
-  --sidebar: oklch(0.168 0.006 260);
+  --ring: oklch(0.6987 0.2104 286.13);
+  --sidebar: oklch(0.2096 0.006 260);
 
   --grain-opacity: 0.028;
   --shadow-ink: 0.02 0.01 260;
+
+  --surface-2-fill: var(--surface-2);
+  --secondary-fill: var(--secondary);
 }
 
 @theme inline {
@@ -99,11 +110,11 @@
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-surface: var(--surface);
-  --color-surface-2: var(--surface-2);
+  --color-surface-2: var(--surface-2-fill);
   --color-sidebar: var(--sidebar);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
-  --color-secondary: var(--secondary);
+  --color-secondary: var(--secondary-fill);
   --color-secondary-foreground: var(--secondary-foreground);
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
@@ -121,13 +132,14 @@
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
 
-  /* Ultra-diffuse, warm-tinted lift for the rare elevated panel. No lines. */
-  --shadow-xs: 0 1px 2px 0 oklch(var(--shadow-ink) / 0.04);
-  --shadow-sm: 0 1px 3px -1px oklch(var(--shadow-ink) / 0.05);
-  --shadow-md: 0 6px 20px -8px oklch(var(--shadow-ink) / 0.1),
-    0 2px 6px -4px oklch(var(--shadow-ink) / 0.06);
-  --shadow-lg: 0 18px 40px -16px oklch(var(--shadow-ink) / 0.14),
-    0 4px 12px -6px oklch(var(--shadow-ink) / 0.06);
+  /* Ultra-diffuse, warm-tinted lift for the rare elevated panel. No lines.
+     Each opacity rides --shadow-strength so the whole depth scale moves as one. */
+  --shadow-xs: 0 1px 2px 0 oklch(var(--shadow-ink) / calc(0.04 * var(--shadow-strength, 1)));
+  --shadow-sm: 0 1px 3px -1px oklch(var(--shadow-ink) / calc(0.05 * var(--shadow-strength, 1)));
+  --shadow-md: 0 6px 20px -8px oklch(var(--shadow-ink) / calc(0.1 * var(--shadow-strength, 1))),
+    0 2px 6px -4px oklch(var(--shadow-ink) / calc(0.06 * var(--shadow-strength, 1)));
+  --shadow-lg: 0 18px 40px -16px oklch(var(--shadow-ink) / calc(0.14 * var(--shadow-strength, 1))),
+    0 4px 12px -6px oklch(var(--shadow-ink) / calc(0.06 * var(--shadow-strength, 1)));
 }
 
 @layer base {
@@ -184,9 +196,39 @@
     border-radius: var(--radius);
     box-shadow: var(--shadow-md);
   }
+  /*
+    Anchored floating panel: select menus, the color picker — floats over
+    content with no scrim. In light mode the shadow lifts it; dark shadows are
+    invisible, so the panel itself steps one tone brighter than a card.
+  */
+  .surface-pop {
+    background: var(--surface);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-lg);
+  }
+  /*
+    Fills recess against what they SIT ON, not against the page. surface-2 on
+    a surface panel is near-invisible (worst in dark: only ~0.04 L apart), so
+    inside any elevated panel the painted fills step one tone further. Derived
+    from the raw tokens so Theme Lab palette overrides flow through.
+  */
+  .surface, .surface-soft, .surface-pop {
+    --surface-2-fill: color-mix(in oklch, var(--surface-2) 96%, var(--foreground));
+    --secondary-fill: color-mix(in oklch, var(--secondary) 96%, var(--foreground));
+  }
+  .dark .surface, .dark .surface-soft {
+    --surface-2-fill: color-mix(in oklch, var(--surface-2) 92%, var(--foreground));
+    --secondary-fill: color-mix(in oklch, var(--secondary) 92%, var(--foreground));
+  }
+  /* The dark popover is itself brighter, so its fills push harder still. */
+  .dark .surface-pop {
+    background: color-mix(in oklch, var(--surface) 90%, var(--foreground));
+    --surface-2-fill: color-mix(in oklch, var(--surface-2) 84%, var(--foreground));
+    --secondary-fill: color-mix(in oklch, var(--secondary) 84%, var(--foreground));
+  }
   /* Borderless filled control: inputs, textareas, selects. */
   .field {
-    background: var(--surface-2);
+    background: var(--surface-2-fill);
     border-radius: calc(var(--radius) - 2px);
     color: var(--foreground);
     transition: background-color 0.15s ease, box-shadow 0.15s ease;
@@ -196,7 +238,7 @@
   }
   .field:focus-visible {
     outline: none;
-    background: color-mix(in oklch, var(--surface-2) 55%, var(--surface));
+    background: color-mix(in oklch, var(--surface-2-fill) 55%, var(--surface));
     box-shadow: 0 0 0 2px var(--background), 0 0 0 4px color-mix(in oklch, var(--ring) 55%, transparent);
   }
   .field:disabled {
@@ -209,7 +251,7 @@
     The one place semantic color is allowed to fill a shape.
   */
   .tint-neutral {
-    background: var(--surface-2);
+    background: var(--surface-2-fill);
     color: var(--muted-foreground);
   }
   .tint-accent {
@@ -366,7 +408,7 @@
 .skeleton {
   position: relative;
   overflow: hidden;
-  background: var(--surface-2);
+  background: var(--surface-2-fill);
 }
 .skeleton::after {
   content: "";

@@ -432,12 +432,6 @@
         "title": "Language",
         "description": "Used for the app and for the assistant's answers, in chat and in automations."
       },
-      "navigation": {
-        "title": "Navigation style",
-        "description": "Choose between a left sidebar or a floating bottom dock.",
-        "dock": "Bottom dock",
-        "sidebar": "Left sidebar"
-      },
       "quickActions": {
         "title": "Quick actions",
         "description": "What buttons like \"Draft reply\" do: send the request right away, or put it in the chat box so you can edit it first.",

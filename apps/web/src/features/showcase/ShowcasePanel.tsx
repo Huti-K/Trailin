@@ -6,11 +6,17 @@
  *  editor. Colleagues can retune the palette here (the "colours are dark and
  *  depressed" note) and copy the result straight into `src/index.css`.
  *
- *  To remove entirely: delete this file and the one `/showcase` <Route> in
+ *  Two layers of control, composed in that order:
+ *    Base colours  — a picker per headline token, overriding what index.css says.
+ *    Adjustments   — brightness / contrast / saturation / warmth / hue passes run
+ *                    over *every* token afterwards, so the whole UI moves together.
+ *
+ *  To remove entirely: delete this folder and the one `/showcase` <Route> in
  *  App.tsx. Nothing else imports it.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 import * as React from "react";
+import { useTranslation } from "react-i18next";
 import {
   Bell,
   Check,
@@ -23,7 +29,16 @@ import {
   Sparkles,
   Sun,
   Trash2,
+  TriangleAlert,
+  Wrench,
 } from "lucide-react";
+import type {
+  AccountColor,
+  AccountDrafts,
+  AccountWaiting,
+  Automation,
+  EmailThreadMessage,
+} from "@trailin/shared";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
@@ -34,45 +49,105 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { ListRow } from "@/components/ui/list-row";
 import { FormField } from "@/components/ui/form-field";
-import { SectionHeader, Section } from "@/components/ui/section-header";
+import { Section } from "@/components/ui/section-header";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorBanner, LoadingRow } from "@/components/ui/feedback";
 import { Skeleton } from "@/components/ui/skeleton";
 import { IconButton } from "@/components/ui/icon-button";
 import { LinkButton } from "@/components/ui/link-button";
 import { ColorPicker } from "@/components/ui/color-picker";
+import { Chip } from "@/components/ui/chip";
+import { StatusChip } from "@/components/ui/status-chip";
+import { Dialog } from "@/components/ui/dialog";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { Markdown } from "@/components/ui/markdown";
+import { RunStatusBadge } from "@/components/RunStatusBadge";
+import { AgentCardView } from "@/features/chat/cards";
+import { SHOWCASE_TURNS, type ShowcaseTurn } from "@/features/chat/cards/samples";
+import { GlanceStrip } from "@/features/home/GlanceStrip";
+import { WaitingSection } from "@/features/home/WaitingSection";
+import { ThreadHistory } from "@/features/home/ThreadHistory";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
+import {
+  applyTuning,
+  formatOklch,
+  hexToOklch,
+  IDENTITY,
+  lightnessOf,
+  oklchToHex,
+  parseCssColor,
+  pivotOf,
+  round,
+  type Oklch,
+  type Tuning,
+} from "./theme-tuning";
 
 type ThemeName = "light" | "dark";
 
-/** Colour tokens the editor exposes as pickers, in render order. */
-const COLOR_TOKENS: { name: string; label: string }[] = [
-  { name: "--background", label: "Background" },
-  { name: "--surface", label: "Surface" },
-  { name: "--surface-2", label: "Surface 2" },
-  { name: "--foreground", label: "Foreground" },
-  { name: "--muted-foreground", label: "Muted text" },
-  { name: "--primary", label: "Primary (ink)" },
-  { name: "--accent", label: "Accent" },
-  { name: "--success", label: "Success" },
-  { name: "--warning", label: "Warning" },
-  { name: "--destructive", label: "Destructive" },
-];
-
-/** Every token shown in the read-only palette strip. */
-const ALL_TOKENS: { name: string; label: string }[] = [
-  ...COLOR_TOKENS,
+/** Every colour token the lab drives. `pick` also gives it a base-colour picker. */
+const COLOR_TOKENS: { name: string; label: string; pick?: boolean }[] = [
+  { name: "--background", label: "Background", pick: true },
+  { name: "--surface", label: "Surface", pick: true },
+  { name: "--surface-2", label: "Surface 2", pick: true },
+  { name: "--sidebar", label: "Sidebar" },
+  { name: "--foreground", label: "Foreground", pick: true },
+  { name: "--muted-foreground", label: "Muted text", pick: true },
+  { name: "--muted", label: "Muted" },
   { name: "--secondary", label: "Secondary" },
+  { name: "--secondary-foreground", label: "Secondary text" },
+  { name: "--primary", label: "Primary (ink)", pick: true },
+  { name: "--primary-foreground", label: "Primary text" },
+  { name: "--accent", label: "Accent", pick: true },
+  { name: "--accent-foreground", label: "Accent text" },
   { name: "--accent-soft", label: "Accent soft" },
   { name: "--ring", label: "Ring" },
-  { name: "--sidebar", label: "Sidebar" },
+  { name: "--success", label: "Success", pick: true },
+  { name: "--warning", label: "Warning", pick: true },
+  { name: "--destructive", label: "Destructive", pick: true },
+  { name: "--destructive-foreground", label: "Destructive text" },
 ];
 
-type Overrides = Record<ThemeName, Record<string, string>>;
+const PICKABLE = COLOR_TOKENS.filter((token) => token.pick);
 
-/** Ready-made palettes that counter the "dark and depressed" feedback. */
-const PRESETS: { name: string; overrides: Overrides }[] = [
+/** Bare numbers rather than colours, but they ride along with the adjustments. */
+const FILETYPE_L = "--filetype-l";
+const FILETYPE_C = "--filetype-c";
+const GRAIN = "--grain-opacity";
+const SCALAR_TOKENS = [FILETYPE_L, FILETYPE_C, GRAIN];
+
+const DRIVEN_VARS = [...COLOR_TOKENS.map((token) => token.name), ...SCALAR_TOKENS];
+
+/** Shape and scale, shared by both themes rather than tuned per theme. */
+interface Shape {
+  /** rem */
+  radius: number;
+  /** multiplies every --shadow-* opacity */
+  shadow: number;
+  /** root font size; Tailwind is rem-based, so this scales the entire app */
+  scale: number;
+}
+
+const DEFAULT_SHAPE: Shape = { radius: 0.7, shadow: 1, scale: 1 };
+
+/** Base colours (hex, as the pickers speak) keyed by token, per theme. */
+type Overrides = Record<ThemeName, Record<string, string>>;
+type Tunings = Record<ThemeName, Tuning>;
+
+const NO_OVERRIDES: Overrides = { light: {}, dark: {} };
+const NO_TUNING: Tunings = { light: IDENTITY, dark: IDENTITY };
+
+/** Ready-made looks that counter the "dark and depressed" feedback. */
+const PRESETS: { name: string; overrides?: Overrides; tuning?: Tunings }[] = [
+  {
+    // Light's canvas is already near white, so brightness has nowhere to go —
+    // what lifts it is chroma and a warm cast. Dark has the headroom.
+    name: "Lift the gloom",
+    tuning: {
+      light: { ...IDENTITY, contrast: 0.06, saturation: 1.3, warmth: 0.5 },
+      dark: { ...IDENTITY, brightness: 0.09, contrast: 0.12, saturation: 1.25, warmth: 0.3 },
+    },
+  },
   {
     name: "Warmer paper",
     overrides: {
@@ -111,50 +186,311 @@ const PRESETS: { name: string; overrides: Overrides }[] = [
       },
     },
   },
+  {
+    name: "Greyscale",
+    tuning: {
+      light: { ...IDENTITY, saturation: 0, contrast: 0.1 },
+      dark: { ...IDENTITY, saturation: 0, contrast: 0.1 },
+    },
+  },
 ];
 
-const DEFAULT_RADIUS = 0.7;
+/** The adjustment sliders, in render order. */
+const KNOBS: {
+  key: keyof Tuning;
+  label: string;
+  hint: string;
+  min: number;
+  max: number;
+  step: number;
+  format: (value: number) => string;
+}[] = [
+  {
+    key: "brightness",
+    label: "Brightness",
+    hint: "toward white or black",
+    min: -0.5,
+    max: 0.5,
+    step: 0.01,
+    format: signedPercent,
+  },
+  {
+    key: "contrast",
+    label: "Contrast",
+    hint: "spread from the canvas",
+    min: -0.5,
+    max: 0.75,
+    step: 0.01,
+    format: signedPercent,
+  },
+  {
+    key: "saturation",
+    label: "Saturation",
+    hint: "0× is greyscale",
+    min: 0,
+    max: 2,
+    step: 0.05,
+    format: (v) => `${v.toFixed(2)}×`,
+  },
+  {
+    key: "warmth",
+    label: "Warmth",
+    hint: "tints the neutrals",
+    min: -1,
+    max: 1,
+    step: 0.05,
+    format: (v) =>
+      v === 0 ? "neutral" : `${v > 0 ? "warm" : "cool"} ${Math.round(Math.abs(v) * 100)}%`,
+  },
+  {
+    key: "hue",
+    label: "Hue shift",
+    hint: "rotates the accents",
+    min: -180,
+    max: 180,
+    step: 1,
+    format: (v) => `${v > 0 ? "+" : ""}${v}°`,
+  },
+  {
+    key: "grain",
+    label: "Grain",
+    hint: "paper texture",
+    min: 0,
+    max: 3,
+    step: 0.1,
+    format: (v) => `${v.toFixed(1)}×`,
+  },
+];
 
-/**
- * Normalise any CSS colour string (`rgb()`, `oklch()`, `color(srgb …)`, a name)
- * to `#rrggbb`. Rather than parse the string — browsers serialise computed
- * colours inconsistently and some round-trip `oklch()` verbatim — we *paint* it
- * onto a 1×1 canvas and read the rasterised sRGB pixel back, which converts any
- * colour space for us.
- */
-let canvasCtx: CanvasRenderingContext2D | null = null;
-function toHex(cssColor: string): string {
-  if (!canvasCtx) {
-    const canvas = document.createElement("canvas");
-    canvas.width = canvas.height = 1;
-    canvasCtx = canvas.getContext("2d", { willReadFrequently: true });
-  }
-  if (!canvasCtx) return "#888888";
-  canvasCtx.clearRect(0, 0, 1, 1);
-  canvasCtx.fillStyle = cssColor;
-  canvasCtx.fillRect(0, 0, 1, 1);
-  const d = canvasCtx.getImageData(0, 0, 1, 1).data;
-  return "#" + [d[0], d[1], d[2]].map((n) => (n ?? 0).toString(16).padStart(2, "0")).join("");
+/** The theme-independent sliders, in render order. */
+const SHAPE_KNOBS: {
+  key: keyof Shape;
+  label: string;
+  hint: string;
+  min: number;
+  max: number;
+  step: number;
+  format: (value: number) => string;
+}[] = [
+  {
+    key: "radius",
+    label: "Corner radius",
+    hint: "every rounded shape",
+    min: 0,
+    max: 1.4,
+    step: 0.05,
+    format: (v) => `${v.toFixed(2)}rem`,
+  },
+  {
+    key: "shadow",
+    label: "Shadow depth",
+    hint: "0× flattens the UI",
+    min: 0,
+    max: 3,
+    step: 0.1,
+    format: (v) => `${v.toFixed(1)}×`,
+  },
+  {
+    key: "scale",
+    label: "UI scale",
+    hint: "root font size",
+    min: 0.85,
+    max: 1.25,
+    step: 0.01,
+    format: (v) => `${Math.round(v * 100)}%`,
+  },
+];
+
+function signedPercent(value: number) {
+  const pct = Math.round(value * 100);
+  return `${pct > 0 ? "+" : ""}${pct}%`;
+}
+
+/** The root font size, as CSS. `round` drops the trailing zero on whole values. */
+const scalePercent = (scale: number) => `${round(scale * 100, 1)}%`;
+
+/* ── Fixtures for the feature components ─────────────────────────────────── */
+
+const hoursAgo = (n: number) => new Date(Date.now() - n * 3_600_000).toISOString();
+
+/** Account ids match `samples.ts`, so the chat cards pick these dots up. */
+const DEMO_COLORS: AccountColor[] = [
+  { accountId: "demo-work", hex: "#4f46e5" },
+  { accountId: "demo-personal", hex: "#0d9488" },
+];
+
+const DEMO_DRAFTS: AccountDrafts[] = [
+  {
+    account: "selin@nordwind-studio.de",
+    accountId: "demo-work",
+    drafts: [
+      {
+        id: "draft-acme-2291-reply",
+        messageId: "msg-acme-2291-2",
+        threadId: "thread-acme-2291",
+        subject: "Re: Rechnung #A-2291 – Zahlungserinnerung",
+        to: "t.brandt@acme-gmbh.de",
+        date: hoursAgo(3),
+        webUrl: "#",
+        snippet: "Anbei nochmal Rechnung #A-2291 als PDF. Unser Zahlungsziel war der 30. Juni.",
+      },
+    ],
+  },
+];
+
+const DEMO_WAITING: AccountWaiting[] = [
+  {
+    account: "selin@nordwind-studio.de",
+    accountId: "demo-work",
+    items: [
+      {
+        threadId: "thread-rebrand-elif",
+        subject: "Angebot Rebranding – Rückfragen",
+        counterpart: "Elif Aydın",
+        lastSentAt: hoursAgo(72),
+        webUrl: "#",
+      },
+    ],
+  },
+  {
+    account: "selin.kaya.mail@gmail.com",
+    accountId: "demo-personal",
+    items: [
+      {
+        threadId: "thread-seeblick-august",
+        subject: "Ferienwohnung Seeblick – Buchung im August",
+        counterpart: "Sabine Möller",
+        lastSentAt: hoursAgo(30),
+        webUrl: "#",
+      },
+    ],
+  },
+];
+
+const DEMO_AUTOMATIONS: Automation[] = [
+  {
+    id: "auto-briefing",
+    name: "Morning briefing",
+    instruction: "Summarise what needs my attention across both inboxes.",
+    schedule: "0 8 * * 1-5",
+    enabled: true,
+    showInActivity: true,
+    pinned: true,
+    createdAt: hoursAgo(720),
+    nextRunAt: new Date(Date.now() + 5 * 3_600_000).toISOString(),
+  },
+];
+
+const DEMO_THREAD: EmailThreadMessage[] = [
+  {
+    from: "Sabine Möller <sabine.moeller@seeblick-ferien.de>",
+    to: ["selin.kaya.mail@gmail.com"],
+    date: hoursAgo(52),
+    body: "Die Wohnung ist vom 8. bis 15. August noch frei — 95 € pro Nacht inkl. Endreinigung.",
+  },
+  {
+    from: "Selin Kaya <selin.kaya.mail@gmail.com>",
+    to: ["sabine.moeller@seeblick-ferien.de"],
+    date: hoursAgo(48),
+    body: "Das klingt gut, wir würden gerne für die ganze Woche buchen. Ist eine Anzahlung nötig?",
+  },
+  {
+    from: "Sabine Möller <sabine.moeller@seeblick-ferien.de>",
+    to: ["selin.kaya.mail@gmail.com"],
+    date: hoursAgo(30),
+    body: "Sehr gerne — 30 % Anzahlung reicht, der Rest ist bei Anreise fällig.",
+  },
+];
+
+/** The file-type ink family. The hue is the only thing that varies per format. */
+const FILETYPES: { label: string; hue: number }[] = [
+  { label: "PDF", hue: 25 },
+  { label: "DOCX", hue: 256 },
+  { label: "XLSX", hue: 150 },
+  { label: "PNG", hue: 300 },
+  { label: "MD", hue: 70 },
+];
+
+const MARKDOWN_DEMO = `### What the assistant's replies render as
+
+**Acme GmbH** replied to the payment reminder — Thomas Brandt
+([t.brandt@acme-gmbh.de](mailto:t.brandt@acme-gmbh.de)) wants the invoice as a PDF.
+
+- A reply draft is waiting in your mailbox
+- Accounting is in Cc
+- Payment was due 30 June
+
+| Account | Unread | Drafts |
+| --- | ---: | ---: |
+| Work | 4 | 1 |
+| Personal | 2 | 1 |
+
+More context lives at [nordwind-studio.de](https://nordwind-studio.de).`;
+
+/** One theme's authored values, read straight off the stylesheet. */
+interface ThemeBase {
+  colors: Record<string, Oklch>;
+  scalars: Record<string, number>;
 }
 
 /**
- * Resolve a CSS var's *base* value for a given theme (ignoring any inline
- * override on <html>) by probing inside a throwaway themed host and reading the
- * used colour back through {@link toHex}.
+ * Resolve both themes' authored values by probing inside a throwaway themed
+ * host. `.light` / `.dark` declare every token we touch, so the host's own class
+ * rule beats whatever we've inlined on <html> for the live preview.
  */
-function resolveToken(name: string, theme: ThemeName): string {
-  const host = document.createElement("div");
-  host.className = theme; // matches `:root, .light` / `.dark` in index.css
-  host.style.position = "absolute";
-  host.style.visibility = "hidden";
-  host.style.pointerEvents = "none";
-  const probe = document.createElement("span");
-  probe.style.color = `var(${name})`;
-  host.appendChild(probe);
-  document.body.appendChild(host);
-  const hex = toHex(getComputedStyle(probe).color);
-  document.body.removeChild(host);
-  return hex;
+function resolveBase(): Record<ThemeName, ThemeBase> {
+  const out: Record<ThemeName, ThemeBase> = {
+    light: { colors: {}, scalars: {} },
+    dark: { colors: {}, scalars: {} },
+  };
+  for (const theme of ["light", "dark"] as ThemeName[]) {
+    const host = document.createElement("div");
+    host.className = theme; // matches `:root, .light` / `.dark` in index.css
+    host.style.cssText = "position:absolute;visibility:hidden;pointer-events:none";
+    document.body.appendChild(host);
+    const styles = getComputedStyle(host);
+    for (const { name } of COLOR_TOKENS) {
+      out[theme].colors[name] = parseCssColor(styles.getPropertyValue(name));
+    }
+    for (const name of SCALAR_TOKENS) {
+      const value = parseFloat(styles.getPropertyValue(name));
+      out[theme].scalars[name] = Number.isFinite(value) ? value : 0;
+    }
+    document.body.removeChild(host);
+  }
+  return out;
+}
+
+/** Base colours, with any picker overrides, run through the adjustments. */
+function computePalette(
+  base: ThemeBase,
+  overrides: Record<string, string>,
+  tuning: Tuning,
+): { css: Record<string, string>; colors: Record<string, Oklch> } {
+  const source = (name: string) => {
+    const override = overrides[name];
+    return override ? hexToOklch(override) : base.colors[name];
+  };
+
+  // Contrast spreads everything away from the canvas, so the canvas anchors it.
+  const pivot = pivotOf(source("--background") ?? { l: 1, c: 0, h: 0 }, tuning);
+
+  const css: Record<string, string> = {};
+  const colors: Record<string, Oklch> = {};
+  for (const { name } of COLOR_TOKENS) {
+    const from = source(name);
+    if (!from) continue;
+    const tuned = applyTuning(from, tuning, pivot);
+    colors[name] = tuned;
+    css[name] = formatOklch(tuned);
+  }
+
+  const scalar = (name: string, fallback: number) => base.scalars[name] ?? fallback;
+  css[FILETYPE_L] = String(round(lightnessOf(scalar(FILETYPE_L, 0.55), tuning, pivot)));
+  css[FILETYPE_C] = String(round(Math.max(0, scalar(FILETYPE_C, 0.11) * tuning.saturation)));
+  css[GRAIN] = String(round(Math.min(1, scalar(GRAIN, 0.02) * tuning.grain)));
+
+  return { css, colors };
 }
 
 export function ShowcasePanel() {
@@ -165,9 +501,29 @@ export function ShowcasePanel() {
     if (saved === "dark" || saved === "light") return saved;
     return document.documentElement.classList.contains("dark") ? "dark" : "light";
   });
-  const [overrides, setOverrides] = React.useState<Overrides>({ light: {}, dark: {} });
-  const [radius, setRadius] = React.useState(DEFAULT_RADIUS);
-  const [base, setBase] = React.useState<Record<ThemeName, Record<string, string>> | null>(null);
+  const [overrides, setOverrides] = React.useState<Overrides>(NO_OVERRIDES);
+  const [tuning, setTuning] = React.useState<Tunings>(NO_TUNING);
+  const [shape, setShape] = React.useState<Shape>(DEFAULT_SHAPE);
+  const [base, setBase] = React.useState<Record<ThemeName, ThemeBase> | null>(null);
+
+  // BriefingCard's row actions post into the real chat panel, which App keeps
+  // mounted beside every route — a curious click here would otherwise fire a
+  // live agent turn. Force prefill while the gallery is open so it only fills
+  // the composer. `pagehide` covers a refresh, which skips the unmount path.
+  React.useEffect(() => {
+    const KEY = "trailin-quick-action-mode";
+    const previous = localStorage.getItem(KEY);
+    const restore = () => {
+      if (previous === null) localStorage.removeItem(KEY);
+      else localStorage.setItem(KEY, previous);
+    };
+    localStorage.setItem(KEY, "prefill");
+    window.addEventListener("pagehide", restore);
+    return () => {
+      restore();
+      window.removeEventListener("pagehide", restore);
+    };
+  }, []);
 
   // Stay in lockstep with the real theme, whichever control flips it.
   React.useEffect(() => {
@@ -179,36 +535,66 @@ export function ShowcasePanel() {
     return () => observer.disconnect();
   }, []);
 
-  // Resolve each theme's true default once, for seeding pickers + reset.
-  React.useEffect(() => {
-    const next: Record<ThemeName, Record<string, string>> = { light: {}, dark: {} };
-    for (const theme of ["light", "dark"] as ThemeName[]) {
-      for (const { name } of ALL_TOKENS) next[theme][name] = resolveToken(name, theme);
-    }
-    setBase(next);
-  }, []);
+  // Resolve each theme's authored values once, for seeding pickers and diffing.
+  React.useEffect(() => setBase(resolveBase()), []);
 
-  // Push the active theme's colour overrides onto <html> for a live preview;
-  // clear any token the current theme no longer overrides.
+  // Both themes stay computed: the preview needs the active one, Copy CSS needs
+  // both, and each token's untouched twin says whether it drifted at all.
+  const palettes = React.useMemo(() => {
+    if (!base) return null;
+    const build = (name: ThemeName) => ({
+      live: computePalette(base[name], overrides[name], tuning[name]),
+      base: computePalette(base[name], {}, IDENTITY),
+    });
+    return { light: build("light"), dark: build("dark") };
+  }, [base, overrides, tuning]);
+
+  /** Only the tokens that moved — what the preview pins and Copy CSS emits. */
+  const changed = React.useMemo(() => {
+    const diff = (name: ThemeName) =>
+      palettes
+        ? Object.fromEntries(
+            Object.entries(palettes[name].live.css).filter(
+              ([token, value]) => value !== palettes[name].base.css[token],
+            ),
+          )
+        : {};
+    return { light: diff("light"), dark: diff("dark") };
+  }, [palettes]);
+
+  // Push the active theme onto <html> so the preview covers the whole app. A
+  // token that still matches the stylesheet is released rather than pinned.
   React.useEffect(() => {
     const root = document.documentElement.style;
-    for (const { name } of COLOR_TOKENS) {
-      const value = overrides[theme][name];
-      if (value) root.setProperty(name, value);
+    const active = changed[theme];
+    for (const name of DRIVEN_VARS) {
+      const value = active[name];
+      if (value !== undefined) root.setProperty(name, value);
       else root.removeProperty(name);
     }
-  }, [overrides, theme]);
+  }, [changed, theme]);
 
   React.useEffect(() => {
-    document.documentElement.style.setProperty("--radius", `${radius}rem`);
-  }, [radius]);
+    const root = document.documentElement.style;
+    if (shape.radius === DEFAULT_SHAPE.radius) root.removeProperty("--radius");
+    else root.setProperty("--radius", `${shape.radius}rem`);
+
+    if (shape.shadow === DEFAULT_SHAPE.shadow) root.removeProperty("--shadow-strength");
+    else root.setProperty("--shadow-strength", String(shape.shadow));
+
+    // Not a custom property: Tailwind's spacing and type scales are rem, so the
+    // root font size is the one knob that resizes the whole app at once.
+    root.fontSize = shape.scale === DEFAULT_SHAPE.scale ? "" : scalePercent(shape.scale);
+  }, [shape]);
 
   // Leave the rest of the app exactly as we found it.
   React.useEffect(
     () => () => {
       const root = document.documentElement.style;
-      for (const { name } of COLOR_TOKENS) root.removeProperty(name);
+      for (const name of DRIVEN_VARS) root.removeProperty(name);
       root.removeProperty("--radius");
+      root.removeProperty("--shadow-strength");
+      root.fontSize = "";
     },
     [],
   );
@@ -226,48 +612,70 @@ export function ShowcasePanel() {
     });
 
   const setToken = (name: string, hex: string) =>
-    setOverrides((prev) => ({
-      ...prev,
-      [theme]: { ...prev[theme], [name]: hex },
-    }));
+    setOverrides((prev) => ({ ...prev, [theme]: { ...prev[theme], [name]: hex } }));
 
-  const applyPreset = (preset: Overrides) => {
-    setOverrides({ light: { ...preset.light }, dark: { ...preset.dark } });
+  const setKnob = (key: keyof Tuning, value: number) =>
+    setTuning((prev) => ({ ...prev, [theme]: { ...prev[theme], [key]: value } }));
+
+  const setShapeKnob = (key: keyof Shape, value: number) =>
+    setShape((prev) => ({ ...prev, [key]: value }));
+
+  const applyPreset = (preset: (typeof PRESETS)[number]) => {
+    setOverrides(
+      preset.overrides
+        ? { light: { ...preset.overrides.light }, dark: { ...preset.overrides.dark } }
+        : NO_OVERRIDES,
+    );
+    setTuning(preset.tuning ?? NO_TUNING);
   };
 
   const reset = () => {
-    setOverrides({ light: {}, dark: {} });
-    setRadius(DEFAULT_RADIUS);
+    setOverrides(NO_OVERRIDES);
+    setTuning(NO_TUNING);
+    setShape(DEFAULT_SHAPE);
   };
 
-  const colorFor = (theme: ThemeName, name: string) =>
-    overrides[theme][name] ?? base?.[theme][name] ?? "#888888";
+  const baseHex = (name: string) => {
+    const authored = base?.[theme].colors[name];
+    return overrides[theme][name] ?? (authored ? oklchToHex(authored) : "#888888");
+  };
+
+  const shapeChanged = SHAPE_KNOBS.filter(({ key }) => shape[key] !== DEFAULT_SHAPE[key]);
+
+  const dirtyCount =
+    Object.keys(changed.light).length + Object.keys(changed.dark).length + shapeChanged.length;
 
   const copyCss = async () => {
-    const block = (theme: ThemeName) => {
-      const entries = Object.entries(overrides[theme]);
+    const block = (name: ThemeName) => {
+      const entries = Object.entries(changed[name]);
       if (!entries.length) return "";
-      const lines = entries.map(([k, v]) => `  ${k}: ${v};`).join("\n");
-      const selector = theme === "light" ? ":root, .light" : ".dark";
+      const selector = name === "light" ? ":root, .light" : ".dark";
+      const lines = entries.map(([token, value]) => `  ${token}: ${value};`).join("\n");
       return `${selector} {\n${lines}\n}`;
     };
     const parts = [block("light"), block("dark")].filter(Boolean);
-    if (radius !== DEFAULT_RADIUS) parts.push(`:root {\n  --radius: ${radius}rem;\n}`);
+
+    const rootLines: string[] = [];
+    if (shape.radius !== DEFAULT_SHAPE.radius) rootLines.push(`  --radius: ${shape.radius}rem;`);
+    if (shape.shadow !== DEFAULT_SHAPE.shadow) rootLines.push(`  --shadow-strength: ${shape.shadow};`);
+    if (rootLines.length) parts.push(`:root {\n${rootLines.join("\n")}\n}`);
+    // UI scale isn't a token — it's the root font size Tailwind's rem scales read.
+    if (shape.scale !== DEFAULT_SHAPE.scale) {
+      parts.push(`html {\n  font-size: ${scalePercent(shape.scale)};\n}`);
+    }
+
     const css = parts.join("\n\n");
     if (!css) {
-      toast.error("Nothing to copy — no overrides yet.");
+      toast.error("Nothing to copy — no changes yet.");
       return;
     }
     try {
       await navigator.clipboard.writeText(css);
       toast.success("Theme CSS copied to clipboard.");
     } catch {
-      toast.error("Clipboard blocked — copy manually from the preview below.");
+      toast.error("Clipboard blocked — copy manually from the palette below.");
     }
   };
-
-  const dirtyCount =
-    Object.keys(overrides.light).length + Object.keys(overrides.dark).length;
 
   return (
     <div className="flex flex-col gap-10 pb-16">
@@ -278,15 +686,16 @@ export function ShowcasePanel() {
           <Badge variant="warning">dev only</Badge>
         </div>
         <p className="text-sm text-muted-foreground">
-          Every component in one place, plus a live palette editor. Tune colours until they
-          feel right, then <span className="font-medium text-foreground">Copy CSS</span> into{" "}
-          <span className="font-mono text-xs">src/index.css</span>. Delete this file and its
+          Every component in one place, plus a live palette editor. Slide the whole UI brighter,
+          punchier or warmer, retouch individual colours underneath, then{" "}
+          <span className="font-medium text-foreground">Copy CSS</span> into{" "}
+          <span className="font-mono text-xs">src/index.css</span>. Delete this folder and its
           route to remove.
         </p>
       </div>
 
       {/* ── Theme Lab ─────────────────────────────────────────────── */}
-      <Card tone="soft" padding="lg" className="flex flex-col gap-5">
+      <Card tone="soft" padding="lg" className="flex flex-col gap-6">
         <div className="flex flex-wrap items-center gap-2">
           <p className="mr-auto text-sm font-semibold tracking-tight">Theme Lab</p>
           <Button variant="outline" size="sm" onClick={toggleTheme}>
@@ -298,7 +707,7 @@ export function ShowcasePanel() {
               key={preset.name}
               variant="secondary"
               size="sm"
-              onClick={() => applyPreset(preset.overrides)}
+              onClick={() => applyPreset(preset)}
             >
               {preset.name}
             </Button>
@@ -312,68 +721,90 @@ export function ShowcasePanel() {
         </div>
 
         <p className="text-xs text-muted-foreground">
-          Editing the <span className="font-medium text-foreground">{theme}</span> theme —
-          switch with the button above to tune the other. Changes preview across the whole app
-          and revert when you leave this page.
+          Editing the <span className="font-medium text-foreground">{theme}</span> theme — switch
+          with the button above to tune the other. Changes preview across the whole app and revert
+          when you leave this page.
         </p>
 
-        {base ? (
-          <div className="grid gap-x-5 gap-y-3 sm:grid-cols-2">
-            {COLOR_TOKENS.map(({ name, label }) => (
-              <div key={name} className="flex items-center gap-3">
-                <ColorPicker color={colorFor(theme, name)} onSelect={(hex) => setToken(name, hex)} />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm">{label}</p>
-                  <p className="font-mono text-[11px] text-muted-foreground">{name}</p>
-                </div>
-                <span className="font-mono text-[11px] uppercase text-muted-foreground">
-                  {colorFor(theme, name)}
-                </span>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <LoadingRow label="Reading current palette…" />
-        )}
+        {/* ── Global adjustments ──────────────────────────────────── */}
+        <div className="flex flex-col gap-2.5">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+            Colour — applied to every token in the {theme} theme
+          </p>
+          {KNOBS.map(({ key, ...knob }) => (
+            <Knob
+              key={key}
+              {...knob}
+              value={tuning[theme][key]}
+              base={IDENTITY[key]}
+              onChange={(value) => setKnob(key, value)}
+            />
+          ))}
+        </div>
 
-        <div className="flex items-center gap-4">
-          <Label htmlFor="sc-radius" className="w-28 shrink-0">
-            Corner radius
-          </Label>
-          <input
-            id="sc-radius"
-            type="range"
-            min={0}
-            max={1.4}
-            step={0.05}
-            value={radius}
-            onChange={(e) => setRadius(Number(e.target.value))}
-            className="w-full accent-[var(--accent)]"
-          />
-          <span className="w-16 shrink-0 text-right font-mono text-xs text-muted-foreground">
-            {radius.toFixed(2)}rem
-          </span>
+        <div className="flex flex-col gap-2.5">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+            Shape &amp; scale — shared by both themes
+          </p>
+          {SHAPE_KNOBS.map(({ key, ...knob }) => (
+            <Knob
+              key={key}
+              {...knob}
+              value={shape[key]}
+              base={DEFAULT_SHAPE[key]}
+              onChange={(value) => setShapeKnob(key, value)}
+            />
+          ))}
+        </div>
+
+        {/* ── Base colours ────────────────────────────────────────── */}
+        <div className="flex flex-col gap-3">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+            Base colours — before adjustments
+          </p>
+          {base ? (
+            <div className="grid gap-x-5 gap-y-3 sm:grid-cols-2">
+              {PICKABLE.map(({ name, label }) => (
+                <div key={name} className="flex items-center gap-3">
+                  <ColorPicker color={baseHex(name)} onSelect={(hex) => setToken(name, hex)} />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm">{label}</p>
+                    <p className="font-mono text-[11px] text-muted-foreground">{name}</p>
+                  </div>
+                  <span className="font-mono text-[11px] uppercase text-muted-foreground">
+                    {baseHex(name)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <LoadingRow label="Reading current palette…" />
+          )}
         </div>
       </Card>
 
       {/* ── Palette swatches ──────────────────────────────────────── */}
-      <Section title="Palette" description="Every token in the current theme.">
+      <Section title="Palette" description="Every token in the current theme, after adjustments.">
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
-          {base &&
-            ALL_TOKENS.map(({ name, label }) => (
-              <div key={name} className="flex items-center gap-2.5">
-                <span
-                  className="h-9 w-9 shrink-0 rounded-lg shadow-sm"
-                  style={{ background: colorFor(theme, name) }}
-                />
-                <div className="min-w-0">
-                  <p className="truncate text-xs font-medium">{label}</p>
-                  <p className="truncate font-mono text-[10px] uppercase text-muted-foreground">
-                    {colorFor(theme, name)}
-                  </p>
+          {palettes &&
+            COLOR_TOKENS.map(({ name, label }) => {
+              const tuned = palettes[theme].live.colors[name];
+              if (!tuned) return null;
+              return (
+                <div key={name} className="flex items-center gap-2.5">
+                  <span
+                    className="h-9 w-9 shrink-0 rounded-lg shadow-sm"
+                    style={{ background: palettes[theme].live.css[name] }}
+                  />
+                  <div className="min-w-0">
+                    <p className="truncate text-xs font-medium">{label}</p>
+                    <p className="truncate font-mono text-[10px] uppercase text-muted-foreground">
+                      {oklchToHex(tuned)}
+                    </p>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
         </div>
       </Section>
 
@@ -419,6 +850,30 @@ export function ShowcasePanel() {
         </div>
       </Section>
 
+      {/* ── Chips & run status ────────────────────────────────────── */}
+      <Section
+        title="Chips & run status"
+        description="Filter chips, connection state, and how an automation run reports itself."
+      >
+        <div className="flex flex-wrap items-center gap-2">
+          <ChipsDemo />
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <StatusChip tone="success" icon={<Check className="h-3.5 w-3.5" />}>
+            Connected
+          </StatusChip>
+          <StatusChip tone="warning" icon={<TriangleAlert className="h-3.5 w-3.5" />}>
+            Token expired
+          </StatusChip>
+          <StatusChip tone="muted">Never run</StatusChip>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <RunStatusBadge status="running" />
+          <RunStatusBadge status="success" />
+          <RunStatusBadge status="error" />
+        </div>
+      </Section>
+
       {/* ── Switches ──────────────────────────────────────────────── */}
       <Section title="Switches" description="Accent by default; warning/danger arm risky actions.">
         <div className="flex flex-wrap items-center gap-6">
@@ -446,6 +901,9 @@ export function ShowcasePanel() {
           <FormField id="sc-plan" label="Plan">
             <SelectDemo />
           </FormField>
+          <FormField id="sc-country" label="Country" hint="Searchable — opt-in for long lists only.">
+            <SearchableSelectDemo />
+          </FormField>
           <FormField id="sc-disabled" label="Disabled">
             <Input id="sc-disabled" disabled defaultValue="Read-only" />
           </FormField>
@@ -455,9 +913,20 @@ export function ShowcasePanel() {
         </div>
       </Section>
 
+      {/* ── Overlays ──────────────────────────────────────────────── */}
+      <Section
+        title="Overlays"
+        description="Dialogs float on .surface-pop over a blurred scrim. The Cmd+K palette is the third overlay — open it from anywhere."
+      >
+        <div className="flex flex-wrap items-center gap-3">
+          <DialogDemo />
+          <ConfirmDialogDemo />
+        </div>
+      </Section>
+
       {/* ── Cards & rows ──────────────────────────────────────────── */}
       <Section title="Surfaces" description="Three tones by depth — never a border, never card-in-card.">
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid gap-4 sm:grid-cols-3">
           <Card tone="flat">
             <p className="text-sm font-medium">Flat card</p>
             <p className="text-xs text-muted-foreground">surface + soft shadow.</p>
@@ -465,6 +934,10 @@ export function ShowcasePanel() {
           <Card tone="soft">
             <p className="text-sm font-medium">Soft card</p>
             <p className="text-xs text-muted-foreground">The one elevated panel.</p>
+          </Card>
+          <Card tone="pop">
+            <p className="text-sm font-medium">Pop card</p>
+            <p className="text-xs text-muted-foreground">What select menus float on.</p>
           </Card>
         </div>
         <div className="flex flex-col gap-2">
@@ -508,6 +981,19 @@ export function ShowcasePanel() {
             ),
           )}
         </div>
+        {/* One class, every format: only --filetype-h varies. The lightness and
+            chroma come from the theme, so the Grain/Saturation knobs move these too. */}
+        <div className="flex flex-wrap gap-2">
+          {FILETYPES.map(({ label, hue }) => (
+            <span
+              key={label}
+              className="tint-file rounded-lg px-3 py-1.5 text-xs font-medium"
+              style={{ "--filetype-h": hue } as React.CSSProperties}
+            >
+              {label}
+            </span>
+          ))}
+        </div>
         <ErrorBanner>Something went wrong while saving your changes.</ErrorBanner>
       </Section>
 
@@ -535,6 +1021,41 @@ export function ShowcasePanel() {
         </div>
       </Section>
 
+      {/* ── Agent chat ────────────────────────────────────────────── */}
+      <Section
+        title="Agent chat"
+        description="Bubbles, tool activity, the thinking state, and every structured card the agent can return. Same fixtures as the /showcase chat command."
+      >
+        <ChatTranscript />
+      </Section>
+
+      {/* ── Markdown ──────────────────────────────────────────────── */}
+      <Section
+        title="Markdown"
+        description="The vocabulary an assistant reply may use. mailto: links copy the address."
+      >
+        <Card tone="flat" padding="lg">
+          <Markdown content={MARKDOWN_DEMO} />
+        </Card>
+      </Section>
+
+      {/* ── Home widgets ──────────────────────────────────────────── */}
+      <Section
+        title="Home widgets"
+        description="The at-a-glance strip, the waiting-on-others list, and a collapsed thread. Fed static fixtures here — the real ones read the server."
+      >
+        <GlanceStrip
+          drafts={DEMO_DRAFTS}
+          heroRun={null}
+          waiting={DEMO_WAITING}
+          automations={DEMO_AUTOMATIONS}
+        />
+        <WaitingSection waiting={DEMO_WAITING} colors={DEMO_COLORS} />
+        <Card tone="flat">
+          <ThreadHistory messages={DEMO_THREAD} />
+        </Card>
+      </Section>
+
       {/* ── Typography ────────────────────────────────────────────── */}
       <Section title="Typography" description="Hierarchy by weight and colour, not size jumps.">
         <div className="flex flex-col gap-1.5">
@@ -547,6 +1068,185 @@ export function ShowcasePanel() {
           </p>
         </div>
       </Section>
+    </div>
+  );
+}
+
+/** A labelled slider with a live readout and a reset that arms once it drifts. */
+function Knob({
+  label,
+  hint,
+  min,
+  max,
+  step,
+  value,
+  base,
+  format,
+  onChange,
+}: {
+  label: string;
+  hint: string;
+  min: number;
+  max: number;
+  step: number;
+  value: number;
+  /** The untouched value: what the readout de-emphasises and reset restores. */
+  base: number;
+  format: (value: number) => string;
+  onChange: (value: number) => void;
+}) {
+  const id = `sc-knob-${label.replace(/\s+/g, "-").toLowerCase()}`;
+  const dirty = value !== base;
+  return (
+    <div className="flex items-center gap-3">
+      <div className="w-36 shrink-0">
+        <Label htmlFor={id} className="text-sm">
+          {label}
+        </Label>
+        <p className="truncate text-[11px] text-muted-foreground">{hint}</p>
+      </div>
+      <input
+        id={id}
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        onDoubleClick={() => onChange(base)}
+        className="w-full accent-[var(--accent)]"
+      />
+      <span
+        className={cn(
+          "w-20 shrink-0 text-right font-mono text-xs tabular-nums",
+          dirty ? "text-foreground" : "text-muted-foreground",
+        )}
+      >
+        {format(value)}
+      </span>
+      <IconButton
+        aria-label={`Reset ${label}`}
+        onClick={() => onChange(base)}
+        className={cn(!dirty && "invisible")}
+      >
+        <RotateCcw className="h-3.5 w-3.5" />
+      </IconButton>
+    </div>
+  );
+}
+
+function ChipsDemo() {
+  const [active, setActive] = React.useState("all");
+  return (
+    <>
+      {["all", "unread", "needs reply", "waiting"].map((filter) => (
+        <Chip key={filter} active={active === filter} onClick={() => setActive(filter)}>
+          {filter}
+        </Chip>
+      ))}
+    </>
+  );
+}
+
+function DialogDemo() {
+  const [open, setOpen] = React.useState(false);
+  return (
+    <>
+      <Button variant="secondary" onClick={() => setOpen(true)}>
+        Open dialog
+      </Button>
+      <Dialog
+        open={open}
+        onOpenChange={setOpen}
+        title="Rename account"
+        description="Shown wherever this connection appears."
+        footer={<Button onClick={() => setOpen(false)}>Save</Button>}
+      >
+        <Input defaultValue="Gmail — personal" />
+      </Dialog>
+    </>
+  );
+}
+
+function ConfirmDialogDemo() {
+  const [open, setOpen] = React.useState(false);
+  return (
+    <>
+      <Button variant="destructive" onClick={() => setOpen(true)}>
+        <Trash2 /> Discard draft
+      </Button>
+      <ConfirmDialog
+        open={open}
+        onOpenChange={setOpen}
+        title="Discard this draft?"
+        description="The draft is deleted from your mailbox. This can't be undone."
+        confirmLabel="Discard"
+        onConfirm={() => setOpen(false)}
+      />
+    </>
+  );
+}
+
+/**
+ * A static replay of a chat turn — same markup ChatPanel uses, so bubbles,
+ * tool chips and cards all re-theme with the sliders above. The briefing card's
+ * row actions still post into the real chat panel; the panel forces prefill
+ * mode while this page is mounted so nothing fires a live agent turn.
+ */
+function ChatTranscript() {
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-col items-end gap-2">
+        <div className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-accent px-4 py-2.5 text-sm leading-relaxed text-accent-foreground">
+          Show me everything you can render.
+        </div>
+      </div>
+      {SHOWCASE_TURNS.map((turn, index) => (
+        <AssistantTurn key={index} turn={turn} />
+      ))}
+    </div>
+  );
+}
+
+function AssistantTurn({ turn }: { turn: ShowcaseTurn }) {
+  const { t } = useTranslation();
+  const text = turn.contentKey ? t(turn.contentKey as never) : turn.content;
+  const hasBubble = Boolean(text || turn.toolCalls?.length || turn.thinking);
+
+  return (
+    <div className="flex flex-col items-start gap-2">
+      {turn.cards?.length ? (
+        <div className="flex w-full max-w-[95%] flex-col gap-2">
+          {turn.cards.map((card, index) => (
+            <AgentCardView key={index} card={card} colors={DEMO_COLORS} />
+          ))}
+        </div>
+      ) : null}
+
+      {hasBubble && (
+        <div className="max-w-[85%] rounded-2xl rounded-bl-md bg-surface-2 px-4 py-2.5 text-sm text-foreground">
+          {turn.toolCalls?.length ? (
+            <div className={cn("flex flex-wrap gap-1.5", text && "mb-2")}>
+              {turn.toolCalls.map((call, index) => (
+                <Badge
+                  key={`${call.name}-${index}`}
+                  variant={call.isError ? "destructive" : call.done ? "success" : "muted"}
+                >
+                  <Wrench className="h-3 w-3" />
+                  {call.name}
+                  {!call.done && <Loader2 className="h-3 w-3 animate-spin" />}
+                </Badge>
+              ))}
+            </div>
+          ) : null}
+
+          {text ? (
+            <Markdown content={text} />
+          ) : turn.thinking ? (
+            <span className="animate-pulse text-muted-foreground">{t("chat.thinking")}</span>
+          ) : null}
+        </div>
+      )}
     </div>
   );
 }
@@ -601,6 +1301,35 @@ function SelectDemo() {
         { value: "free", label: "Free" },
         { value: "pro", label: "Pro" },
         { value: "team", label: "Team" },
+      ]}
+    />
+  );
+}
+
+function SearchableSelectDemo() {
+  const [value, setValue] = React.useState("de");
+  return (
+    <Select
+      id="sc-country"
+      searchable
+      value={value}
+      onChange={setValue}
+      options={[
+        { value: "at", label: "Austria" },
+        { value: "be", label: "Belgium" },
+        { value: "dk", label: "Denmark" },
+        { value: "fi", label: "Finland" },
+        { value: "fr", label: "France" },
+        { value: "de", label: "Germany" },
+        { value: "it", label: "Italy" },
+        { value: "nl", label: "Netherlands" },
+        { value: "no", label: "Norway" },
+        { value: "pl", label: "Poland" },
+        { value: "es", label: "Spain" },
+        { value: "se", label: "Sweden" },
+        { value: "ch", label: "Switzerland" },
+        { value: "gb", label: "United Kingdom" },
+        { value: "us", label: "United States" },
       ]}
     />
   );

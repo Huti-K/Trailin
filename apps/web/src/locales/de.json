@@ -432,12 +432,6 @@
         "title": "Sprache",
         "description": "Gilt für die App und für die Antworten des Assistenten, im Chat und in Automatisierungen."
       },
-      "navigation": {
-        "title": "Navigationsstil",
-        "description": "Wählen Sie zwischen einer linken Seitenleiste oder einer schwebenden Dock-Leiste unten.",
-        "dock": "Dock unten",
-        "sidebar": "Seitenleiste links"
-      },
       "quickActions": {
         "title": "Schnellaktionen",
         "description": "Was Buttons wie \"Antwort entwerfen\" tun: die Anfrage sofort senden oder ins Eingabefeld legen, damit Sie sie vorher anpassen können.",
