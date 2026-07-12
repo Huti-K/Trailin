@@ -2,6 +2,7 @@ import type {
   AccountColor,
   AccountDescription,
   AccountDrafts,
+  AccountVoice,
   ApiErrorCode,
   AppStatus,
   Automation,
@@ -167,6 +168,9 @@ export const api = {
     http<{ descriptions: AccountDescription[] }>("PUT", "/api/settings/account-descriptions", {
       descriptions,
     }),
+  accountVoices: () => get<{ voices: AccountVoice[] }>("/api/settings/account-voices"),
+  saveAccountVoices: (voices: AccountVoice[]) =>
+    http<{ voices: AccountVoice[] }>("PUT", "/api/settings/account-voices", { voices }),
 
   llmProviders: () => get<LlmProviderInfo[]>("/api/llm/providers"),
   modelSettings: () => get<ModelSettings>("/api/llm/model"),

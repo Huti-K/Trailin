@@ -137,8 +137,10 @@ export interface AccountDescription {
 export interface AccountVoice {
   /** Pipedream account id. */
   accountId: string;
-  /** Appended verbatim to every draft created as this account. */
+  /** Plain-text form, used for previews and backwards compatibility. */
   signature?: string;
+  /** Sanitized rich-text signature HTML, as authored/pasted in Settings. */
+  signatureHtml?: string;
   /** Set when the signature/style was last derived from the account's sent mail. */
   learnedAt?: string;
   /** Memory ids the last voice-learn run wrote, so re-learning replaces them. */

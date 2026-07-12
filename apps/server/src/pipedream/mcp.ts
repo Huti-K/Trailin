@@ -278,11 +278,15 @@ export function buildDraftTool(
       });
       const finalBody = composed.body;
 
-      const result = await provider.createDraft(account, { ...input, body: finalBody });
+      const result = await provider.createDraft(account, {
+        ...input,
+        body: composed.htmlBody ?? finalBody,
+        ...(composed.htmlBody ? { bodyFormat: "html" as const } : {}),
+      });
 
-      // Snapshot what was actually saved (db/draftStore.ts) — the learning
-      // loop's baseline. Best-effort: the provider draft exists either way,
-      // and bookkeeping must never fail the tool.
+      // Snapshot the plain-text semantic body for the learning loop. The
+      // provider may save an HTML MIME body solely to preserve rich signature
+      // formatting, but that markup should not become writing-style evidence.
       try {
         await createDraftSnapshot({
           accountId: account.id,

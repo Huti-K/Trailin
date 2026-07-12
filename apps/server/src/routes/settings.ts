@@ -7,6 +7,7 @@ import {
   CONTACT_THREADS_LIMIT_SETTING_KEY,
   getAccountColors,
   getAccountDescriptions,
+  getAccountVoices,
   getContactThreadsLimitSetting,
   getLanguageSetting,
   getSyncBackfillDaysSetting,
@@ -17,6 +18,7 @@ import {
   SYNC_BACKFILL_DAYS_SETTING_KEY,
   setAccountColors,
   setAccountDescriptions,
+  setAccountVoices,
   setSetting,
   setWriteAccessAccounts,
   TIMEZONE_SETTING_KEY,
@@ -41,6 +43,23 @@ const accountDescriptionsBody = Type.Object({
 const backfillDaysBody = Type.Object({ days: Type.Integer({ minimum: 1, maximum: 3650 }) });
 
 const contactThreadsBody = Type.Object({ limit: Type.Integer({ minimum: 1, maximum: 100 }) });
+
+const accountVoicesBody = Type.Object({
+  voices: Type.Array(
+    Type.Object({
+      accountId: Type.String(),
+      signature: Type.Optional(Type.String({ maxLength: 20_000 })),
+      signatureHtml: Type.Optional(Type.String({ maxLength: 100_000 })),
+    }),
+  ),
+});
+
+function sanitizeSignatureHtml(html: string): string {
+  return html
+    .replace(/<(script|style|iframe|object|embed|form)[\s\S]*?<\/\1\s*>/gi, "")
+    .replace(/\s+on[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, "")
+    .replace(/((?:href|src)\s*=\s*["'])\s*javascript:/gi, "$1");
+}
 
 export const settingsRoutes: FastifyPluginAsyncTypebox = async (app) => {
   app.get("/api/settings/language", async () => ({ language: await getLanguageSetting() }));
@@ -147,4 +166,23 @@ export const settingsRoutes: FastifyPluginAsyncTypebox = async (app) => {
       return { descriptions: req.body.descriptions };
     },
   );
+
+  app.get("/api/settings/account-voices", async () => ({ voices: await getAccountVoices() }));
+
+  app.put("/api/settings/account-voices", { schema: { body: accountVoicesBody } }, async (req) => {
+    const stored = await getAccountVoices();
+    const voices = req.body.voices.map((voice) => {
+      const existing = stored.find((item) => item.accountId === voice.accountId);
+      return {
+        ...voice,
+        ...(voice.signatureHtml !== undefined
+          ? { signatureHtml: sanitizeSignatureHtml(voice.signatureHtml) }
+          : {}),
+        ...(existing?.learnedAt ? { learnedAt: existing.learnedAt } : {}),
+        ...(existing?.styleMemoryIds ? { styleMemoryIds: existing.styleMemoryIds } : {}),
+      };
+    });
+    await setAccountVoices(voices);
+    return { voices };
+  });
 };

@@ -95,6 +95,8 @@ export interface ComposedDraftBody {
    * strip it before diffing. Null when the account has none.
    */
   signature: string | null;
+  /** Rich MIME body when the configured signature contains formatting. */
+  htmlBody?: string;
 }
 
 /**
@@ -114,12 +116,32 @@ export async function composeDraftBody(
   let body = humanized.body;
   let signatureAppended = false;
   const signature = voice?.signature?.trim();
-  if (signature && !normalize(body).includes(normalize(signature))) {
-    body = `${body}\n\n${signature}`;
+  const signatureHtml = voice?.signatureHtml?.trim();
+  if (
+    (signature || signatureHtml) &&
+    (!signature || !normalize(body).includes(normalize(signature)))
+  ) {
+    body = `${body}\n\n${
+      signature ??
+      (signatureHtml ?? "")
+        .replace(/<[^>]+>/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+    }`;
     signatureAppended = true;
   }
+  const htmlBody =
+    signatureAppended && signatureHtml
+      ? `${humanized.body.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br>")}<br><br>${signatureHtml}`
+      : undefined;
 
-  return { body, humanized: humanized.changed, signatureAppended, signature: signature ?? null };
+  return {
+    body,
+    humanized: humanized.changed,
+    signatureAppended,
+    signature: signature ?? null,
+    ...(htmlBody ? { htmlBody } : {}),
+  };
 }
 
 /** Convenience lookup for one account's voice, or undefined if none is set. */

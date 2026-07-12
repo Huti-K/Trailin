@@ -1,13 +1,14 @@
 import {
   type AccountColor,
   type AccountDescription,
+  type AccountVoice,
   type ConnectedAccount,
   EMAIL_APP_LABELS,
   EMAIL_APPS,
   type EmailApp,
   type PipedreamApp,
 } from "@trailin/shared";
-import { Inbox, Loader2, Mail, Pencil, Plus, Trash2 } from "lucide-react";
+import { Inbox, Loader2, Mail, Pencil, PenLine, Plus, Trash2 } from "lucide-react";
 import * as React from "react";
 import { useTranslation } from "react-i18next";
 import { Badge } from "@/components/ui/badge";
@@ -19,6 +20,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { ListRow } from "@/components/ui/list-row";
 import { Skeleton } from "@/components/ui/skeleton";
+import { SignatureEditor } from "@/features/connections/SignatureEditor";
 import { api } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { cn, UNASSIGNED_ACCOUNT_COLOR } from "@/lib/utils";
@@ -136,6 +138,8 @@ export function Accounts({ onChanged }: { onChanged?: () => void }) {
   const [removing, setRemoving] = React.useState(false);
   const [colors, setColors] = React.useState<AccountColor[]>([]);
   const [descriptions, setDescriptions] = React.useState<AccountDescription[]>([]);
+  const [voices, setVoices] = React.useState<AccountVoice[]>([]);
+  const [signatureAccountId, setSignatureAccountId] = React.useState<string | null>(null);
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const [noteDraft, setNoteDraft] = React.useState("");
   const noteHandled = React.useRef(false);
@@ -216,11 +220,21 @@ export function Accounts({ onChanged }: { onChanged?: () => void }) {
     [],
   );
 
+  const loadVoices = React.useCallback(async () => {
+    try {
+      const { voices: saved } = await api.accountVoices();
+      setVoices(saved);
+    } catch {
+      /* signatures remain optional */
+    }
+  }, []);
+
   React.useEffect(() => {
+    void loadVoices();
     void Promise.all([load(), loadColors(), loadDescriptions()]).then(([accts, saved]) => {
       if (accts && saved) void ensureColors(accts, saved);
     });
-  }, [load, loadColors, loadDescriptions, ensureColors]);
+  }, [load, loadColors, loadDescriptions, loadVoices, ensureColors]);
 
   const connect = async (app: string) => {
     setBusy(app);
@@ -502,6 +516,16 @@ export function Accounts({ onChanged }: { onChanged?: () => void }) {
                     <Button
                       variant="ghost"
                       size="icon"
+                      onClick={() =>
+                        setSignatureAccountId((id) => (id === account.id ? null : account.id))
+                      }
+                      title="Edit email signature"
+                    >
+                      <PenLine className="h-4 w-4 text-muted-foreground" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
                       onClick={() => setConfirmId(account.id)}
                       title={t("connections.disconnect")}
                     >
@@ -509,6 +533,23 @@ export function Accounts({ onChanged }: { onChanged?: () => void }) {
                     </Button>
                   </div>
                 </ListRow>
+                {signatureAccountId === account.id && (
+                  <SignatureEditor
+                    voice={voices.find((voice) => voice.accountId === account.id)}
+                    onCancel={() => setSignatureAccountId(null)}
+                    onSave={async (signature, signatureHtml) => {
+                      const existing = voices.find((voice) => voice.accountId === account.id);
+                      const next = [
+                        ...voices.filter((voice) => voice.accountId !== account.id),
+                        { ...existing, accountId: account.id, signature, signatureHtml },
+                      ];
+                      const saved = await api.saveAccountVoices(next);
+                      setVoices(saved.voices);
+                      setSignatureAccountId(null);
+                      toast.success("Signature saved");
+                    }}
+                  />
+                )}
               </div>
             ))}
           </div>

@@ -194,7 +194,7 @@ async function createStandaloneOutlookDraft(
   return (await proxyRequest(account.id, "post", `${GRAPH_API}/messages`, {
     body: {
       subject: input.subject,
-      body: { contentType: "Text", content: input.body },
+      body: { contentType: input.bodyFormat === "html" ? "HTML" : "Text", content: input.body },
       toRecipients: toRecipientsPayload(input.to),
       ...(input.cc?.length ? { ccRecipients: toRecipientsPayload(input.cc) } : {}),
       ...(input.bcc?.length ? { bccRecipients: toRecipientsPayload(input.bcc) } : {}),
@@ -243,7 +243,7 @@ async function createOutlookReplyDraft(
   // supplied them — an absent one keeps what createReply already filled in.
   return (await proxyRequest(account.id, "patch", `${GRAPH_API}/messages/${draft.id}`, {
     body: {
-      body: { contentType: "Text", content: input.body },
+      body: { contentType: input.bodyFormat === "html" ? "HTML" : "Text", content: input.body },
       ...(input.subject ? { subject: input.subject } : {}),
       ...(input.to.length ? { toRecipients: toRecipientsPayload(input.to) } : {}),
       ...(input.cc?.length ? { ccRecipients: toRecipientsPayload(input.cc) } : {}),

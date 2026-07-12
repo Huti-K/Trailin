@@ -27,6 +27,8 @@ export interface CreateDraftInput {
   bcc?: string[];
   subject: string;
   body: string;
+  /** MIME format of body. Agent prose is converted to HTML when a rich signature is present. */
+  bodyFormat?: "text" | "html";
   /** Attach the draft to an existing conversation, where the provider supports it. */
   threadId?: string;
 }

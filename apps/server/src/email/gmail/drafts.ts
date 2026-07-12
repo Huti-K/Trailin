@@ -153,6 +153,7 @@ function buildRawMessage(input: {
   subject: string;
   body: string;
   extraHeaders?: string[];
+  bodyFormat?: "text" | "html";
 }): string {
   assertSafeHeaderValue("To", input.to);
   if (input.cc) assertSafeHeaderValue("Cc", input.cc);
@@ -165,7 +166,7 @@ function buildRawMessage(input: {
     `Subject: ${encodeHeaderWord(input.subject)}`,
     ...(input.extraHeaders ?? []),
     "MIME-Version: 1.0",
-    "Content-Type: text/plain; charset=UTF-8",
+    `Content-Type: text/${input.bodyFormat === "html" ? "html" : "plain"}; charset=UTF-8`,
     "Content-Transfer-Encoding: base64",
     "",
     Buffer.from(input.body, "utf8").toString("base64"),
@@ -230,6 +231,7 @@ async function createGmailDraft(
     ...(input.bcc?.length ? { bcc: input.bcc.join(", ") } : {}),
     subject: input.subject,
     body: input.body,
+    ...(input.bodyFormat ? { bodyFormat: input.bodyFormat } : {}),
     ...(threadingHeaders
       ? {
           extraHeaders: [
