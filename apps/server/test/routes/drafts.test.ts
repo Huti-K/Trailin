@@ -17,6 +17,7 @@ process.env.DATABASE_PATH = join(tempDir, "test.db");
 
 const { buildApp } = await import("../../src/app.js");
 const { applySyncPage } = await import("../../src/email/sync/mailStore.js");
+const { createDraftSnapshot, markDraftStatus } = await import("../../src/db/draftStore.js");
 
 let app: FastifyInstance;
 
@@ -140,5 +141,51 @@ describe("GET /api/threads/:accountId/:threadId — served from the mailbox mirr
     expect(res.statusCode).toBe(200);
     const body = res.json() as EmailThread;
     expect(body.messages).toHaveLength(2);
+  });
+});
+
+describe("GET /api/drafts/:accountId/:draftId/status — served from the snapshot store", () => {
+  const accountId = "acct-status-route";
+
+  it("404s for a draft with no snapshot (not agent-written)", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/drafts/${accountId}/untracked-draft/status`,
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it("reports the recorded fate, including the sent message id", async () => {
+    await createDraftSnapshot({
+      accountId,
+      providerDraftId: "draft-status-1",
+      subject: "Status route",
+      to: ["anna@example.com"],
+      signature: null,
+      body: "Body.",
+    });
+
+    const open = await app.inject({
+      method: "GET",
+      url: `/api/drafts/${accountId}/draft-status-1/status`,
+    });
+    expect(open.statusCode).toBe(200);
+    expect(open.json()).toEqual({ status: "open" });
+
+    await markDraftStatus(accountId, "draft-status-1", "sent", "sent-msg-9");
+    const sent = await app.inject({
+      method: "GET",
+      url: `/api/drafts/${accountId}/draft-status-1/status`,
+    });
+    expect(sent.statusCode).toBe(200);
+    expect(sent.json()).toEqual({ status: "sent", sentMessageId: "sent-msg-9" });
+  });
+
+  it("scopes the lookup to the account", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/drafts/some-other-account/draft-status-1/status",
+    });
+    expect(res.statusCode).toBe(404);
   });
 });

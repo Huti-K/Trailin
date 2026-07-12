@@ -20,6 +20,10 @@
       "title": "Automatisierungen",
       "description": "Lässt den Assistenten nach einem festen Zeitplan mit einer festen Anweisung laufen."
     },
+    "contacts": {
+      "title": "Kontakte",
+      "description": "Die Personen, mit denen Sie in Kontakt stehen, und jeder Newsletter, der Ihnen schreibt."
+    },
     "knowledge": {
       "title": "Wissen",
       "description": "Dokumente und Erinnerungen für Ihren Assistenten."
@@ -106,6 +110,10 @@
     "refs": {
       "remove": "{{label}} entfernen"
     },
+    "focus": {
+      "allAccounts": "Alle Konten",
+      "noAccounts": "Noch keine verbundenen Konten."
+    },
     "cards": {
       "noSubject": "(kein Betreff)",
       "emptyBody": "(leere Nachricht)",
@@ -133,7 +141,16 @@
         "cc": "Cc:",
         "bcc": "Bcc:",
         "open": "Im Postfach öffnen",
-        "signatureNote": "Ihre Signatur wurde automatisch hinzugefügt."
+        "signatureNote": "Ihre Signatur wurde automatisch hinzugefügt.",
+        "send": "Senden",
+        "sendConfirm": "Diesen Entwurf jetzt senden? Er wird genau so verschickt, wie er geschrieben ist.",
+        "discard": "Verwerfen",
+        "discardConfirm": "Diesen Entwurf verwerfen? Er wird aus Ihrem Mail-Konto entfernt.",
+        "keep": "Als Entwurf behalten",
+        "kept": "Als Entwurf behalten",
+        "sentLabel": "Gesendet",
+        "discardedLabel": "Verworfen",
+        "goneLabel": "Dieser Entwurf existiert nicht mehr"
       },
       "briefing": {
         "label": "Briefing",
@@ -283,12 +300,19 @@
     "briefingRefresh": "Briefing aktualisieren",
     "briefingNext": "Nächstes Briefing: {{when}}",
     "openInChat": "Im Chat öffnen",
+    "openConversationsTitle": "Offene Konversationen",
+    "waitingOnYouTitle": "Wartet auf Sie",
+    "waitingOnYouDraftReply": "Antwort entwerfen",
+    "waitingOnYouDraftReplyPrompt": "Entwirf eine Antwort auf {{counterpart}}s E-Mail \"{{subject}}\" in {{account}} (Thread {{threadId}}). Sie braucht eine Antwort: {{gist}}",
+    "waitingOnYouDismiss": "Verwerfen",
     "waitingTitle": "Wartet auf Antwort",
     "waitingNudge": "Nachfassen entwerfen",
     "waitingNudgePrompt": "Entwirf eine freundliche Nachfass-E-Mail an {{counterpart}} zum Thread \"{{subject}}\" in {{account}}.",
     "glance": {
       "drafts_one": "{{count}} Entwurf zu prüfen",
       "drafts_other": "{{count}} Entwürfe zu prüfen",
+      "needsReply_one": "{{count}} braucht Ihre Antwort",
+      "needsReply_other": "{{count}} brauchen Ihre Antwort",
       "waiting_one": "{{count}} wartet auf Antwort",
       "waiting_other": "{{count}} warten auf Antwort",
       "nextRun": "Nächster Lauf {{when}}"
@@ -301,6 +325,10 @@
     "open": "Im Postfach öffnen",
     "discard": "Entwurf verwerfen",
     "discardConfirm": "Diesen Entwurf verwerfen? Er wird aus Ihrem Mail-Konto entfernt.",
+    "send": "Senden",
+    "sendConfirm": "Diesen Entwurf jetzt senden? Er wird genau so verschickt, wie er geschrieben ist.",
+    "sent": "Gesendet",
+    "sentToast": "Entwurf gesendet.",
     "emptyBodyText": "(leerer Inhalt)",
     "subject": "Betreff",
     "refine": "Mit KI verfeinern",
@@ -371,6 +399,50 @@
       "draftReplyPromptNoAccount": "Entwirf eine Antwort auf {{sender}}s E-Mail \"{{subject}}\". Im Briefing zusammengefasst als: {{gist}}"
     }
   },
+  "contacts": {
+    "lanes": {
+      "people": "Personen",
+      "newsletters": "Newsletter"
+    },
+    "searchPlaceholder": "Personen durchsuchen…",
+    "category": {
+      "all": "Alle",
+      "colleague": "Kollege/Kollegin",
+      "client_business": "Kunde / Geschäftlich",
+      "personal": "Privat",
+      "service_vendor": "Dienstleister",
+      "other": "Sonstiges"
+    },
+    "emptyTitle": "Noch keine Kontakte",
+    "emptyBody": "Personen, mit denen Sie E-Mails austauschen, erscheinen hier, sobald Ihre Konten synchronisiert sind.",
+    "detail": {
+      "back": "Zurück zu Kontakte",
+      "messages_one": "{{count}} Nachricht",
+      "messages_other": "{{count}} Nachrichten",
+      "sent_one": "{{count}} gesendet",
+      "sent_other": "{{count}} gesendet",
+      "lastContact": "Letzter Kontakt {{when}}",
+      "categoryLabel": "Kategorie",
+      "categorySourceUser": "Manuell festgelegt",
+      "categorySourceAuto": "Automatisch erkannt",
+      "threadsTitle": "Letzte Konversationen",
+      "noThreads": "Noch keine Konversationen.",
+      "loadError": "Dieser Kontakt konnte nicht geladen werden."
+    },
+    "newsletters": {
+      "searchPlaceholder": "Newsletter durchsuchen…",
+      "emptyTitle": "Nichts zum Abbestellen",
+      "emptyBody": "Newsletter mit Ein-Klick-Abbestellung erscheinen hier, sobald Ihre Konten synchronisiert sind. Eine Abbestell-Anfrage entfernt den Eintrag aus dieser Liste.",
+      "frequency_one": "{{count}} E-Mail · {{when}}",
+      "frequency_other": "{{count}} E-Mails · {{when}}",
+      "unsubscribe": "Abbestellen",
+      "unsubscribeConfirmTitle": "{{name}} abbestellen?",
+      "unsubscribeConfirmBody": "Trailin sendet eine Ein-Klick-Abbestellung an {{name}}. Das lässt sich von hier aus nicht rückgängig machen.",
+      "unsubscribeRequested": "Abbestellung angefragt",
+      "stillReceiving": "Erhält weiterhin Mails",
+      "stillReceivingHint": "Nach der Abmeldeanfrage kam weiterhin Post an — sie hat vermutlich nicht funktioniert. Du kannst erneut anfragen."
+    }
+  },
   "memory": {
     "addPlaceholder": "Etwas hinzufügen, das sich Trailin merken soll…",
     "add": "Erinnerung hinzufügen",
@@ -411,7 +483,12 @@
         "general": "Allgemein",
         "scopeLabel": "Bereich",
         "filterAll": "Alle",
-        "filterAccountHint": "Nur Erinnerungen von {{name}} anzeigen"
+        "filterAccountHint": "Nur Erinnerungen von {{name}} anzeigen",
+        "filterContactsHint": "Nur Kontakt-Erinnerungen anzeigen",
+        "contacts": "Kontakte",
+        "contact": "Kontakt",
+        "contactPlaceholder": "E-Mail-Adresse des Kontakts",
+        "unknownContactHint": "Nicht in Ihren Kontakten — Adresse prüfen. Speichern funktioniert auch für neue Personen."
       },
       "library": {
         "title": "Dokumente",
@@ -498,6 +575,18 @@
       "label": "Zeitzone",
       "description": "Automatisierungen laufen und Zeiten werden in dieser Zeitzone angezeigt",
       "localTime": "Ortszeit {{time}}"
+    },
+    "syncBackfill": {
+      "label": "E-Mail-Verlauf",
+      "description": "Wie weit zurück die E-Mails eines Kontos gespiegelt werden — eine Änderung synchronisiert alle Konten neu",
+      "option_one": "{{count}} Tag",
+      "option_other": "{{count}} Tage"
+    },
+    "contactThreads": {
+      "label": "Kontakt-Konversationen",
+      "description": "Wie viele der letzten Konversationen eine Kontaktseite zeigt",
+      "option_one": "{{count}} Konversation",
+      "option_other": "{{count}} Konversationen"
     },
     "backup": {
       "label": "Sicherung",

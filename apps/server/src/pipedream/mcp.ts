@@ -6,12 +6,16 @@ import type { AccountDescription, AgentCard, ConnectedAccount } from "@trailin/s
 import { toCardAccount } from "../agent/cards.js";
 import { composeDraftBody } from "../agent/composition.js";
 import { defineTool, textResult } from "../agent/toolResult.js";
+import { appendDraftVersion, createDraftSnapshot, getDraftCardDetails } from "../db/draftStore.js";
 import { getAccountDescriptions, getWriteAccessAccounts } from "../db/settings.js";
 import "../email/registerProviders.js";
 import "../email/registerAttachmentProviders.js";
+import "../email/sync/registerSyncProviders.js";
 import { getAttachmentProvider } from "../email/attachmentProviders.js";
 import { buildSaveAttachmentTool } from "../email/attachmentTool.js";
 import { type CreateDraftInput, type DraftProvider, getDraftProvider } from "../email/providers.js";
+import { getSyncProvider } from "../email/sync/syncProviders.js";
+import { buildUnsubscribeTool } from "../email/unsubscribe/tool.js";
 import { moduleLogger } from "../logger.js";
 import {
   type ConnectConfig,
@@ -275,8 +279,31 @@ export function buildDraftTool(
       const finalBody = composed.body;
 
       const result = await provider.createDraft(account, { ...input, body: finalBody });
-      const providerLabel = account.appName ?? "the provider's";
-      let text = `Draft created in ${account.name} (draft id ${result.draftId}). It is unsent — the user can review it on the Drafts page or in ${providerLabel} web UI.`;
+
+      // Snapshot what was actually saved (db/draftStore.ts) — the learning
+      // loop's baseline. Best-effort: the provider draft exists either way,
+      // and bookkeeping must never fail the tool.
+      try {
+        await createDraftSnapshot({
+          accountId: account.id,
+          providerDraftId: result.draftId,
+          providerMessageId: result.messageId,
+          threadId: input.threadId ?? (result.threadId || undefined),
+          subject: input.subject,
+          to: input.to,
+          cc: input.cc,
+          bcc: input.bcc,
+          signature: composed.signature,
+          body: finalBody,
+        });
+      } catch (error) {
+        log.warn({ err: error, draftId: result.draftId }, "recording draft snapshot failed");
+      }
+
+      let text =
+        `Draft created in ${account.name} (draft id ${result.draftId}). It is unsent, and the ` +
+        `full draft is shown to the user as a card in this conversation — don't repeat its ` +
+        `subject or body in your reply.`;
 
       // Show the saved body once, whenever it differs from what the model
       // submitted — whether that's the humanizer, the signature, or both.
@@ -305,6 +332,113 @@ export function buildDraftTool(
       };
 
       return textResult(text, card);
+    },
+  });
+}
+
+/**
+ * Rewrite an existing draft in place — the tool a chat refinement uses so
+ * "make it firmer" edits the SAME draft instead of creating a second one.
+ * Runs the same compose pipeline as create (humanizer; signature appended
+ * when missing, so it survives a full-body rewrite) and appends an
+ * agent-authored version to the draft's snapshot history. Only built for
+ * accounts whose provider implements updateDraft.
+ */
+export function buildUpdateDraftTool(
+  account: ConnectedAccount,
+  name: string,
+  provider: DraftProvider,
+): AgentTool {
+  return defineTool({
+    name,
+    label: "Update email draft",
+    description:
+      `Rewrite an existing unsent draft in this account's Drafts folder in place. Use this ` +
+      `whenever the user asks to refine, shorten, or otherwise change a draft that already ` +
+      `exists (you know its draft id from creating or listing it) — never create a second ` +
+      `draft for a refinement. Nothing is sent. The new body goes through the same humanizer ` +
+      `pass as draft creation, and the account's configured signature is preserved ` +
+      `automatically — do not write one yourself. Recipients cannot be changed; if the user ` +
+      `wants different recipients, discard and create a new draft instead.\n\n` +
+      `Acts as the connected account: ${account.name}.`,
+    parameters: {
+      type: "object",
+      properties: {
+        draftId: { type: "string", description: "Id of the existing draft to rewrite." },
+        body: { type: "string", description: "The full replacement plain-text body." },
+        subject: { type: "string", description: "Replacement subject line, if it changes." },
+      },
+      required: ["draftId"],
+    },
+    execute: async (_toolCallId, params) => {
+      const { draftId, body, subject } = params as {
+        draftId: string;
+        body?: string;
+        subject?: string;
+      };
+      if (body === undefined && subject === undefined) {
+        return textResult("Nothing to update: pass a new body and/or subject.");
+      }
+
+      let finalBody = body;
+      let signatureAppended = false;
+      if (body !== undefined) {
+        const composed = await composeDraftBody(account.id, { body, subject });
+        finalBody = composed.body;
+        signatureAppended = composed.signatureAppended;
+      }
+
+      if (!provider.updateDraft) {
+        return textResult("Updating drafts is not supported for this account.");
+      }
+      await provider.updateDraft(account, draftId, {
+        ...(finalBody !== undefined ? { body: finalBody } : {}),
+        ...(subject !== undefined ? { subject } : {}),
+      });
+
+      // Agent rewrites append to the snapshot's version history (author
+      // "agent") so the learning loop diffs against the LAST agent version.
+      // Best-effort: a draft without a snapshot just isn't tracked.
+      await appendDraftVersion(account.id, draftId, "agent", {
+        body: finalBody,
+        subject,
+      }).catch((error: unknown) =>
+        log.warn({ err: error, draftId }, "appending agent draft version failed"),
+      );
+
+      // Re-render the draft card so the conversation shows the updated text —
+      // the card from the create turn keeps its old body forever.
+      const details = await getDraftCardDetails(account.id, draftId);
+      if (details) {
+        const card: AgentCard = {
+          kind: "email_draft",
+          account: toCardAccount(account),
+          draft: {
+            draftId,
+            ...(details.threadId ? { threadId: details.threadId } : {}),
+            subject: subject ?? details.subject,
+            to: details.to,
+            ...(details.cc.length > 0 ? { cc: details.cc } : {}),
+            ...(details.bcc.length > 0 ? { bcc: details.bcc } : {}),
+            body: finalBody ?? details.body,
+            signatureAppended,
+          },
+        };
+        return textResult(
+          `Draft ${draftId} updated in ${account.name}. It remains unsent, and the updated ` +
+            `draft is shown to the user as a card in this conversation — don't repeat its ` +
+            `subject or body in your reply.`,
+          card,
+        );
+      }
+
+      // No snapshot (not agent-written): there are no recipients to build a
+      // card from, so the saved text has to travel in the reply instead.
+      let text = `Draft ${draftId} updated in ${account.name}. It remains unsent.`;
+      if (finalBody !== undefined && finalBody !== body) {
+        text += `\n\nThe saved body reads:\n\n${finalBody}`;
+      }
+      return textResult(text);
     },
   });
 }
@@ -459,6 +593,15 @@ export async function loadEmailTools(options: LoadEmailToolsOptions = {}): Promi
         // from the mirror read tools only), so workers cannot create drafts.
         tools.push(buildDraftTool(account, name, draftProvider));
       }
+      if (draftProvider.updateDraft) {
+        const updateName = sanitizeToolName(`${account.app}-update-draft${suffix}`);
+        if (!seenNames.has(updateName)) {
+          seenNames.add(updateName);
+          // Same footing as create-draft: rewrites an unsent draft, never
+          // dispatches mail, so it stays available on read-only accounts.
+          tools.push(buildUpdateDraftTool(account, updateName, draftProvider));
+        }
+      }
     }
     const attachmentProvider = getAttachmentProvider(account.app);
     if (attachmentProvider) {
@@ -468,6 +611,17 @@ export async function loadEmailTools(options: LoadEmailToolsOptions = {}): Promi
         // Reads mail but writes only into the local document library, so it's
         // fine on a read-only account.
         tools.push(buildSaveAttachmentTool(account, name, attachmentProvider));
+      }
+    }
+    // Fires a real HTTP request to a third party (RFC 8058 one-click POST) —
+    // same write-arming bar as an MCP send/reply/delete tool, and only for
+    // accounts whose mailbox is actually mirrored (no SyncProvider means no
+    // local mail to look an unsubscribe link up from).
+    if (writeAccess.has(account.id) && getSyncProvider(account.app)) {
+      const name = sanitizeToolName(`${account.app}-unsubscribe${suffix}`);
+      if (!seenNames.has(name)) {
+        seenNames.add(name);
+        tools.push(buildUnsubscribeTool(account, name));
       }
     }
   }

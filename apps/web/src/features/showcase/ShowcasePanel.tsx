@@ -19,9 +19,9 @@
 import type {
   AccountColor,
   AccountDrafts,
-  AccountWaiting,
   Automation,
   EmailThreadMessage,
+  OpenConversations,
 } from "@trailin/shared";
 import {
   Bell,
@@ -66,8 +66,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { AgentCardView } from "@/features/chat/cards";
 import { SHOWCASE_TURNS, type ShowcaseTurn } from "@/features/chat/cards/samples";
 import { GlanceStrip } from "@/features/home/GlanceStrip";
+import { OpenConversationsSection } from "@/features/home/OpenConversationsSection";
 import { ThreadHistory } from "@/features/home/ThreadHistory";
-import { WaitingSection } from "@/features/home/WaitingSection";
 import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
@@ -340,34 +340,53 @@ const DEMO_DRAFTS: AccountDrafts[] = [
   },
 ];
 
-const DEMO_WAITING: AccountWaiting[] = [
-  {
-    account: "selin@nordwind-studio.de",
-    accountId: "demo-work",
-    items: [
-      {
-        threadId: "thread-rebrand-elif",
-        subject: "Angebot Rebranding – Rückfragen",
-        counterpart: "Elif Aydın",
-        lastSentAt: hoursAgo(72),
-        webUrl: "#",
-      },
-    ],
-  },
-  {
-    account: "selin.kaya.mail@gmail.com",
-    accountId: "demo-personal",
-    items: [
-      {
-        threadId: "thread-seeblick-august",
-        subject: "Ferienwohnung Seeblick – Buchung im August",
-        counterpart: "Sabine Möller",
-        lastSentAt: hoursAgo(30),
-        webUrl: "#",
-      },
-    ],
-  },
-];
+const DEMO_WAITING: OpenConversations = {
+  waitingOnYou: [
+    {
+      account: "selin@nordwind-studio.de",
+      accountId: "demo-work",
+      items: [
+        {
+          threadId: "thread-onboarding-elif",
+          accountId: "demo-work",
+          subject: "Re: Onboarding-Termin nächste Woche",
+          counterpart: "Elif Aydın",
+          gist: "Fragt nach einem Termin für das Onboarding-Gespräch am Donnerstag.",
+          urgency: "high",
+          webUrl: "#",
+        },
+      ],
+    },
+  ],
+  waitingOnOthers: [
+    {
+      account: "selin@nordwind-studio.de",
+      accountId: "demo-work",
+      items: [
+        {
+          threadId: "thread-rebrand-elif",
+          subject: "Angebot Rebranding – Rückfragen",
+          counterpart: "Elif Aydın",
+          lastSentAt: hoursAgo(72),
+          webUrl: "#",
+        },
+      ],
+    },
+    {
+      account: "selin.kaya.mail@gmail.com",
+      accountId: "demo-personal",
+      items: [
+        {
+          threadId: "thread-seeblick-august",
+          subject: "Ferienwohnung Seeblick – Buchung im August",
+          counterpart: "Sabine Möller",
+          lastSentAt: hoursAgo(30),
+          webUrl: "#",
+        },
+      ],
+    },
+  ],
+};
 
 const DEMO_AUTOMATIONS: Automation[] = [
   {
@@ -1002,6 +1021,7 @@ export function ShowcasePanel() {
               toast.error(
                 new ApiError(
                   "Pipedream is not set up. Add your Pipedream credentials in Settings → Email.",
+                  409,
                   "pipedream_not_configured",
                 ),
               )
@@ -1088,7 +1108,7 @@ export function ShowcasePanel() {
       {/* ── Home widgets ──────────────────────────────────────────── */}
       <Section
         title="Home widgets"
-        description="The at-a-glance strip, the waiting-on-others list, and a collapsed thread. Fed static fixtures here — the real ones read the server."
+        description="The at-a-glance strip, the open-conversations lanes, and a collapsed thread. Fed static fixtures here — the real ones read the server."
       >
         <GlanceStrip
           drafts={DEMO_DRAFTS}
@@ -1096,7 +1116,7 @@ export function ShowcasePanel() {
           waiting={DEMO_WAITING}
           automations={DEMO_AUTOMATIONS}
         />
-        <WaitingSection waiting={DEMO_WAITING} colors={DEMO_COLORS} />
+        <OpenConversationsSection waiting={DEMO_WAITING} colors={DEMO_COLORS} />
         <Card tone="flat">
           <ThreadHistory messages={DEMO_THREAD} />
         </Card>

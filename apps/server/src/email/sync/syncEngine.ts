@@ -1,4 +1,5 @@
 import type { ConnectedAccount } from "@trailin/shared";
+import { getSyncBackfillDaysSetting } from "../../db/settings.js";
 import { env } from "../../env.js";
 import { emitServerEvent } from "../../events.js";
 import { JobLoop, KeyedJobs, mapWithConcurrency } from "../../jobs.js";
@@ -68,14 +69,16 @@ function recordSyncSuccess(accountId: string): void {
   backoffByAccount.delete(accountId);
 }
 
-function syncOptions(): SyncOptions {
-  return { backfillDays: env.sync.backfillDays, pageSize: env.sync.pageSize };
+/** Resolved once per run, so every page of one sync sees the same window. */
+async function syncOptions(): Promise<SyncOptions> {
+  return { backfillDays: await getSyncBackfillDaysSetting(), pageSize: env.sync.pageSize };
 }
 
 async function runSync(account: ConnectedAccount): Promise<void> {
   const provider = getSyncProvider(account.app);
   if (!provider) return;
 
+  const options = await syncOptions();
   markSyncStatus(account.id, "syncing");
   let cursor = getSyncState(account.id)?.cursor ?? null;
   let changed = 0;
@@ -87,7 +90,7 @@ async function runSync(account: ConnectedAccount): Promise<void> {
     for (; pages < MAX_PAGES_PER_SWEEP; pages++) {
       let page: SyncPage;
       try {
-        page = await provider.fetchChanges(account, cursor, syncOptions());
+        page = await provider.fetchChanges(account, cursor, options);
       } catch (error) {
         if (error instanceof SyncCursorExpiredError && cursor !== null) {
           logger.info({ account: account.id }, "sync cursor expired — restarting backfill");
@@ -152,6 +155,25 @@ async function sweep(): Promise<void> {
 }
 
 const loop = new JobLoop({ name: "mail-sync", run: sweep, intervalMs: env.sync.intervalMs });
+
+/**
+ * Drop every account's sync cursor and kick a sweep, so each account re-runs
+ * its bounded backfill under the current window setting. Already-mirrored
+ * mail is re-upserted, never lost. An account whose sync is mid-flight keeps
+ * persisting its own cursor and only adopts the new window on its next fresh
+ * backfill (cursor expiry or reconnect).
+ */
+export async function restartBackfill(): Promise<void> {
+  let accounts: ConnectedAccount[];
+  try {
+    accounts = await listAccounts();
+  } catch (error) {
+    logger.debug({ err: error }, "backfill restart skipped: no account list");
+    return;
+  }
+  for (const account of accounts) setSyncCursor(account.id, null);
+  loop.trigger();
+}
 
 /** Kick off an immediate sweep and keep polling. */
 export function startSyncEngine(): void {

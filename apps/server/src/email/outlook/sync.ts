@@ -241,5 +241,42 @@ async function fetchChanges(
   }
 }
 
+/** Graph field selected by fetchMessageHeaders — the delta streams above never request this (see DELTA_SELECT). */
+const HEADERS_SELECT = "internetMessageHeaders";
+
+interface GraphMessageHeader {
+  name: string;
+  value: string;
+}
+
+interface GraphMessageHeadersResponse {
+  internetMessageHeaders?: GraphMessageHeader[];
+}
+
+/**
+ * Lazy per-message header fetch: the one capability the delta streams above
+ * can't provide (Graph's delta query never returns internetMessageHeaders,
+ * with or without $select). One Graph request per call — callers
+ * (email/unsubscribe/resolve.ts) bound how often this runs and persist the
+ * result so the same message is never re-fetched.
+ */
+async function fetchMessageHeaders(
+  account: ConnectedAccount,
+  providerMessageId: string,
+): Promise<{ listUnsubscribe?: string; listUnsubscribePost?: boolean }> {
+  const res = (await proxyRequest(account.id, "get", `${GRAPH_API}/messages/${providerMessageId}`, {
+    params: { $select: HEADERS_SELECT },
+  })) as GraphMessageHeadersResponse;
+  const headers = res.internetMessageHeaders ?? [];
+  const find = (name: string) =>
+    headers.find((h) => h.name.toLowerCase() === name.toLowerCase())?.value;
+
+  const listUnsubscribe = find("List-Unsubscribe");
+  if (!listUnsubscribe) return {};
+  // Presence (not content) of the header is the RFC 8058 one-click signal —
+  // same convention as ../gmail/sync.ts's toSyncMessage.
+  return { listUnsubscribe, listUnsubscribePost: find("List-Unsubscribe-Post") !== undefined };
+}
+
 /** This module's SyncProvider — registered by ./sync/registerSyncProviders.ts. */
-export const outlookSyncProvider: SyncProvider = { fetchChanges };
+export const outlookSyncProvider: SyncProvider = { fetchChanges, fetchMessageHeaders };

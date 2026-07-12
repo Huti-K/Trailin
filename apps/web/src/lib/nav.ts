@@ -5,9 +5,10 @@ import {
   type LucideIcon,
   MessagesSquare,
   Settings2,
+  Users,
 } from "lucide-react";
 
-export type View = "home" | "chat" | "automations" | "knowledge" | "settings";
+export type View = "home" | "chat" | "automations" | "contacts" | "knowledge" | "settings";
 
 export interface NavItem {
   id: View;
@@ -16,7 +17,7 @@ export interface NavItem {
 }
 
 /**
- * Single source of truth for the 5-item primary nav. The Sidebar, the
+ * Single source of truth for the 6-item primary nav. The Sidebar, the
  * command palette's shortcut list, and App.tsx's route-name validation all
  * read from this one array instead of keeping their own copies in sync.
  */
@@ -24,6 +25,7 @@ export const NAV_ITEMS: NavItem[] = [
   { id: "home", path: "/", icon: Inbox },
   { id: "chat", path: "/chat", icon: MessagesSquare },
   { id: "automations", path: "/automations", icon: CalendarClock },
+  { id: "contacts", path: "/contacts", icon: Users },
   { id: "knowledge", path: "/knowledge", icon: BookOpen },
   { id: "settings", path: "/settings", icon: Settings2 },
 ];

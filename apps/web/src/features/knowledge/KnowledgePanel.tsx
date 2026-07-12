@@ -1,6 +1,7 @@
 import type {
   AccountColor,
   ConnectedAccount,
+  Contact,
   LibraryDocument,
   LibraryStatus,
   MemoryEntry,
@@ -257,11 +258,24 @@ const MEMORY_INITIAL_VISIBLE = 20;
 const MEMORY_VISIBLE_STEP = 40;
 
 /** The three states of the account filter: everything, global-only, or one account. */
-type MemoryFilter = "all" | "general" | string;
+/**
+ * "all", "general", one account, or "contacts" — all contact-scoped entries
+ * as a single bucket. Deliberately not per-contact: a chip and a group per
+ * correspondent would scale with the size of the contacts directory, so the
+ * person is a label on the row instead, and narrowing to one person is the
+ * search field's job.
+ */
+type MemoryFilter = "all" | "general" | "contacts" | `account:${string}`;
+
+const accountFilterId = (filter: MemoryFilter): string | null =>
+  filter.startsWith("account:") ? filter.slice("account:".length) : null;
 
 /** What the composer's own scope picker should default to for a given filter. */
-const scopeForFilter = (filter: MemoryFilter) =>
-  filter === "all" || filter === "general" ? "" : filter;
+const scopeForFilter = (filter: MemoryFilter) => ({
+  accountId: accountFilterId(filter),
+  // "" preselects the contact scope with the address left to type or pick.
+  contactId: filter === "contacts" ? "" : null,
+});
 
 function MemoryStrip({
   focusId,
@@ -301,6 +315,20 @@ function MemoryStrip({
   const accountColor = React.useCallback(
     (accountId: string) => colors.find((c) => c.accountId === accountId)?.hex,
     [colors],
+  );
+  // The contacts directory, fetched once for display names only — a contact
+  // memory is keyed by address, so an unresolved (or since-deleted) contact
+  // still shows as its bare address.
+  const [contacts, setContacts] = React.useState<Contact[]>([]);
+  React.useEffect(() => {
+    api
+      .contacts()
+      .then(setContacts)
+      .catch(() => {});
+  }, []);
+  const contactLabel = React.useCallback(
+    (address: string) => contacts.find((c) => c.address === address)?.displayName || address,
+    [contacts],
   );
 
   const refresh = React.useCallback(async () => {
@@ -349,13 +377,21 @@ function MemoryStrip({
       list = list.filter(
         (m) =>
           m.content.toLowerCase().includes(q) ||
-          (m.accountId !== null && accountLabel(m.accountId).toLowerCase().includes(q)),
+          (m.accountId !== null && accountLabel(m.accountId).toLowerCase().includes(q)) ||
+          (m.contactId !== null &&
+            (m.contactId.includes(q) || contactLabel(m.contactId).toLowerCase().includes(q))),
       );
     }
-    if (filter === "general") list = list.filter((m) => m.accountId === null);
-    else if (filter !== "all") list = list.filter((m) => m.accountId === filter);
+    // "General" means truly global — neither scope axis set.
+    if (filter === "general")
+      list = list.filter((m) => m.accountId === null && m.contactId === null);
+    else if (filter === "contacts") list = list.filter((m) => m.contactId !== null);
+    else if (filter !== "all") {
+      const accountId = accountFilterId(filter);
+      list = list.filter((m) => m.accountId === accountId);
+    }
     return list;
-  }, [memories, query, filter, accountLabel]);
+  }, [memories, query, filter, accountLabel, contactLabel]);
 
   // Reset the cap whenever the visible set changes shape, so a narrower
   // filter or search doesn't leave "show more" sitting past the end. query
@@ -366,57 +402,93 @@ function MemoryStrip({
   }, [query, filter]);
 
   const toggleAccountFilter = (accountId: string) => {
-    setFilter((f) => (f === accountId ? "all" : accountId));
+    setFilter((f) => (f === `account:${accountId}` ? "all" : `account:${accountId}`));
+  };
+
+  const toggleContactsFilter = () => {
+    setFilter((f) => (f === "contacts" ? "all" : "contacts"));
   };
 
   const toggleGeneralFilter = () => {
     setFilter((f) => (f === "general" ? "all" : "general"));
   };
 
+  // The Contacts chip only earns its place once a memory is actually scoped
+  // to someone — unlike the account chips, which are offered per connected
+  // account even before any scoped entry exists.
+  const hasContactMemories = memories.some((m) => m.contactId !== null);
+
   // Doubles as the dot-column/group-header gate below: both only earn their
   // keep once there's something to slice by — an account already used to
-  // scope a memory, or one available to pick.
-  const showFilterRow = emailAccounts.length > 0 || memories.some((m) => m.accountId !== null);
+  // scope a memory, one available to pick, or a contact-scoped memory.
+  const showFilterRow =
+    emailAccounts.length > 0 || memories.some((m) => m.accountId !== null || m.contactId !== null);
 
-  // One group per account with a (filtered) entry, alphabetized, then a
-  // trailing General group for global entries — mirrors the chip row above,
-  // account color first, catch-all last. `null` when there's nothing to slice
-  // by, so the list below falls back to one flat run with no headers or dots.
+  // One group per account with a (filtered) entry, alphabetized; then a
+  // single Contacts group (rows carry the person's name — never a group per
+  // correspondent, which would scale with the contacts directory); then a
+  // trailing General group for fully global entries — mirrors the chip row
+  // above, account color first, catch-all last. `null` when there's nothing
+  // to slice by, so the list below falls back to one flat run with no
+  // headers or dots.
   const groups = React.useMemo(() => {
     if (!showFilterRow) return null;
     const byAccount = new Map<string, MemoryEntry[]>();
+    const contactEntries: MemoryEntry[] = [];
     const general: MemoryEntry[] = [];
     for (const entry of filtered) {
-      if (entry.accountId === null) {
-        general.push(entry);
+      if (entry.accountId !== null) {
+        const list = byAccount.get(entry.accountId);
+        if (list) list.push(entry);
+        else byAccount.set(entry.accountId, [entry]);
         continue;
       }
-      const list = byAccount.get(entry.accountId);
-      if (list) list.push(entry);
-      else byAccount.set(entry.accountId, [entry]);
+      if (entry.contactId !== null) {
+        contactEntries.push(entry);
+        continue;
+      }
+      general.push(entry);
     }
     const accountGroups = [...byAccount.entries()]
       .map(([accountId, entries]) => ({
-        key: accountId,
+        key: `account:${accountId}`,
         label: accountLabel(accountId),
         color: accountColor(accountId) ?? UNASSIGNED_ACCOUNT_COLOR,
-        general: false as const,
+        kind: "account" as const,
         entries,
       }))
       .sort((a, b) => a.label.localeCompare(b.label));
-    return general.length > 0
-      ? [
-          ...accountGroups,
-          {
-            key: "__general__",
-            label: t("knowledge.sections.memory.general"),
-            color: undefined,
-            general: true as const,
-            entries: general,
-          },
-        ]
-      : accountGroups;
-  }, [filtered, showFilterRow, accountLabel, accountColor, t]);
+    const contactGroup =
+      contactEntries.length > 0
+        ? [
+            {
+              key: "__contacts__",
+              label: t("knowledge.sections.memory.contacts"),
+              color: undefined,
+              kind: "contact" as const,
+              // Same person's facts read together, alphabetized by their label.
+              entries: contactEntries.sort((a, b) =>
+                contactLabel(a.contactId as string).localeCompare(
+                  contactLabel(b.contactId as string),
+                ),
+              ),
+            },
+          ]
+        : [];
+    const generalGroup =
+      general.length > 0
+        ? [
+            {
+              key: "__general__",
+              label: t("knowledge.sections.memory.general"),
+              color: undefined,
+              kind: "general" as const,
+              entries: general,
+            },
+          ]
+        : [];
+    return [...accountGroups, ...contactGroup, ...generalGroup];
+  }, [filtered, showFilterRow, accountLabel, accountColor, contactLabel, t]);
 
   // Same order the groups above render in, flattened — what "visible" counts
   // against, and what a palette hit's position is measured against, so the
@@ -449,10 +521,10 @@ function MemoryStrip({
       ?.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [focusId, orderedEntries, visible, open]);
 
-  const add = async (content: string, accountId: string | null) => {
+  const add = async (content: string, accountId: string | null, contactId: string | null) => {
     setAdding(true);
     try {
-      await api.addMemory(content, accountId);
+      await api.addMemory(content, accountId, contactId);
       setComposerOpen(false);
       await refresh();
       suppressComposerOpenRef.current = true;
@@ -517,7 +589,7 @@ function MemoryStrip({
             {emailAccounts.map((a) => (
               <MemoryFilterChip
                 key={a.id}
-                active={filter === a.id}
+                active={filter === `account:${a.id}`}
                 // Same grey the row dot and ColorPicker fall back to for an
                 // account with no color assigned — never no dot at all.
                 color={accountColor(a.id) ?? UNASSIGNED_ACCOUNT_COLOR}
@@ -529,6 +601,15 @@ function MemoryStrip({
                 {a.name.split("@")[0]}
               </MemoryFilterChip>
             ))}
+            {hasContactMemories && (
+              <MemoryFilterChip
+                active={filter === "contacts"}
+                contact
+                onClick={toggleContactsFilter}
+              >
+                {t("knowledge.sections.memory.contacts")}
+              </MemoryFilterChip>
+            )}
           </div>
         )}
 
@@ -539,11 +620,13 @@ function MemoryStrip({
         {composerOpen ? (
           <MemoryEditor
             initialContent=""
-            initialScope={scopeForFilter(filter)}
+            initialAccountId={scopeForFilter(filter).accountId}
+            initialContactId={scopeForFilter(filter).contactId}
             emailAccounts={emailAccounts}
             accountColor={accountColor}
+            contacts={contacts}
             busy={adding}
-            onSave={(content, accountId) => void add(content, accountId)}
+            onSave={(content, accountId, contactId) => void add(content, accountId, contactId)}
             onCancel={() => setComposerOpen(false)}
             ariaLabel={t("memory.addPlaceholder")}
             placeholder={t("memory.addPlaceholder")}
@@ -591,7 +674,9 @@ function MemoryStrip({
                   query.trim() ||
                   (filter === "general"
                     ? t("knowledge.sections.memory.general")
-                    : accountLabel(filter)),
+                    : filter === "contacts"
+                      ? t("knowledge.sections.memory.contacts")
+                      : accountLabel(accountFilterId(filter) ?? filter)),
               })}
             </p>
           )
@@ -615,10 +700,15 @@ function MemoryStrip({
                     return (
                       <div key={group.key} className="flex flex-col gap-1.5">
                         <p className="flex items-center gap-2 px-1 text-2xs font-medium uppercase tracking-wide text-muted-foreground/70">
-                          {group.general ? (
+                          {group.kind === "general" ? (
                             <span
                               aria-hidden
                               className="h-1.5 w-1.5 shrink-0 rounded-full bg-foreground/80"
+                            />
+                          ) : group.kind === "contact" ? (
+                            <span
+                              aria-hidden
+                              className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent/60"
                             />
                           ) : (
                             <AccountDot color={group.color} />
@@ -637,17 +727,25 @@ function MemoryStrip({
                                   accountLabel={
                                     entry.accountId ? accountLabel(entry.accountId) : null
                                   }
+                                  contactLabel={
+                                    entry.contactId ? contactLabel(entry.contactId) : null
+                                  }
                                   resolveColor={accountColor}
                                   emailAccounts={emailAccounts}
+                                  contacts={contacts}
                                   filterActive={
                                     entry.accountId !== null
-                                      ? filter === entry.accountId
-                                      : filter === "general"
+                                      ? filter === `account:${entry.accountId}`
+                                      : entry.contactId !== null
+                                        ? filter === "contacts"
+                                        : filter === "general"
                                   }
                                   onToggleFilter={
                                     entry.accountId
                                       ? () => toggleAccountFilter(entry.accountId as string)
-                                      : toggleGeneralFilter
+                                      : entry.contactId
+                                        ? toggleContactsFilter
+                                        : toggleGeneralFilter
                                   }
                                   // Same gate as the filter chip row: reserve the dot
                                   // column for every row once any account is in play,
@@ -673,17 +771,23 @@ function MemoryStrip({
                         onChanged={refresh}
                         highlighted={entry.id === focusId}
                         accountLabel={entry.accountId ? accountLabel(entry.accountId) : null}
+                        contactLabel={entry.contactId ? contactLabel(entry.contactId) : null}
                         resolveColor={accountColor}
                         emailAccounts={emailAccounts}
+                        contacts={contacts}
                         filterActive={
                           entry.accountId !== null
-                            ? filter === entry.accountId
-                            : filter === "general"
+                            ? filter === `account:${entry.accountId}`
+                            : entry.contactId !== null
+                              ? filter === "contacts"
+                              : filter === "general"
                         }
                         onToggleFilter={
                           entry.accountId
                             ? () => toggleAccountFilter(entry.accountId as string)
-                            : toggleGeneralFilter
+                            : entry.contactId
+                              ? toggleContactsFilter
+                              : toggleGeneralFilter
                         }
                         // showFilterRow is false here by construction (that's
                         // why `groups` is null) — no dot column at all.
@@ -719,6 +823,7 @@ function MemoryFilterChip({
   active,
   color,
   general,
+  contact,
   onClick,
   title,
   children,
@@ -728,8 +833,10 @@ function MemoryFilterChip({
   color?: string;
   /** Theme-aware "black" dot for the General scope in MemoryEditor's scope picker. */
   general?: boolean;
+  /** Accent dot for a contact chip — same tell as a contact group's header and row dot. */
+  contact?: boolean;
   onClick: () => void;
-  /** Full account address, shown on hover when the label is the short local part. */
+  /** Full account/contact address, shown on hover when the label is the short local part. */
   title?: string;
   children: React.ReactNode;
 }) {
@@ -737,6 +844,8 @@ function MemoryFilterChip({
     <Chip active={active} onClick={onClick} title={title}>
       {general ? (
         <span aria-hidden className="h-1.5 w-1.5 shrink-0 rounded-full bg-foreground/80" />
+      ) : contact ? (
+        <span aria-hidden className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent/60" />
       ) : (
         color && <AccountDot color={color} />
       )}
@@ -754,11 +863,16 @@ const MEMORY_COUNTER_THRESHOLD = MEMORY_MAX_LENGTH - 60;
  * Used both by the composer (expanded, empty content) and by a row in edit
  * mode (prefilled) — no more separate blur-commit textarea+Select per row.
  */
+/** The three mutually exclusive scope axes the chip row offers. */
+type ScopeKind = "general" | "account" | "contact";
+
 function MemoryEditor({
   initialContent,
-  initialScope,
+  initialAccountId,
+  initialContactId,
   emailAccounts,
   accountColor,
+  contacts,
   busy,
   onSave,
   onCancel,
@@ -767,21 +881,31 @@ function MemoryEditor({
 }: {
   /** "" for a fresh composer. */
   initialContent: string;
-  /** "" stands for General/global. */
-  initialScope: string;
+  initialAccountId: string | null;
+  initialContactId: string | null;
   emailAccounts: ConnectedAccount[];
   accountColor: (accountId: string) => string | undefined;
+  /** The contacts directory — drives the contact field's suggestions and typo hint. */
+  contacts: Contact[];
   /** True while a save is in flight — disables every control. */
   busy: boolean;
-  onSave: (content: string, accountId: string | null) => void;
+  onSave: (content: string, accountId: string | null, contactId: string | null) => void;
   onCancel: () => void;
   ariaLabel: string;
   placeholder: string;
 }) {
   const { t } = useTranslation();
   const [value, setValue] = React.useState(initialContent);
-  const [scope, setScope] = React.useState(initialScope);
+  // "" is a live contact scope with the address still to be typed (the
+  // composer presets it when the Contacts filter is active) — only null
+  // means "not contact-scoped".
+  const [scopeKind, setScopeKind] = React.useState<ScopeKind>(
+    initialContactId !== null ? "contact" : initialAccountId ? "account" : "general",
+  );
+  const [accountId, setAccountId] = React.useState(initialAccountId ?? "");
+  const [contactAddress, setContactAddress] = React.useState(initialContactId ?? "");
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
+  const contactInputRef = React.useRef<HTMLInputElement>(null);
 
   // autoFocus alone doesn't guarantee the caret lands at the end of prefilled
   // content in every browser — place it explicitly, once, on mount.
@@ -793,13 +917,67 @@ function MemoryEditor({
     el.setSelectionRange(end, end);
   }, []);
 
+  // Picking Contact reveals a free-text address field — send focus straight
+  // there instead of leaving the click stranded on the (now hidden) chip.
+  React.useEffect(() => {
+    if (scopeKind === "contact") contactInputRef.current?.focus();
+  }, [scopeKind]);
+
   const trimmed = value.trim();
-  const unchanged = trimmed === initialContent.trim() && scope === initialScope;
-  const canSave = trimmed.length > 0 && !unchanged && !busy;
+  const trimmedContact = contactAddress.trim().toLowerCase();
+  const resolvedAccountId = scopeKind === "account" ? accountId || null : null;
+  const resolvedContactId = scopeKind === "contact" ? trimmedContact || null : null;
+  // A typo'd address saves fine but never matches a real correspondent, so the
+  // memory would silently never fire. Warn — never block — once the address
+  // looks complete (a dot in the domain) and the directory doesn't know it;
+  // someone genuinely new is a legitimate scope too.
+  const contactDomain = trimmedContact.split("@")[1] ?? "";
+  const unknownContact =
+    scopeKind === "contact" &&
+    contactDomain.includes(".") &&
+    !contacts.some((c) => c.address === trimmedContact);
+
+  // Address suggestions from the contacts directory, matched on address or
+  // display name. People only — a memory is about a correspondent, and bulk
+  // senders (newsletters) aren't ones. Free text always stays valid —
+  // picking is a shortcut, not a requirement, so someone not in the
+  // directory yet can still be scoped.
+  const [suggestOpen, setSuggestOpen] = React.useState(false);
+  // -1 = nothing highlighted: Enter saves the typed text. Arrow keys (or
+  // hovering) highlight a row, and only then does Enter pick it instead.
+  const [suggestIndex, setSuggestIndex] = React.useState(-1);
+  const suggestions = React.useMemo(() => {
+    if (scopeKind !== "contact") return [];
+    return contacts
+      .filter(
+        (c) =>
+          c.kind === "person" &&
+          (c.address.includes(trimmedContact) ||
+            c.displayName.toLowerCase().includes(trimmedContact)),
+      )
+      .slice(0, 6);
+  }, [contacts, scopeKind, trimmedContact]);
+  const suggestShown = suggestOpen && suggestions.length > 0;
+
+  const pickSuggestion = (contact: Contact) => {
+    setContactAddress(contact.address);
+    setSuggestOpen(false);
+    setSuggestIndex(-1);
+    contactInputRef.current?.focus();
+  };
+  const unchanged =
+    trimmed === initialContent.trim() &&
+    resolvedAccountId === (initialAccountId ?? null) &&
+    resolvedContactId === (initialContactId ?? null);
+  const canSave =
+    trimmed.length > 0 &&
+    !unchanged &&
+    !busy &&
+    (scopeKind !== "contact" || trimmedContact.length > 0);
 
   const save = () => {
     if (!canSave) return;
-    onSave(trimmed, scope ? scope : null);
+    onSave(trimmed, resolvedAccountId, resolvedContactId);
   };
 
   return (
@@ -834,20 +1012,33 @@ function MemoryEditor({
             busy && "pointer-events-none opacity-60",
           )}
         >
-          <MemoryFilterChip active={scope === ""} general onClick={() => setScope("")}>
+          <MemoryFilterChip
+            active={scopeKind === "general"}
+            general
+            onClick={() => setScopeKind("general")}
+          >
             {t("knowledge.sections.memory.general")}
           </MemoryFilterChip>
           {emailAccounts.map((a) => (
             <MemoryFilterChip
               key={a.id}
-              active={scope === a.id}
+              active={scopeKind === "account" && accountId === a.id}
               color={accountColor(a.id) ?? UNASSIGNED_ACCOUNT_COLOR}
-              onClick={() => setScope(a.id)}
+              onClick={() => {
+                setScopeKind("account");
+                setAccountId(a.id);
+              }}
               title={a.name}
             >
               {a.name.split("@")[0]}
             </MemoryFilterChip>
           ))}
+          <MemoryFilterChip
+            active={scopeKind === "contact"}
+            onClick={() => setScopeKind("contact")}
+          >
+            {t("knowledge.sections.memory.contact")}
+          </MemoryFilterChip>
         </fieldset>
         <div className="ml-auto flex shrink-0 items-center gap-2">
           {value.length >= MEMORY_COUNTER_THRESHOLD && (
@@ -869,6 +1060,104 @@ function MemoryEditor({
           </Button>
         </div>
       </div>
+      {scopeKind === "contact" && (
+        <>
+          <div className="relative">
+            <Input
+              ref={contactInputRef}
+              value={contactAddress}
+              onChange={(e) => {
+                setContactAddress(e.target.value);
+                setSuggestOpen(true);
+                setSuggestIndex(-1);
+              }}
+              onFocus={() => setSuggestOpen(true)}
+              onBlur={() => setSuggestOpen(false)}
+              onKeyDown={(e) => {
+                // The open suggestion list layers under the editor's own keys:
+                // arrows walk it, Enter picks only a highlighted row, Escape
+                // closes it first — a second Escape then cancels the editor.
+                if (suggestShown) {
+                  if (e.key === "ArrowDown") {
+                    e.preventDefault();
+                    setSuggestIndex((i) => Math.min(suggestions.length - 1, i + 1));
+                    return;
+                  }
+                  if (e.key === "ArrowUp") {
+                    e.preventDefault();
+                    setSuggestIndex((i) => Math.max(-1, i - 1));
+                    return;
+                  }
+                  if (e.key === "Enter" && suggestIndex >= 0) {
+                    e.preventDefault();
+                    const picked = suggestions[suggestIndex];
+                    if (picked) pickSuggestion(picked);
+                    return;
+                  }
+                  if (e.key === "Escape") {
+                    e.preventDefault();
+                    setSuggestOpen(false);
+                    return;
+                  }
+                }
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  save();
+                }
+                if (e.key === "Escape") {
+                  e.preventDefault();
+                  onCancel();
+                }
+              }}
+              disabled={busy}
+              placeholder={t("knowledge.sections.memory.contactPlaceholder")}
+              aria-label={t("knowledge.sections.memory.contactPlaceholder")}
+              role="combobox"
+              aria-expanded={suggestShown}
+              aria-autocomplete="list"
+              className="text-sm"
+            />
+            {suggestShown && (
+              <div
+                role="listbox"
+                aria-label={t("knowledge.sections.memory.contactPlaceholder")}
+                className="surface-pop absolute inset-x-0 top-full z-20 mt-2 max-h-56 overflow-y-auto p-1"
+              >
+                {suggestions.map((contact, index) => (
+                  <button
+                    key={contact.address}
+                    type="button"
+                    role="option"
+                    aria-selected={index === suggestIndex}
+                    tabIndex={-1}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onMouseEnter={() => setSuggestIndex(index)}
+                    onClick={() => pickSuggestion(contact)}
+                    className={cn(
+                      "flex w-full items-baseline gap-2 rounded-lg px-2.5 py-2 text-left transition-colors",
+                      index === suggestIndex ? "bg-accent/10" : "hover:bg-secondary",
+                    )}
+                  >
+                    <span className="min-w-0 truncate text-sm font-medium text-foreground">
+                      {contact.displayName || contact.address}
+                    </span>
+                    {contact.displayName && (
+                      <span className="min-w-0 truncate text-xs text-muted-foreground">
+                        {contact.address}
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          {unknownContact && (
+            <p className="text-xs text-warning">
+              {t("knowledge.sections.memory.unknownContactHint")}
+            </p>
+          )}
+        </>
+      )}
     </div>
   );
 }
@@ -878,8 +1167,10 @@ function MemoryRow({
   onChanged,
   highlighted,
   accountLabel,
+  contactLabel,
   resolveColor,
   emailAccounts,
+  contacts,
   filterActive,
   onToggleFilter,
   showDotColumn,
@@ -890,6 +1181,10 @@ function MemoryRow({
   highlighted?: boolean;
   /** Precomputed display name for `entry.accountId`, or null for a global entry. */
   accountLabel: string | null;
+  /** Precomputed display name (or bare address) for `entry.contactId`, or null. */
+  contactLabel: string | null;
+  /** The contacts directory — feeds the edit card's address suggestions and typo hint. */
+  contacts: Contact[];
   /** Resolves any account's dot color (falls back to grey) — feeds both this
    *  row's own dot and the edit card's per-account scope chips. */
   resolveColor: (accountId: string) => string | undefined;
@@ -910,10 +1205,10 @@ function MemoryRow({
   const [confirmOpen, setConfirmOpen] = React.useState(false);
   const [deleting, setDeleting] = React.useState(false);
 
-  const save = async (content: string, accountId: string | null) => {
+  const save = async (content: string, accountId: string | null, contactId: string | null) => {
     setSaving(true);
     try {
-      await api.updateMemory(entry.id, content, accountId);
+      await api.updateMemory(entry.id, content, accountId, contactId);
       setEditing(false);
       await onChanged();
     } catch (err) {
@@ -945,11 +1240,13 @@ function MemoryRow({
       {editing ? (
         <MemoryEditor
           initialContent={entry.content}
-          initialScope={entry.accountId ?? ""}
+          initialAccountId={entry.accountId}
+          initialContactId={entry.contactId}
           emailAccounts={emailAccounts}
           accountColor={resolveColor}
+          contacts={contacts}
           busy={saving}
-          onSave={(content, accountId) => void save(content, accountId)}
+          onSave={(content, accountId, contactId) => void save(content, accountId, contactId)}
           onCancel={() => setEditing(false)}
           ariaLabel={t("memory.edit")}
           placeholder={t("memory.addPlaceholder")}
@@ -981,6 +1278,18 @@ function MemoryRow({
                 color={entry.accountId ? resolveColor(entry.accountId) : undefined}
               />
             </button>
+          ) : entry.contactId !== null ? (
+            // Contact-scoped: the accent dot tells it apart from an account's
+            // colored dot and General's black one, and toggles the Contacts
+            // filter chip — same interaction as the account dot above.
+            <button
+              type="button"
+              onClick={onToggleFilter}
+              aria-pressed={filterActive}
+              aria-label={t("knowledge.sections.memory.filterContactsHint")}
+              data-tooltip={t("knowledge.sections.memory.filterContactsHint")}
+              className="h-2.5 w-2.5 shrink-0 rounded-full bg-accent/60"
+            />
           ) : (
             // Global entry, but others on the strip are scoped — give it a real
             // (theme-aware "black") dot rather than a blank placeholder, and let
@@ -1004,6 +1313,16 @@ function MemoryRow({
           >
             {entry.content}
           </button>
+          {contactLabel !== null && (
+            // The Contacts group header is generic, so the row itself names
+            // the person the fact is about.
+            <span
+              data-tooltip={entry.contactId}
+              className="max-w-36 shrink-0 truncate text-xs text-muted-foreground"
+            >
+              {contactLabel}
+            </span>
+          )}
           {/* Quick path that skips the edit card entirely — harmless next to
               the edit card's own delete button, since only one is ever on
               screen for a given row at a time. */}

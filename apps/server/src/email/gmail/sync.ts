@@ -106,6 +106,7 @@ function isExcludedLabel(labelIds: string[] | undefined): boolean {
 function toSyncMessage(msg: GmailMessageFull): SyncMessage {
   const header = headerLookup(msg.payload);
   const labelIds = msg.labelIds ?? [];
+  const listUnsubscribe = header("List-Unsubscribe");
   return {
     providerMessageId: msg.id,
     providerThreadId: msg.threadId,
@@ -124,6 +125,16 @@ function toSyncMessage(msg: GmailMessageFull): SyncMessage {
     isFromMe: labelIds.includes("SENT"),
     isUnread: labelIds.includes("UNREAD"),
     labels: labelIds,
+    // Both headers ride the same full-format payload already fetched for the
+    // rest of the message, so capturing them costs nothing extra. Omitted
+    // rather than set to "" / false when List-Unsubscribe is absent, so the
+    // mirror can tell "not present" (null) apart from "not captured".
+    ...(listUnsubscribe
+      ? {
+          listUnsubscribe,
+          listUnsubscribePost: header("List-Unsubscribe-Post") !== "",
+        }
+      : {}),
   };
 }
 
@@ -305,8 +316,33 @@ async function fetchHistoryPage(
   };
 }
 
+/**
+ * Lazy per-message header fetch. Gmail's own sync captures List-Unsubscribe
+ * on every message it downloads, but rows mirrored BEFORE that capture
+ * existed sit at NULL — this is how they resolve on demand instead of
+ * reading as "no unsubscribe" forever. One metadata-format request; callers
+ * (email/unsubscribe/resolve.ts) bound how often it runs and persist the
+ * result so the same message is never re-fetched.
+ */
+async function fetchGmailMessageHeaders(
+  account: ConnectedAccount,
+  providerMessageId: string,
+): Promise<{ listUnsubscribe?: string; listUnsubscribePost?: boolean }> {
+  const res = (await proxyRequest(
+    account.id,
+    "get",
+    `${GMAIL_API}/messages/${providerMessageId}?format=metadata` +
+      `&metadataHeaders=List-Unsubscribe&metadataHeaders=List-Unsubscribe-Post`,
+  )) as GmailMessageFull | undefined;
+  const header = headerLookup(res?.payload);
+  const listUnsubscribe = header("List-Unsubscribe");
+  if (!listUnsubscribe) return {};
+  return { listUnsubscribe, listUnsubscribePost: Boolean(header("List-Unsubscribe-Post")) };
+}
+
 /** This module's SyncProvider — registered by ./sync/registerSyncProviders.ts. */
 export const gmailSyncProvider: SyncProvider = {
+  fetchMessageHeaders: fetchGmailMessageHeaders,
   fetchChanges(
     account: ConnectedAccount,
     cursor: string | null,

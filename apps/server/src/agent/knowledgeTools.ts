@@ -1,6 +1,6 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { formatFileSize, type MemoryEntry } from "@trailin/shared";
-import { and, desc, eq, gte, like } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, like } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { createMemory, deleteMemory, listMemories, updateMemory } from "../db/memories.js";
 import { getLibraryDir, SUPPORTED_FORMATS, saveNote } from "../library/ingest.js";
@@ -18,6 +18,20 @@ import { defineTool, textResult } from "./toolResult.js";
 /** Chunks per library_read part; ≈ 15k characters. Search hits cite these parts. */
 const PART_CHUNKS = 8;
 
+/** Lowercased, trimmed — matches how contacts.address and memories.contactId are normalized. */
+function normalizeContactAddress(raw: string): string {
+  return raw.trim().toLowerCase();
+}
+
+/** "Anna Becker <anna@firm.de>" when the contacts table has a display name, else the bare address. */
+async function contactLabel(address: string): Promise<string> {
+  const [row] = await db
+    .select({ displayName: schema.contacts.displayName })
+    .from(schema.contacts)
+    .where(eq(schema.contacts.address, address));
+  return row?.displayName ? `${row.displayName} <${address}>` : address;
+}
+
 const memorySave: AgentTool = defineTool({
   name: "memory_save",
   label: "Save to memory",
@@ -30,7 +44,9 @@ const memorySave: AgentTool = defineTool({
     `instead: use library_write. The user can review and edit memory on the Knowledge page. ` +
     `Facts that only apply to one connected account — a client of one company, a per-inbox rule ` +
     `or preference — should be scoped to it with the account parameter, so they only surface ` +
-    `when acting as that account; leave account unset for facts that apply everywhere.`,
+    `when acting as that account. Facts about one correspondent — their tone, preferences, how ` +
+    `they like to be addressed — should be scoped with the contact parameter instead. Leave both ` +
+    `unset for facts that apply everywhere; set at most one, never both.`,
   parameters: {
     type: "object",
     properties: {
@@ -44,16 +60,44 @@ const memorySave: AgentTool = defineTool({
           `The email address of the connected account this fact is specific to (as shown in ` +
           `tool descriptions: "Acts as the connected account: …"); omit for facts that apply everywhere.`,
       },
+      contact: {
+        type: "string",
+        description:
+          `Scope this fact to a specific correspondent — their email address — instead of an ` +
+          `account. Use for facts about one person (tone, preferences, how they like to be ` +
+          `addressed); do not combine with account.`,
+      },
     },
     required: ["content"],
   },
   execute: async (_id, params) => {
-    const { content, account } = params as { content: string; account?: string };
-    const resolved = await resolveAccountParam(account);
-    if (resolved.error) return textResult(resolved.error);
-    const accountId = resolved.account?.id ?? null;
-    const scopeLabel = resolved.account?.name ?? "general";
-    const { entry, created } = await createMemory(content, "agent", accountId);
+    const { content, account, contact } = params as {
+      content: string;
+      account?: string;
+      contact?: string;
+    };
+    const accountRaw = account?.trim();
+    const contactRaw = contact?.trim();
+    if (accountRaw && contactRaw) {
+      return textResult(
+        "Scope a memory to an account or a contact, not both — pass only one, or leave both unset.",
+      );
+    }
+
+    let accountId: string | null = null;
+    let contactId: string | null = null;
+    let scopeLabel = "general";
+    if (accountRaw) {
+      const resolved = await resolveAccountParam(accountRaw);
+      if (resolved.error) return textResult(resolved.error);
+      accountId = resolved.account?.id ?? null;
+      scopeLabel = resolved.account?.name ?? "general";
+    } else if (contactRaw) {
+      contactId = normalizeContactAddress(contactRaw);
+      scopeLabel = await contactLabel(contactId);
+    }
+
+    const { entry, created } = await createMemory(content, "agent", accountId, contactId);
     return textResult(
       created
         ? `Saved to long-term memory (${scopeLabel}): ${entry.content}`
@@ -69,8 +113,10 @@ const memoryUpdate: AgentTool = defineTool({
     `Update one long-term memory entry when a fact has changed or the user corrects it — ` +
     `instead of saving a second, contradicting entry. Use the id shown in brackets in the ` +
     `Long-term memory list in your system prompt. Pass account to move the entry into a ` +
-    `connected account's scope (facts specific to one inbox or client) or to "general" to make ` +
-    `it apply everywhere; omit it to keep the entry's current scope.`,
+    `connected account's scope (facts specific to one inbox or client), or contact to scope ` +
+    `this fact to a specific correspondent — their email address — instead of an account; pass ` +
+    `either as "general" to make the entry apply everywhere. Omit both to keep the entry's ` +
+    `current scope; never pass both account and contact with a real value.`,
   parameters: {
     type: "object",
     properties: {
@@ -88,23 +134,49 @@ const memoryUpdate: AgentTool = defineTool({
           `The email address of the connected account to scope this entry to, or "general" to ` +
           `make it apply everywhere; omit to keep its current scope.`,
       },
+      contact: {
+        type: "string",
+        description:
+          `The email address of the correspondent to scope this entry to, or "general" to make ` +
+          `it apply everywhere; omit to keep its current scope. Do not combine with account.`,
+      },
     },
     required: ["id", "content"],
   },
   execute: async (_id, params) => {
-    const { id, content, account } = params as { id: string; content: string; account?: string };
-    let accountId: string | null | undefined;
-    const trimmed = account?.trim();
-    if (trimmed) {
-      if (trimmed.toLowerCase() === "general") {
-        accountId = null;
-      } else {
-        const resolved = await resolveAccountParam(trimmed);
-        if (resolved.error) return textResult(resolved.error);
-        accountId = resolved.account?.id;
-      }
+    const { id, content, account, contact } = params as {
+      id: string;
+      content: string;
+      account?: string;
+      contact?: string;
+    };
+    const accountRaw = account?.trim();
+    const contactRaw = contact?.trim();
+    const accountIsGeneral = accountRaw?.toLowerCase() === "general";
+    const contactIsGeneral = contactRaw?.toLowerCase() === "general";
+    if (accountRaw && contactRaw && !accountIsGeneral && !contactIsGeneral) {
+      return textResult(
+        "Scope a memory to an account or a contact, not both — pass only one, or leave both unset.",
+      );
     }
-    const entry = await updateMemory(id, content, accountId);
+
+    let accountId: string | null | undefined;
+    let contactId: string | null | undefined;
+    if (accountIsGeneral || contactIsGeneral) {
+      // "general" on either parameter means the same thing: clear both scope axes.
+      accountId = null;
+      contactId = null;
+    } else if (accountRaw) {
+      const resolved = await resolveAccountParam(accountRaw);
+      if (resolved.error) return textResult(resolved.error);
+      accountId = resolved.account?.id;
+      contactId = null;
+    } else if (contactRaw) {
+      contactId = normalizeContactAddress(contactRaw);
+      accountId = null;
+    }
+
+    const entry = await updateMemory(id, content, accountId, contactId);
     if (!entry) {
       return textResult(
         `No memory found for id ${id} — use the id from the Long-term memory list.`,
@@ -436,16 +508,17 @@ export async function buildKnowledgeContext(): Promise<string> {
     const format = (list: MemoryEntry[]) =>
       list.map((m) => `- [${m.id.slice(0, 8)}] ${m.content}`).join("\n");
 
-    const global = memories.filter((m) => m.accountId === null);
-    const scoped = memories.filter((m) => m.accountId !== null);
+    const global = memories.filter((m) => m.accountId === null && m.contactId === null);
+    const accountScoped = memories.filter((m) => m.accountId !== null);
+    const contactScoped = memories.filter((m) => m.contactId !== null);
 
     const sections: string[] = [];
     if (global.length > 0) sections.push(format(global));
 
-    if (scoped.length > 0) {
+    if (accountScoped.length > 0) {
       const names = await fetchAccountNameMap();
       const byAccount = new Map<string, MemoryEntry[]>();
-      for (const m of scoped) {
+      for (const m of accountScoped) {
         const key = m.accountId as string;
         const list = byAccount.get(key);
         if (list) list.push(m);
@@ -455,6 +528,29 @@ export async function buildKnowledgeContext(): Promise<string> {
         const name = names.get(accountId) ?? accountId;
         sections.push(
           `Memory for ${name} (applies only when reading or writing as this account):\n${format(entries)}`,
+        );
+      }
+    }
+
+    if (contactScoped.length > 0) {
+      const byContact = new Map<string, MemoryEntry[]>();
+      for (const m of contactScoped) {
+        const key = m.contactId as string;
+        const list = byContact.get(key);
+        if (list) list.push(m);
+        else byContact.set(key, [m]);
+      }
+      const addresses = [...byContact.keys()];
+      const contactRows = await db
+        .select({ address: schema.contacts.address, displayName: schema.contacts.displayName })
+        .from(schema.contacts)
+        .where(inArray(schema.contacts.address, addresses));
+      const namesByAddress = new Map(contactRows.map((r) => [r.address, r.displayName]));
+      for (const [address, entries] of byContact) {
+        const name = namesByAddress.get(address);
+        const label = name ? `${name} <${address}>` : address;
+        sections.push(
+          `Memory about ${label} (applies only when corresponding with them):\n${format(entries)}`,
         );
       }
     }

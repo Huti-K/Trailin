@@ -66,6 +66,12 @@ export interface EnrichmentResult {
   triage: ThreadTriage;
   urgency: ThreadUrgency;
   deadline?: string;
+  /**
+   * True only when the thread's newest message is from the owner's own
+   * account AND it still expects a response from the other side — what the
+   * Home "waiting on others" lane is built from.
+   */
+  awaitingReply: boolean;
 }
 
 /** A failed thread isn't retried until this long after the failing attempt. */
@@ -148,7 +154,7 @@ export function snapshotThread(threadId: string, accountId: string): ThreadSnaps
   if (rows.length === 0) return null;
   // Bump when the enrichment prompt/output contract changes meaningfully —
   // salting the hash re-enriches every thread on the new version.
-  const hash = createHash("sha256").update("enrich-v2\n");
+  const hash = createHash("sha256").update("enrich-v3\n");
   for (const row of rows) hash.update(row.id).update("\n");
   return {
     threadId,
@@ -179,6 +185,7 @@ const upsertState = lazyStatement(
       "triage",
       "urgency",
       "deadline",
+      "awaiting_reply",
       "model",
       "error",
       "enriched_at",
@@ -201,6 +208,9 @@ export function saveEnrichment(
     triage: result.triage,
     urgency: result.urgency,
     deadline: result.deadline ?? null,
+    // better-sqlite3's raw bind (unlike drizzle's mode: "boolean" columns
+    // elsewhere) only accepts numbers/strings/bigints/buffers/null.
+    awaitingReply: result.awaitingReply ? 1 : 0,
     model,
     error: null,
     enrichedAt: snapshot.takenAt,
@@ -240,4 +250,27 @@ const touchStmt = lazyStatement("UPDATE mail_thread_state SET enriched_at = ? WH
 
 export function touchEnrichment(threadId: string, takenAt: string): void {
   touchStmt().run(takenAt, threadId);
+}
+
+/**
+ * Stamps the thread's current input_hash into dismissed_hash, which the
+ * "waiting on you" lane query then excludes it by (mail_threads' provider
+ * thread id + account id — the mirror's own thread_id is deterministic from
+ * those but never exposed past this module, so the lookup goes through a
+ * subquery rather than assuming the format). A later inbound message changes
+ * input_hash, so the two values stop matching and the thread resurfaces on
+ * its own — there is nothing to "undo" here.
+ */
+const dismissStmt = lazyStatement(`
+  UPDATE mail_thread_state
+  SET dismissed_hash = input_hash
+  WHERE thread_id = (
+    SELECT id FROM mail_threads WHERE account_id = @accountId AND provider_thread_id = @providerThreadId
+  )
+`);
+
+/** False when no mail_thread_state row exists for this thread yet — nothing to dismiss. */
+export function dismissThread(accountId: string, providerThreadId: string): boolean {
+  const result = dismissStmt().run({ accountId, providerThreadId });
+  return result.changes > 0;
 }

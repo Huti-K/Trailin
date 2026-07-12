@@ -1,18 +1,20 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { type ConnectedAccount, EMAIL_APPS } from "@trailin/shared";
-import { accountSupportsWaiting, listWaiting } from "../email/waiting.js";
+import { accountSupportsWaiting, listWaitingOnOthers } from "../email/waiting.js";
 import { errorMessage } from "../util.js";
 import { resolveAccountParam } from "./accounts.js";
 import { defineTool, textResult } from "./toolResult.js";
 
 /**
  * Agent tool over email/waiting.ts's "waiting on others" threads (same data
- * the Home page's pending-work section uses, routes/waiting.ts) — computed
- * from the local mailbox mirror, so it covers every connected account whose
- * app has a SyncProvider instead of hardcoding any one of them.
+ * the Home page's "Open conversations" section uses, routes/waiting.ts) —
+ * computed from the local mailbox mirror, so it covers every connected
+ * account whose app has a SyncProvider instead of hardcoding any one of
+ * them. Whether a reply is genuinely still expected is enrichment's call
+ * (mail_thread_state.awaiting_reply), not a fixed age floor.
  */
 
-/** Whole days elapsed since `iso`, floored, min 1 (matches email/waiting.ts's ≥24h wait filter). */
+/** Whole days elapsed since `iso`, floored, min 1 — for the "waiting N day(s)" display line. */
 function daysSince(iso: string): number {
   return Math.max(1, Math.floor((Date.now() - new Date(iso).getTime()) / (24 * 60 * 60 * 1000)));
 }
@@ -21,11 +23,11 @@ export const listWaitingThreadsTool: AgentTool = defineTool({
   name: "list_waiting_threads",
   label: "List threads awaiting replies",
   description:
-    `Threads where the user sent the last message and nobody has replied for at least a day ` +
-    `— per connected account with mailbox sync, most-overdue first, up to 10 per account. ` +
-    `Use this for follow-up checks, briefings, or when the user asks what they're ` +
-    `still waiting on. Read a thread with the account's get-thread tool using the listed ` +
-    `threadId, and consider offering a nudge draft for long-overdue ones.`,
+    `Threads where the user sent the last message and enrichment judged a reply is still ` +
+    `expected — per connected account with mailbox sync, most-overdue first, up to 10 per ` +
+    `account, within the last 14 days. Use this for follow-up checks, briefings, or when the ` +
+    `user asks what they're still waiting on. Read a thread with the account's get-thread ` +
+    `tool using the listed threadId, and consider offering a nudge draft for long-overdue ones.`,
   parameters: {
     type: "object",
     properties: {
@@ -64,7 +66,7 @@ export const listWaitingThreadsTool: AgentTool = defineTool({
     let anyFailed = false;
     for (const acc of targets) {
       try {
-        const items = await listWaiting(acc);
+        const items = await listWaitingOnOthers(acc);
         if (items.length === 0) {
           sections.push(`${acc.name}: nothing waiting.`);
           continue;

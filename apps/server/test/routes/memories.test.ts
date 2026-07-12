@@ -5,6 +5,8 @@ import { buildApp } from "../../src/app.js";
 interface MemoryEntryBody {
   id: string;
   content: string;
+  accountId: string | null;
+  contactId: string | null;
 }
 
 describe("memory routes", () => {
@@ -63,5 +65,83 @@ describe("memory routes", () => {
       payload: { content: "x" },
     });
     expect(gone.statusCode).toBe(404);
+  });
+
+  it("creates a contact-scoped memory when the other axis is an explicit JSON null", async () => {
+    // The web client always sends both axes, the unused one as null — the
+    // schema layer's type coercion must not turn that null into a live "" scope.
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/memories",
+      payload: { content: "Explicit-null axes", accountId: null, contactId: "new@nowhere.dev" },
+    });
+    expect(res.statusCode).toBe(200);
+    const entry = res.json() as MemoryEntryBody;
+    expect(entry.accountId).toBeNull();
+    expect(entry.contactId).toBe("new@nowhere.dev");
+
+    const updated = await app.inject({
+      method: "PUT",
+      url: `/api/memories/${entry.id}`,
+      payload: { content: "Explicit-null axes", accountId: "acc-1", contactId: null },
+    });
+    expect(updated.statusCode).toBe(200);
+    const updatedEntry = updated.json() as MemoryEntryBody;
+    expect(updatedEntry.accountId).toBe("acc-1");
+    expect(updatedEntry.contactId).toBeNull();
+
+    await app.inject({ method: "DELETE", url: `/api/memories/${entry.id}` });
+  });
+
+  it("rejects creating a memory scoped to both an account and a contact", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/memories",
+      payload: { content: "both scopes", accountId: "acc-1", contactId: "anna@example.com" },
+    });
+    expect(res.statusCode).toBe(400);
+    expect((res.json() as { error: string }).error).toMatch(/account and a contact/);
+  });
+
+  it("moves scope on update: setting one axis clears the omitted other", async () => {
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/memories",
+      payload: { content: "Bevorzugt förmliche Anrede", contactId: "anna@example.com" },
+    });
+    const entry = created.json() as MemoryEntryBody;
+    expect(entry.contactId).toBe("anna@example.com");
+
+    // contactId omitted, not null — the account move must clear it anyway.
+    const moved = await app.inject({
+      method: "PUT",
+      url: `/api/memories/${entry.id}`,
+      payload: { content: entry.content, accountId: "acc-1" },
+    });
+    expect(moved.statusCode).toBe(200);
+    const movedEntry = moved.json() as MemoryEntryBody;
+    expect(movedEntry.accountId).toBe("acc-1");
+    expect(movedEntry.contactId).toBeNull();
+
+    // And back: setting a contact clears the omitted account axis.
+    const back = await app.inject({
+      method: "PUT",
+      url: `/api/memories/${entry.id}`,
+      payload: { content: entry.content, contactId: "anna@example.com" },
+    });
+    expect(back.statusCode).toBe(200);
+    const backEntry = back.json() as MemoryEntryBody;
+    expect(backEntry.accountId).toBeNull();
+    expect(backEntry.contactId).toBe("anna@example.com");
+
+    // Sending both non-null is the one still-invalid combination.
+    const conflict = await app.inject({
+      method: "PUT",
+      url: `/api/memories/${entry.id}`,
+      payload: { content: entry.content, accountId: "acc-1", contactId: "anna@example.com" },
+    });
+    expect(conflict.statusCode).toBe(400);
+
+    await app.inject({ method: "DELETE", url: `/api/memories/${entry.id}` });
   });
 });

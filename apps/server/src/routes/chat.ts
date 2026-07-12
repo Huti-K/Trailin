@@ -6,6 +6,7 @@ import { desc, eq, inArray, or, sql } from "drizzle-orm";
 import { parseStoredCards } from "../agent/cards.js";
 import { buildSystemPrompt, disposeSession } from "../agent/emailAgent.js";
 import { parseStoredRefs } from "../agent/emailRefs.js";
+import { applyConversationFocus, clearConversationFocus } from "../agent/focus.js";
 import { beginTurn, type Turn, TurnInFlightError } from "../agent/turnRecorder.js";
 import { db, lazyStatement, schema, sqlite } from "../db/index.js";
 import { buildFtsMatch } from "../db/sql.js";
@@ -22,7 +23,11 @@ const conversationsQuery = Type.Object({
 
 const idParams = Type.Object({ id: Type.String() });
 
-const conversationTitleBody = Type.Object({ title: Type.String() });
+const conversationPatchBody = Type.Object({
+  title: Type.Optional(Type.String()),
+  /** Manual focus pick from the chat header chip: an account id, or null to clear focus. */
+  focusAccountId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+});
 
 const chatBody = Type.Object({
   conversationId: Type.Optional(Type.String()),
@@ -140,10 +145,16 @@ export const chatRoutes: FastifyPluginAsyncTypebox = async (app) => {
 
   app.patch(
     "/api/conversations/:id",
-    { schema: { params: idParams, body: conversationTitleBody } },
+    { schema: { params: idParams, body: conversationPatchBody } },
     async (req) => {
-      const title = req.body.title.trim();
-      if (!title) throw badRequest("title is required");
+      const { title, focusAccountId } = req.body;
+      if (title === undefined && focusAccountId === undefined) {
+        throw badRequest("nothing to update");
+      }
+      // Input validation precedes the existence check — a malformed request
+      // is a 400 regardless of whether the id resolves.
+      const trimmed = title?.trim();
+      if (title !== undefined && !trimmed) throw badRequest("title is required");
       await requireRow(
         db
           .select({ id: schema.conversations.id })
@@ -151,11 +162,26 @@ export const chatRoutes: FastifyPluginAsyncTypebox = async (app) => {
           .where(eq(schema.conversations.id, req.params.id)),
         "not found",
       );
-      await db
-        .update(schema.conversations)
-        .set({ title })
-        .where(eq(schema.conversations.id, req.params.id));
-      emitServerEvent("conversations");
+
+      if (trimmed) {
+        await db
+          .update(schema.conversations)
+          .set({ title: trimmed })
+          .where(eq(schema.conversations.id, req.params.id));
+        emitServerEvent("conversations");
+      }
+
+      // A manual pick sets the account and clears the thread part (the user
+      // is redirecting the conversation, not pinning an email); null removes
+      // focus entirely. Both emit "conversations" themselves.
+      if (focusAccountId === null) {
+        await clearConversationFocus(req.params.id);
+      } else if (focusAccountId !== undefined) {
+        await applyConversationFocus(req.params.id, {
+          accountId: focusAccountId,
+          threadId: null,
+        });
+      }
       return { ok: true };
     },
   );

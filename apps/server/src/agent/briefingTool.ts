@@ -7,6 +7,7 @@ import {
   type CardAccount,
   type ConnectedAccount,
 } from "@trailin/shared";
+import { threadWebUrl } from "../email/webLinks.js";
 import { listAccounts } from "../pipedream/connect.js";
 import { errorMessage, isNonEmptyString, isRecord } from "../util.js";
 import { findAccount } from "./accounts.js";
@@ -38,8 +39,9 @@ export const composeBriefingTool: AgentTool = defineTool({
     `grouped by how urgently each message needs the user, with per-thread actions. Call this ` +
     `once, at the end, after triaging every noteworthy message across the accounts reviewed ` +
     `and drafting the replies that are warranted. Give every item its real threadId from the ` +
-    `search results so the card's row actions work. The card IS the report: once you call ` +
-    `this, don't re-list the items in prose in your final answer.`,
+    `search results so the card's row actions work, and keep every item's gist to one line — ` +
+    `see the gist field for the exact shape. The card IS the report: once you call this, don't ` +
+    `re-list the items in prose in your final answer.`,
   parameters: {
     type: "object",
     properties: {
@@ -78,7 +80,16 @@ export const composeBriefingTool: AgentTool = defineTool({
             },
             senderEmail: { type: "string", description: "The sender's email address, if known." },
             subject: { type: "string", description: "The message subject." },
-            gist: { type: "string", description: "One sentence: what it says and what it wants." },
+            gist: {
+              type: "string",
+              description:
+                'One line, never a sentence: "topic: key fact → action" when it needs the ' +
+                'user (urgent/reply/action) — e.g. "contract: signs Fri, wants payment terms ' +
+                'fixed → reply" — or just "event" for fyi — e.g. "Hosting invoice paid ' +
+                '(€12,40)". State the fact and the action tersely; no explanation prose (never ' +
+                '"Anna replied regarding the contract, mentioning that she plans to sign on ' +
+                'Friday but wants the payment terms adjusted first").',
+            },
             priority: {
               type: "string",
               enum: [...BRIEFING_PRIORITIES],
@@ -129,10 +140,11 @@ export const composeBriefingTool: AgentTool = defineTool({
       const input = isRecord(params) ? params : {};
       const accounts = await listAccounts();
 
-      const resolveAccountId = (value: unknown): string | undefined => {
+      const resolveAccount = (value: unknown): ConnectedAccount | undefined => {
         if (!isNonEmptyString(value)) return undefined;
-        return findAccount(accounts, value)?.id;
+        return findAccount(accounts, value);
       };
+      const resolveAccountId = (value: unknown): string | undefined => resolveAccount(value)?.id;
 
       // Drop anything coerceBriefingItem/coerceBriefingRollup reject (missing
       // required fields) rather than failing the whole call over one bad
@@ -141,7 +153,15 @@ export const composeBriefingTool: AgentTool = defineTool({
       const items: BriefingItem[] = [];
       for (const raw of rawItems) {
         if (!isRecord(raw)) continue;
-        const item = coerceBriefingItem(raw, resolveAccountId(raw.account));
+        // Same helper the search sources use (search/sources.ts) to build a
+        // hit's webmail deep link — never a model-supplied URL, and "" (an
+        // app with no known web UI) normalizes to undefined like there too.
+        const account = resolveAccount(raw.account);
+        const webUrl =
+          account && isNonEmptyString(raw.threadId)
+            ? threadWebUrl(account, raw.threadId) || undefined
+            : undefined;
+        const item = coerceBriefingItem(raw, account?.id, webUrl);
         if (item) items.push(item);
       }
 
@@ -214,8 +234,8 @@ export const composeBriefingTool: AgentTool = defineTool({
 
       const confirmation =
         `${summaryParts.join(", ")}. The user is now looking at this card. Do not repeat the ` +
-        `items in prose — close with two or three sentences naming what needs them first and ` +
-        `which drafts are waiting.`;
+        `items in prose — close with exactly one line naming what needs them first, or "Quiet ` +
+        `otherwise — nothing urgent" if nothing does.`;
 
       return textResult(confirmation, card);
     } catch (error) {

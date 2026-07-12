@@ -3,7 +3,10 @@ import { recoverInterruptedTurns } from "./agent/turnRecorder.js";
 import { buildApp } from "./app.js";
 import { seedDefaultAutomations } from "./automations/defaults.js";
 import { startScheduler, stopScheduler } from "./automations/scheduler.js";
+import { startContacts, stopContacts } from "./email/contacts/contactsService.js";
 import { startEnrichment, stopEnrichment } from "./email/enrich/enrichService.js";
+import { startNightlyLearning, stopNightlyLearning } from "./email/learn/extractService.js";
+import { startDraftMatching, stopDraftMatching } from "./email/learn/matchService.js";
 import { startSyncEngine, stopSyncEngine } from "./email/sync/syncEngine.js";
 import { env } from "./env.js";
 import { getLibraryDir, startLibrary, stopLibrary } from "./library/ingest.js";
@@ -23,9 +26,16 @@ async function main(): Promise<void> {
 
   // Mirror every connected mailbox into SQLite (email/sync/) — the local
   // state summaries/triage/drafts read from. Enrichment rides the mirror's
-  // "mail" events to keep per-thread summaries/triage fresh.
+  // "mail" events to keep per-thread summaries/triage fresh. The contacts
+  // core (email/contacts/) rides the same events to keep its per-address
+  // aggregates and kind/category/gist judgments fresh. The draft-vs-sent
+  // learning loop (email/learn/) rides the same events to match agent drafts
+  // against the mail they became, then extracts style lessons nightly.
   startSyncEngine();
   startEnrichment();
+  startContacts();
+  startDraftMatching();
+  await startNightlyLearning();
 
   // Index the document drop folder and keep watching it.
   await startLibrary((message) => app.log.info(message));
@@ -39,6 +49,9 @@ async function main(): Promise<void> {
     stopScheduler();
     stopSyncEngine();
     stopEnrichment();
+    stopContacts();
+    stopDraftMatching();
+    stopNightlyLearning();
     stopLibrary();
     await resetSessions();
   });

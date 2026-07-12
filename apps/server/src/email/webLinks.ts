@@ -35,18 +35,53 @@ export function gmailDraftUrl(accountName: string, messageId: string): string {
 }
 
 /**
- * Landing page for Outlook web when no more specific deep link is known.
- * Shared with outlook/drafts.ts's per-draft fallback (a specific drafts-folder
- * URL built from this same root) so both land on the one Outlook web root.
+ * Outlook web is split across two hosts by account class, and the split is
+ * load-bearing: sending a personal (consumer) Microsoft account through the
+ * organizational host's sign-in hard-fails with AADSTS500200 ("personal
+ * Microsoft accounts are not supported"), it doesn't redirect. Personal
+ * accounts are recognized by Microsoft's own consumer email domains
+ * (hotmail.*, outlook.*, live.*, msn.com); anything else is treated as a
+ * work/school account. A personal account on a custom domain would be
+ * misrouted, but nothing in the connected-account data distinguishes it.
  */
-export const OUTLOOK_WEB_ROOT = "https://outlook.office.com/mail/";
+const OUTLOOK_WEB_ROOT = "https://outlook.office.com/mail/";
+const OUTLOOK_CONSUMER_WEB_ROOT = "https://outlook.live.com/mail/";
+const CONSUMER_MS_DOMAIN = /^(hotmail|outlook|live)\.|^msn\.com$/;
+
+/** True when the account's email domain marks a personal Microsoft account. */
+export function isConsumerOutlookAccount(accountName: string): boolean {
+  const domain = accountName.split("@")[1]?.toLowerCase() ?? "";
+  return CONSUMER_MS_DOMAIN.test(domain);
+}
+
+/** The Outlook web mailbox root for this account's class (work vs personal). */
+export function outlookWebRoot(accountName: string): string {
+  return isConsumerOutlookAccount(accountName) ? OUTLOOK_CONSUMER_WEB_ROOT : OUTLOOK_WEB_ROOT;
+}
+
+/**
+ * `login_hint=<email>` is Outlook web's counterpart of Gmail's `authuser`:
+ * with several Microsoft accounts signed in, a bare Outlook URL opens
+ * whichever account the browser session defaults to. The hint routes through
+ * Microsoft sign-in, which switches to (or silently signs in) the hinted
+ * account instead. Outlook web has no account-index path form to pin an
+ * account, so every Outlook link we hand out must carry this parameter — on
+ * the host matching the account's class (see outlookWebRoot). Appended as a
+ * raw string so an already-encoded query (Graph ItemIDs contain `+` and
+ * `%2b`) is never re-serialized.
+ */
+export function withOutlookLoginHint(url: string, accountName: string): string {
+  if (!accountName.includes("@")) return url;
+  const separator = url.includes("?") ? "&" : "?";
+  return `${url}${separator}login_hint=${encodeURIComponent(accountName)}`;
+}
 
 const THREAD_LINKS: Record<string, ThreadLinkBuilder> = {
   gmail: (account, threadId) => gmailThreadUrl(account.name, threadId),
   // Graph's per-message webLink isn't mirrored, and Outlook's web UI has no
-  // stable thread-by-conversationId URL — land on the mailbox rather than
-  // risk a broken deep link.
-  microsoft_outlook: () => OUTLOOK_WEB_ROOT,
+  // stable thread-by-conversationId URL — land on the mailbox (pinned to the
+  // right account) rather than risk a broken deep link.
+  microsoft_outlook: (account) => withOutlookLoginHint(outlookWebRoot(account.name), account.name),
 };
 
 /** Deep link to a thread in the account's webmail UI; "" when the app has no known web UI. */

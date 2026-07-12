@@ -37,6 +37,16 @@ export interface SyncMessage {
   isUnread: boolean;
   /** Raw provider labels/folders, for debugging and future capabilities. */
   labels: string[];
+  /**
+   * Raw List-Unsubscribe header value, when the provider can supply it
+   * cheaply off the same fetch it already does for the rest of the message
+   * (Gmail's full-format payload). Omitted (undefined) means "not captured"
+   * — the mirror stores that as null, distinct from a message that genuinely
+   * has no such header, which a provider that reads it would also omit.
+   */
+  listUnsubscribe?: string;
+  /** True when a List-Unsubscribe-Post header is present (RFC 8058 one-click unsubscribe support). Omitted alongside listUnsubscribe when the provider doesn't capture headers. */
+  listUnsubscribePost?: boolean;
 }
 
 export interface SyncPage {
@@ -80,6 +90,23 @@ export interface SyncProvider {
     cursor: string | null,
     opts: SyncOptions,
   ): Promise<SyncPage>;
+
+  /**
+   * Optional capability: fetch one already-synced message's List-Unsubscribe
+   * headers directly, for a provider whose change-feed can't carry headers at
+   * all (Graph delta queries never return them — see ../outlook/sync.ts).
+   * Absent means the provider's regular fetchChanges already captures
+   * headers on every message it sees (Gmail), so there is never anything to
+   * backfill this way. email/unsubscribe/resolve.ts is the only caller: it
+   * invokes this lazily, at most once per message, and always persists the
+   * result back onto that message's mail_messages row afterwards (see that
+   * module's doc comment for what an absent header value gets written as) so
+   * the same message is never re-fetched.
+   */
+  fetchMessageHeaders?(
+    account: ConnectedAccount,
+    providerMessageId: string,
+  ): Promise<{ listUnsubscribe?: string; listUnsubscribePost?: boolean }>;
 }
 
 /**

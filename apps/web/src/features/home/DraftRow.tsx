@@ -1,15 +1,28 @@
 import type { EmailDraft, EmailThreadMessage } from "@trailin/shared";
-import { ChevronDown, ChevronRight, ExternalLink, Loader2, Sparkles, Trash2 } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  ExternalLink,
+  Loader2,
+  Send,
+  Sparkles,
+  Trash2,
+} from "lucide-react";
 import * as React from "react";
 import { useTranslation } from "react-i18next";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DisclosureToggle } from "@/components/ui/disclosure-toggle";
+import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { ThreadHistory } from "@/features/home/ThreadHistory";
 import { api } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { errorMessage, openExternal } from "@/lib/utils";
+
+/** One action pending confirmation in the shared armed-confirm dialog below. */
+type PendingAction = "discard" | "send" | null;
 
 /** One draft — click to read the full content right here, edit its body in place. */
 export function DraftRow({
@@ -34,10 +47,14 @@ export function DraftRow({
   const { t } = useTranslation();
   const [open, setOpen] = React.useState(false);
   const [detail, setDetail] = React.useState<{ body: string; cc: string } | null>(null);
-  // Editable body state: `bodyDraft` is the live textarea value, `savedBody` is
-  // the last-persisted baseline it's compared against for the dirty flag.
+  // Editable body/subject state: the `*Draft` values are the live field
+  // values, `saved*` are the last-persisted baselines they're compared
+  // against for the dirty flag. Subject starts from the list row's value —
+  // unlike body it never needs a fetch, there's no separate subject endpoint.
   const [bodyDraft, setBodyDraft] = React.useState("");
   const [savedBody, setSavedBody] = React.useState("");
+  const [subjectDraft, setSubjectDraft] = React.useState(draft.subject);
+  const [savedSubject, setSavedSubject] = React.useState(draft.subject);
   const [saving, setSaving] = React.useState(false);
   // Thread context, fetched alongside the draft body. Absent (null) either
   // before load or when the draft doesn't reply to anything; a load failure
@@ -46,7 +63,10 @@ export function DraftRow({
   const [threadFailed, setThreadFailed] = React.useState(false);
   const [threadOpen, setThreadOpen] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
-  const [confirmOpen, setConfirmOpen] = React.useState(false);
+  const [pendingAction, setPendingAction] = React.useState<PendingAction>(null);
+  // True right after a successful send — the row shows a brief "Sent" state
+  // until the drafts SSE topic fires and the parent list refetch removes it.
+  const [sent, setSent] = React.useState(false);
   const rowRef = React.useRef<HTMLDivElement>(null);
 
   const loadDetail = React.useCallback(async () => {
@@ -100,20 +120,30 @@ export function DraftRow({
       onError(errorMessage(err));
     } finally {
       setBusy(false);
-      setConfirmOpen(false);
+      setPendingAction(null);
     }
   };
 
-  const dirty = bodyDraft !== savedBody;
+  const dirty = bodyDraft !== savedBody || subjectDraft !== savedSubject;
 
-  const cancelEdit = () => setBodyDraft(savedBody);
+  const cancelEdit = () => {
+    setBodyDraft(savedBody);
+    setSubjectDraft(savedSubject);
+  };
+
+  /** PATCHes only the fields that changed from their saved baseline. */
+  const savePatch = (): { body?: string; subject?: string } => ({
+    ...(bodyDraft !== savedBody && { body: bodyDraft }),
+    ...(subjectDraft !== savedSubject && { subject: subjectDraft }),
+  });
 
   const save = async () => {
     setSaving(true);
     onError(null);
     try {
-      await api.updateDraft(accountId, draft.id, { body: bodyDraft });
+      await api.updateDraft(accountId, draft.id, savePatch());
       setSavedBody(bodyDraft);
+      setSavedSubject(subjectDraft);
       toast.success(t("common.saved"));
       onSaved();
     } catch (err) {
@@ -123,6 +153,42 @@ export function DraftRow({
       setSaving(false);
     }
   };
+
+  /** Flushes any unsaved edits first, then sends the draft as-is. */
+  const send = async () => {
+    setBusy(true);
+    onError(null);
+    try {
+      if (dirty) {
+        await api.updateDraft(accountId, draft.id, savePatch());
+        setSavedBody(bodyDraft);
+        setSavedSubject(subjectDraft);
+      }
+      await api.sendDraft(accountId, draft.id);
+      setSent(true);
+      toast.success(t("drafts.sentToast"));
+    } catch (err) {
+      onError(errorMessage(err));
+    } finally {
+      setBusy(false);
+      setPendingAction(null);
+    }
+  };
+
+  // Sending removes the draft upstream — the row itself disappears once the
+  // drafts SSE topic fires and the parent list refetches. Until then, show a
+  // quiet terminal line instead of live controls.
+  if (sent) {
+    return (
+      <div className="flex items-center justify-between gap-3 rounded-lg bg-surface-2 px-3.5 py-3">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-medium">{subjectDraft || t("drafts.noSubject")}</p>
+          {draft.to && <p className="truncate text-xs text-muted-foreground">{draft.to}</p>}
+        </div>
+        <Badge variant="success">{t("drafts.sent")}</Badge>
+      </div>
+    );
+  }
 
   return (
     <div ref={rowRef} className="scroll-mt-4 rounded-lg bg-surface-2">
@@ -138,7 +204,7 @@ export function DraftRow({
             <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
           )}
           <div className="min-w-0">
-            <p className="truncate text-sm font-medium">{draft.subject || t("drafts.noSubject")}</p>
+            <p className="truncate text-sm font-medium">{subjectDraft || t("drafts.noSubject")}</p>
             <p className="truncate text-xs text-muted-foreground">
               {draft.to && `${t("drafts.to")} ${draft.to}`}
               {draft.to && draft.date && " · "}
@@ -190,13 +256,31 @@ export function DraftRow({
           <Button
             variant="ghost"
             size="icon-sm"
-            onClick={() => setConfirmOpen(true)}
+            onClick={() => setPendingAction("send")}
+            disabled={busy}
+            title={t("drafts.send")}
+            aria-label={t("drafts.send")}
+          >
+            {busy && pendingAction === "send" ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Send className="h-4 w-4" />
+            )}
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => setPendingAction("discard")}
             disabled={busy}
             className="hover:bg-destructive/10 hover:text-destructive"
             title={t("drafts.discard")}
             aria-label={t("drafts.discard")}
           >
-            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+            {busy && pendingAction === "discard" ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Trash2 className="h-4 w-4" />
+            )}
           </Button>
         </div>
       </div>
@@ -222,12 +306,16 @@ export function DraftRow({
                     {detail.cc}
                   </div>
                 )}
-                {draft.subject && (
-                  <div>
-                    <span className="font-medium mr-1.5">{t("drafts.subject", "Subject")}:</span>
-                    <span className="text-foreground/90">{draft.subject}</span>
-                  </div>
-                )}
+                <div className="flex items-center gap-1.5">
+                  <span className="shrink-0 font-medium">{t("drafts.subject")}:</span>
+                  <Input
+                    value={subjectDraft}
+                    onChange={(e) => setSubjectDraft(e.target.value)}
+                    placeholder={t("drafts.noSubject")}
+                    disabled={busy}
+                    className="h-7 flex-1 px-2 py-0 text-[13px] text-foreground/90"
+                  />
+                </div>
               </div>
 
               {thread && thread.length > 0 && (
@@ -249,14 +337,20 @@ export function DraftRow({
                   onChange={(e) => setBodyDraft(e.target.value)}
                   placeholder={t("drafts.emptyBodyText")}
                   rows={Math.max(6, bodyDraft.split("\n").length)}
+                  disabled={busy}
                   className="resize-none text-sm leading-relaxed text-foreground/90"
                 />
                 {dirty && (
                   <div className="flex justify-end gap-2">
-                    <Button variant="ghost" size="sm" onClick={cancelEdit} disabled={saving}>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={cancelEdit}
+                      disabled={saving || busy}
+                    >
                       {t("common.cancel")}
                     </Button>
-                    <Button size="sm" onClick={() => void save()} disabled={saving}>
+                    <Button size="sm" onClick={() => void save()} disabled={saving || busy}>
                       {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
                       {saving ? t("common.saving") : t("drafts.save")}
                     </Button>
@@ -268,14 +362,18 @@ export function DraftRow({
         </div>
       )}
       <ConfirmDialog
-        open={confirmOpen}
-        onOpenChange={setConfirmOpen}
-        title={t("drafts.discard")}
-        description={t("drafts.discardConfirm")}
-        confirmLabel={t("drafts.discard")}
-        variant="destructive"
+        open={pendingAction !== null}
+        onOpenChange={(next) => {
+          if (!next) setPendingAction(null);
+        }}
+        title={pendingAction === "send" ? t("drafts.send") : t("drafts.discard")}
+        description={
+          pendingAction === "send" ? t("drafts.sendConfirm") : t("drafts.discardConfirm")
+        }
+        confirmLabel={pendingAction === "send" ? t("drafts.send") : t("drafts.discard")}
+        variant={pendingAction === "send" ? "default" : "destructive"}
         busy={busy}
-        onConfirm={() => void discard()}
+        onConfirm={() => void (pendingAction === "send" ? send() : discard())}
       />
     </div>
   );

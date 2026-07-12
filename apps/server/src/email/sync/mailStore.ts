@@ -79,6 +79,8 @@ const upsertMessage = lazyStatement(
       "is_from_me",
       "is_unread",
       "labels",
+      "list_unsubscribe",
+      "list_unsubscribe_post",
       "synced_at",
     ],
   }),
@@ -180,6 +182,12 @@ const applyTxn = sqlite.transaction((accountId: string, page: SyncPage, nowIso: 
       isFromMe: m.isFromMe ? 1 : 0,
       isUnread: m.isUnread ? 1 : 0,
       labels: m.labels.length > 0 ? JSON.stringify(m.labels) : null,
+      // Undefined (provider doesn't capture headers, or the message has
+      // none) maps to null — distinct from a captured, empty value, which
+      // toSyncMessage never produces.
+      listUnsubscribe: m.listUnsubscribe ?? null,
+      listUnsubscribePost:
+        m.listUnsubscribePost === undefined ? null : m.listUnsubscribePost ? 1 : 0,
       syncedAt: nowIso,
     });
     ftsDelete().run(messageId);

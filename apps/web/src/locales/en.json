@@ -20,6 +20,10 @@
       "title": "Automations",
       "description": "Run the agent on a schedule with a standing instruction."
     },
+    "contacts": {
+      "title": "Contacts",
+      "description": "The people you correspond with, and every newsletter that mails you."
+    },
     "knowledge": {
       "title": "Knowledge",
       "description": "Documents and memory for your agent."
@@ -106,6 +110,10 @@
     "refs": {
       "remove": "Remove {{label}}"
     },
+    "focus": {
+      "allAccounts": "All accounts",
+      "noAccounts": "No connected accounts yet."
+    },
     "cards": {
       "noSubject": "(no subject)",
       "emptyBody": "(empty message)",
@@ -133,7 +141,16 @@
         "cc": "Cc:",
         "bcc": "Bcc:",
         "open": "Open in mailbox",
-        "signatureNote": "Your signature was added automatically."
+        "signatureNote": "Your signature was added automatically.",
+        "send": "Send",
+        "sendConfirm": "Send this draft now? It goes out exactly as written.",
+        "discard": "Discard",
+        "discardConfirm": "Discard this draft? It is removed from your mail account.",
+        "keep": "Keep as draft",
+        "kept": "Kept as draft",
+        "sentLabel": "Sent",
+        "discardedLabel": "Discarded",
+        "goneLabel": "This draft no longer exists"
       },
       "briefing": {
         "label": "Briefing",
@@ -283,12 +300,19 @@
     "briefingRefresh": "Update briefing",
     "briefingNext": "Next briefing: {{when}}",
     "openInChat": "Open in chat",
+    "openConversationsTitle": "Open conversations",
+    "waitingOnYouTitle": "Waiting on you",
+    "waitingOnYouDraftReply": "Draft reply",
+    "waitingOnYouDraftReplyPrompt": "Draft a reply to {{counterpart}}'s email \"{{subject}}\" in {{account}} (thread {{threadId}}). It needs a reply: {{gist}}",
+    "waitingOnYouDismiss": "Dismiss",
     "waitingTitle": "Waiting on others",
     "waitingNudge": "Draft a follow-up",
     "waitingNudgePrompt": "Draft a friendly follow-up to {{counterpart}} for the thread \"{{subject}}\" in {{account}}.",
     "glance": {
       "drafts_one": "{{count}} draft to review",
       "drafts_other": "{{count}} drafts to review",
+      "needsReply_one": "{{count}} needs your reply",
+      "needsReply_other": "{{count}} need your reply",
       "waiting_one": "{{count}} waiting on a reply",
       "waiting_other": "{{count}} waiting on replies",
       "nextRun": "Next run {{when}}"
@@ -301,6 +325,10 @@
     "open": "Open in mailbox",
     "discard": "Discard draft",
     "discardConfirm": "Discard this draft? It is removed from your mail account.",
+    "send": "Send",
+    "sendConfirm": "Send this draft now? It goes out exactly as written.",
+    "sent": "Sent",
+    "sentToast": "Draft sent.",
     "emptyBodyText": "(empty body)",
     "subject": "Subject",
     "refine": "Refine with AI",
@@ -371,6 +399,50 @@
       "draftReplyPromptNoAccount": "Draft a reply to {{sender}}'s email \"{{subject}}\". The briefing summarized it as: {{gist}}"
     }
   },
+  "contacts": {
+    "lanes": {
+      "people": "People",
+      "newsletters": "Newsletters"
+    },
+    "searchPlaceholder": "Search people…",
+    "category": {
+      "all": "All",
+      "colleague": "Colleague",
+      "client_business": "Client / business",
+      "personal": "Personal",
+      "service_vendor": "Service / vendor",
+      "other": "Other"
+    },
+    "emptyTitle": "No contacts yet",
+    "emptyBody": "People you exchange mail with show up here once your accounts sync.",
+    "detail": {
+      "back": "Back to contacts",
+      "messages_one": "{{count}} message",
+      "messages_other": "{{count}} messages",
+      "sent_one": "{{count}} sent",
+      "sent_other": "{{count}} sent",
+      "lastContact": "Last contact {{when}}",
+      "categoryLabel": "Category",
+      "categorySourceUser": "Set manually",
+      "categorySourceAuto": "Detected automatically",
+      "threadsTitle": "Recent threads",
+      "noThreads": "No recent threads yet.",
+      "loadError": "Couldn't load this contact."
+    },
+    "newsletters": {
+      "searchPlaceholder": "Search newsletters…",
+      "emptyTitle": "Nothing to unsubscribe",
+      "emptyBody": "Newsletters with a one-click unsubscribe show up here as your accounts sync. Requesting one removes it from this list.",
+      "frequency_one": "{{count}} mail · {{when}}",
+      "frequency_other": "{{count}} mails · {{when}}",
+      "unsubscribe": "Unsubscribe",
+      "unsubscribeConfirmTitle": "Unsubscribe from {{name}}?",
+      "unsubscribeConfirmBody": "Trailin sends a one-click unsubscribe request to {{name}}. This can't be undone from here.",
+      "unsubscribeRequested": "Unsubscribe requested",
+      "stillReceiving": "Still receiving mail",
+      "stillReceivingHint": "New mail arrived well after the unsubscribe request — it likely didn't work. You can request again."
+    }
+  },
   "memory": {
     "addPlaceholder": "Add something Trailin should remember…",
     "add": "Add memory",
@@ -411,7 +483,12 @@
         "general": "General",
         "scopeLabel": "Scope",
         "filterAll": "All",
-        "filterAccountHint": "Show only {{name}}'s memories"
+        "filterAccountHint": "Show only {{name}}'s memories",
+        "filterContactsHint": "Show only contact memories",
+        "contacts": "Contacts",
+        "contact": "Contact",
+        "contactPlaceholder": "Contact's email address",
+        "unknownContactHint": "Not in your contacts — double-check the address. Saving still works for someone new."
       },
       "library": {
         "title": "Documents",
@@ -498,6 +575,18 @@
       "label": "Timezone",
       "description": "Automations run and times are shown in this timezone",
       "localTime": "Local time {{time}}"
+    },
+    "syncBackfill": {
+      "label": "Mail history",
+      "description": "How far back an account's mail is mirrored — changing this re-syncs all accounts",
+      "option_one": "{{count}} day",
+      "option_other": "{{count}} days"
+    },
+    "contactThreads": {
+      "label": "Contact conversations",
+      "description": "How many recent conversations a contact page shows",
+      "option_one": "{{count}} conversation",
+      "option_other": "{{count}} conversations"
     },
     "backup": {
       "label": "Backup",

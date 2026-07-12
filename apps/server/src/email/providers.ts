@@ -45,6 +45,15 @@ export interface UpdateDraftPatch {
   subject?: string;
 }
 
+export interface SendDraftResult {
+  /**
+   * Provider id of the message that was sent, when the provider returns it
+   * (Gmail does; Graph's send returns an empty 202, so Outlook omits it and
+   * the mirror's sync sees the sent message later instead).
+   */
+  sentMessageId?: string;
+}
+
 export interface DraftProvider {
   listDrafts(account: ConnectedAccount, limit?: number): Promise<EmailDraft[]>;
   getDraftDetail(
@@ -61,6 +70,13 @@ export interface DraftProvider {
    * served from the local mailbox mirror, email/sync/mailQuery.ts.)
    */
   updateDraft?(account: ConnectedAccount, draftId: string, patch: UpdateDraftPatch): Promise<void>;
+  /**
+   * Optional capability: dispatch an existing draft as-is. Only ever invoked
+   * from a human-initiated request (the in-app Send button) — the agent has
+   * no tool over this method, and per-account write arming is deliberately
+   * not consulted: an explicit click is the authorization.
+   */
+  sendDraft?(account: ConnectedAccount, draftId: string): Promise<SendDraftResult>;
 }
 
 const registry = createProviderRegistry<DraftProvider>();

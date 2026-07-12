@@ -185,4 +185,81 @@ export const SCHEMA_STEPS: readonly string[] = [
     CREATE INDEX IF NOT EXISTS idx_mail_threads_provider_thread_id ON mail_threads(provider_thread_id);
     CREATE INDEX IF NOT EXISTS idx_mail_threads_last_message_at ON mail_threads(last_message_at);
   `,
+  // 4: agent-draft snapshots (agent_drafts + agent_draft_versions, replacing
+  // draft_links — conversation_id lives on the snapshot row now) and
+  // List-Unsubscribe capture on mirrored messages.
+  `
+    DROP TABLE IF EXISTS draft_links;
+    CREATE TABLE agent_drafts (
+      id TEXT PRIMARY KEY,
+      account_id TEXT NOT NULL,
+      provider_draft_id TEXT NOT NULL,
+      provider_message_id TEXT,
+      thread_id TEXT,
+      conversation_id TEXT,
+      subject TEXT NOT NULL DEFAULT '',
+      to_addrs TEXT NOT NULL DEFAULT '[]',
+      cc_addrs TEXT NOT NULL DEFAULT '[]',
+      bcc_addrs TEXT NOT NULL DEFAULT '[]',
+      signature TEXT,
+      status TEXT NOT NULL DEFAULT 'open',
+      sent_message_id TEXT,
+      learned_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE UNIQUE INDEX idx_agent_drafts_provider ON agent_drafts(account_id, provider_draft_id);
+    CREATE INDEX idx_agent_drafts_status ON agent_drafts(status);
+    CREATE TABLE agent_draft_versions (
+      draft_id TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      author TEXT NOT NULL,
+      subject TEXT NOT NULL DEFAULT '',
+      body TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (draft_id, version)
+    );
+    ALTER TABLE mail_messages ADD COLUMN list_unsubscribe TEXT;
+    ALTER TABLE mail_messages ADD COLUMN list_unsubscribe_post INTEGER;
+  `,
+  // 5: conversation focus (account + current thread, last writer wins) and
+  // the two Home-lane judgments: enrichment's awaiting_reply verdict and the
+  // hash-tied dismissal for the "waiting on you" lane.
+  `
+    ALTER TABLE conversations ADD COLUMN focus_account_id TEXT;
+    ALTER TABLE conversations ADD COLUMN focus_thread_id TEXT;
+    ALTER TABLE conversations ADD COLUMN focus_thread_subject TEXT;
+    ALTER TABLE mail_thread_state ADD COLUMN awaiting_reply INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE mail_thread_state ADD COLUMN dismissed_hash TEXT;
+  `,
+  // 6: contacts (one row per correspondent address, kind person|bulk) and the
+  // contact scope on memories.
+  `
+    CREATE TABLE contacts (
+      address TEXT PRIMARY KEY,
+      display_name TEXT NOT NULL DEFAULT '',
+      kind TEXT NOT NULL DEFAULT 'person',
+      category TEXT NOT NULL DEFAULT 'other',
+      category_source TEXT NOT NULL DEFAULT 'auto',
+      gist TEXT NOT NULL DEFAULT '',
+      accounts TEXT NOT NULL DEFAULT '[]',
+      message_count INTEGER NOT NULL DEFAULT 0,
+      sent_count INTEGER NOT NULL DEFAULT 0,
+      last_contact_at TEXT NOT NULL DEFAULT '',
+      input_hash TEXT NOT NULL DEFAULT '',
+      model TEXT,
+      error TEXT,
+      enriched_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_contacts_kind ON contacts(kind, last_contact_at);
+    ALTER TABLE memories ADD COLUMN contact_id TEXT;
+  `,
+  // 7: persistent record of a successful one-click unsubscribe request per
+  // bulk sender — the Newsletters lane renders "requested" from this instead
+  // of re-offering the button after a reload.
+  `
+    ALTER TABLE contacts ADD COLUMN unsubscribe_requested_at TEXT;
+  `,
 ];

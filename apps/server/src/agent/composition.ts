@@ -89,6 +89,12 @@ export interface ComposedDraftBody {
   humanized: boolean;
   /** The account's configured signature was appended. */
   signatureAppended: boolean;
+  /**
+   * The account's configured signature at compose time, whether or not this
+   * pass appended it — stored on the draft snapshot so the learning loop can
+   * strip it before diffing. Null when the account has none.
+   */
+  signature: string | null;
 }
 
 /**
@@ -113,7 +119,7 @@ export async function composeDraftBody(
     signatureAppended = true;
   }
 
-  return { body, humanized: humanized.changed, signatureAppended };
+  return { body, humanized: humanized.changed, signatureAppended, signature: signature ?? null };
 }
 
 /** Convenience lookup for one account's voice, or undefined if none is set. */

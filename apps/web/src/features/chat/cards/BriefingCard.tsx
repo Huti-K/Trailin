@@ -10,6 +10,7 @@ import {
   AlertTriangle,
   ChevronDown,
   Clock,
+  ExternalLink,
   Eye,
   MessageCircleQuestion,
   PenLine,
@@ -21,7 +22,7 @@ import { AccountDot } from "@/components/ui/account-dot";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { dispatchQuickAction } from "@/lib/quickActions";
-import { cn } from "@/lib/utils";
+import { cn, openExternal } from "@/lib/utils";
 import { CardShell } from "./CardShell";
 
 type BriefingData = Extract<AgentCard, { kind: "briefing" }>;
@@ -204,6 +205,7 @@ function BriefingRow({
   const hex = colors?.find((c) => c.accountId === item.accountId)?.hex;
   const urgent = item.priority === "urgent";
   const subject = item.subject || t("chat.cards.noSubject");
+  const webUrl = item.webUrl;
 
   const draftReply = () => {
     const text = account
@@ -281,6 +283,17 @@ function BriefingRow({
         )}
       </div>
       <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+        {webUrl && (
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            onClick={() => openExternal(webUrl)}
+            title={t("chat.cards.draft.open")}
+            aria-label={t("chat.cards.draft.open")}
+          >
+            <ExternalLink />
+          </Button>
+        )}
         {item.draftId ? (
           <Button
             variant="ghost"

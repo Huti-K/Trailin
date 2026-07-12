@@ -69,6 +69,7 @@ function enrichOk(mirrorThreadId: string, accountId: string, takenAt: string): v
     actionItems: [],
     triage: "fyi",
     urgency: "normal",
+    awaitingReply: false,
   };
   saveEnrichment(snapshotOf(mirrorThreadId, accountId, takenAt), result, "test-model");
 }

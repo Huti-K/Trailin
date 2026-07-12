@@ -40,6 +40,13 @@ export const env = {
     batch: Number(optional("ENRICH_BATCH") ?? 20),
     concurrency: Number(optional("ENRICH_CONCURRENCY") ?? 2),
   },
+  /** Contacts core (email/contacts/): cheap-tier model override + cycle caps. */
+  contacts: {
+    /** Model id tried against the active provider before the built-in cheap candidates. */
+    model: optional("CONTACTS_MODEL"),
+    batch: Number(optional("CONTACTS_BATCH") ?? 20),
+    concurrency: Number(optional("CONTACTS_CONCURRENCY") ?? 2),
+  },
 
   // Fallbacks only — credentials saved in the app (Settings → Connect email)
   // take precedence; see pipedream/connect.ts.

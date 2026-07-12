@@ -23,7 +23,7 @@ const validItem = {
 
 describe("coerceBriefingItem", () => {
   it("keeps a fully valid item, including the given accountId", () => {
-    const item = coerceBriefingItem(validItem, "acc-1");
+    const item = coerceBriefingItem(validItem, "acc-1", undefined);
     expect(item).toEqual({
       threadId: "t1",
       accountId: "acc-1",
@@ -35,14 +35,30 @@ describe("coerceBriefingItem", () => {
   });
 
   it("omits accountId when none is given", () => {
-    const item = coerceBriefingItem(validItem, undefined);
+    const item = coerceBriefingItem(validItem, undefined, undefined);
     expect(item?.accountId).toBeUndefined();
   });
 
+  it("includes the given webUrl", () => {
+    const item = coerceBriefingItem(validItem, "acc-1", "https://mail.google.com/mail/#all/t1");
+    expect(item?.webUrl).toBe("https://mail.google.com/mail/#all/t1");
+  });
+
+  it("omits webUrl when none is given, ignoring any webUrl on the raw value", () => {
+    // webUrl is server-resolved (like accountId), never trusted off the raw
+    // model-supplied record — a value on `validItem` itself must be ignored.
+    const item = coerceBriefingItem(
+      { ...validItem, webUrl: "https://evil.example" },
+      "acc-1",
+      undefined,
+    );
+    expect(item?.webUrl).toBeUndefined();
+  });
+
   it("drops non-record input", () => {
-    expect(coerceBriefingItem("not an object", "acc-1")).toBeUndefined();
-    expect(coerceBriefingItem(null, "acc-1")).toBeUndefined();
-    expect(coerceBriefingItem(undefined, "acc-1")).toBeUndefined();
+    expect(coerceBriefingItem("not an object", "acc-1", undefined)).toBeUndefined();
+    expect(coerceBriefingItem(null, "acc-1", undefined)).toBeUndefined();
+    expect(coerceBriefingItem(undefined, "acc-1", undefined)).toBeUndefined();
   });
 
   it.each([
@@ -52,7 +68,7 @@ describe("coerceBriefingItem", () => {
     "gist",
   ])("drops an item missing required field %s", (field) => {
     const { [field]: _omit, ...rest } = validItem as Record<string, unknown>;
-    expect(coerceBriefingItem(rest, "acc-1")).toBeUndefined();
+    expect(coerceBriefingItem(rest, "acc-1", undefined)).toBeUndefined();
   });
 
   it.each([
@@ -61,16 +77,22 @@ describe("coerceBriefingItem", () => {
     "subject",
     "gist",
   ])("drops an item whose required field %s is an empty/whitespace string", (field) => {
-    expect(coerceBriefingItem({ ...validItem, [field]: "   " }, "acc-1")).toBeUndefined();
+    expect(
+      coerceBriefingItem({ ...validItem, [field]: "   " }, "acc-1", undefined),
+    ).toBeUndefined();
   });
 
   it("degrades an unrecognized priority to fyi instead of dropping the item", () => {
-    const item = coerceBriefingItem({ ...validItem, priority: "urgent-ish" }, "acc-1");
+    const item = coerceBriefingItem({ ...validItem, priority: "urgent-ish" }, "acc-1", undefined);
     expect(item?.priority).toBe("fyi");
   });
 
   it("drops optional string fields that are empty rather than keeping blanks", () => {
-    const item = coerceBriefingItem({ ...validItem, messageId: "", deadline: "" }, "acc-1");
+    const item = coerceBriefingItem(
+      { ...validItem, messageId: "", deadline: "" },
+      "acc-1",
+      undefined,
+    );
     expect(item?.messageId).toBeUndefined();
     expect(item?.deadline).toBeUndefined();
   });
@@ -79,6 +101,7 @@ describe("coerceBriefingItem", () => {
     const item = coerceBriefingItem(
       { ...validItem, messageId: "m1", deadline: "Friday 17:00", draftId: "d1" },
       "acc-1",
+      undefined,
     );
     expect(item).toMatchObject({ messageId: "m1", deadline: "Friday 17:00", draftId: "d1" });
   });
@@ -145,6 +168,16 @@ describe("parseAgentCard briefing arm", () => {
     });
     expect(card?.kind).toBe("briefing");
     expect(card?.kind === "briefing" && card.items[0]?.accountId).toBe("acc-2");
+  });
+
+  it("wires each item's webUrl through from the raw details (a stored card's own field, trusted like accountId)", () => {
+    const card = parseAgentCard({
+      kind: "briefing",
+      items: [{ ...validItem, webUrl: "https://mail.google.com/mail/#all/t1" }],
+    });
+    expect(card?.kind === "briefing" && card.items[0]?.webUrl).toBe(
+      "https://mail.google.com/mail/#all/t1",
+    );
   });
 
   it("drops a malformed item without failing the whole card", () => {

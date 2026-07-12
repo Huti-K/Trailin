@@ -56,7 +56,12 @@ Triage (who the ball is with):
 - done: the exchange is concluded; nothing is expected from anyone.
 
 Urgency (how hot it is): high = explicit deadline soon, someone is blocked, or clearly
-time-sensitive; low = can comfortably wait a week or more; normal = everything else.`;
+time-sensitive; low = can comfortably wait a week or more; normal = everything else.
+
+awaiting_reply: true ONLY when the newest message in the thread was sent by the owner
+([me]) AND it asks for or expects a response from the other side — an open question,
+request, or proposal. False when the owner's last message doesn't call for a reply (a
+closing "thanks", "sounds good", "bye"), or when the newest message isn't from the owner.`;
 
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === "string");
@@ -83,6 +88,7 @@ function sanitizeReport(params: Record<string, unknown>): EnrichmentResult {
     actionItems,
     triage,
     urgency,
+    awaitingReply: params.awaiting_reply === true,
     ...(deadline ? { deadline } : {}),
   };
 }
@@ -116,6 +122,13 @@ function buildReportTool(onReport: (result: EnrichmentResult) => void): AgentToo
         },
         triage: { type: "string", enum: [...THREAD_TRIAGES] },
         urgency: { type: "string", enum: [...THREAD_URGENCIES] },
+        awaiting_reply: {
+          type: "boolean",
+          description:
+            "True ONLY when the newest message is from the owner and still expects a reply " +
+            'from the other side. False for a closing message ("thanks", "bye") or when the ' +
+            "newest message isn't the owner's.",
+        },
         deadline: {
           type: "string",
           description:
@@ -123,7 +136,7 @@ function buildReportTool(onReport: (result: EnrichmentResult) => void): AgentToo
             'own terms ("Friday 17:00", "bis Ende der Woche"). Omit otherwise.',
         },
       },
-      required: ["gist", "summary", "action_items", "triage", "urgency"],
+      required: ["gist", "summary", "action_items", "triage", "urgency", "awaiting_reply"],
     } as AgentTool["parameters"],
     execute: async (_id, params) => {
       onReport(sanitizeReport(params as Record<string, unknown>));

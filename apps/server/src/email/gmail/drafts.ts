@@ -2,7 +2,12 @@ import type { ConnectedAccount, EmailDraft } from "@trailin/shared";
 import { moduleLogger } from "../../logger.js";
 import { proxyRequest } from "../../pipedream/connect.js";
 import { draftsMutated } from "../draftsService.js";
-import type { CreateDraftInput, DraftProvider, UpdateDraftPatch } from "../providers.js";
+import type {
+  CreateDraftInput,
+  DraftProvider,
+  SendDraftResult,
+  UpdateDraftPatch,
+} from "../providers.js";
 import { gmailDraftUrl } from "../webLinks.js";
 import {
   decodeHtmlEntities,
@@ -316,6 +321,22 @@ async function updateGmailDraft(
   draftsMutated(account.id);
 }
 
+/**
+ * Dispatch an existing draft via Gmail's drafts.send. Gmail returns the sent
+ * message's id, which the caller records on the draft snapshot so the
+ * learning loop never has to match this send.
+ */
+async function sendGmailDraft(
+  account: ConnectedAccount,
+  draftId: string,
+): Promise<SendDraftResult> {
+  const res = (await proxyRequest(account.id, "post", `${GMAIL_API}/drafts/send`, {
+    body: { id: draftId },
+  })) as { id?: string };
+  draftsMutated(account.id);
+  return res.id ? { sentMessageId: res.id } : {};
+}
+
 /** This module's DraftProvider — and its entire interface (registered by ../registerProviders.ts). */
 export const gmailDraftProvider: DraftProvider = {
   listDrafts: listGmailDrafts,
@@ -326,4 +347,5 @@ export const gmailDraftProvider: DraftProvider = {
   },
   deleteDraft: deleteGmailDraft,
   updateDraft: updateGmailDraft,
+  sendDraft: sendGmailDraft,
 };

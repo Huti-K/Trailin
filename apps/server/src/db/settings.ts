@@ -1,6 +1,7 @@
 import type { AccountColor, AccountDescription, AccountVoice } from "@trailin/shared";
 import { isLanguage, type Language } from "@trailin/shared";
 import { eq } from "drizzle-orm";
+import { env } from "../env.js";
 import { db, dbGeneration, schema } from "./index.js";
 
 /**
@@ -68,6 +69,26 @@ export function isValidTimezone(value: unknown): value is string {
 export async function getTimezoneSetting(): Promise<string | null> {
   const value = await getSetting(TIMEZONE_SETTING_KEY);
   return isValidTimezone(value) ? value : null;
+}
+
+/** Reads a stored positive-integer setting, or `fallback` when unset/unparseable. */
+async function getPositiveIntSetting(key: string, fallback: number): Promise<number> {
+  const value = Number(await getSetting(key));
+  return Number.isInteger(value) && value > 0 ? value : fallback;
+}
+
+export const SYNC_BACKFILL_DAYS_SETTING_KEY = "sync.backfillDays";
+
+/** The mail mirror's bounded-backfill window in days; the SYNC_BACKFILL_DAYS env default applies until set. */
+export async function getSyncBackfillDaysSetting(): Promise<number> {
+  return getPositiveIntSetting(SYNC_BACKFILL_DAYS_SETTING_KEY, env.sync.backfillDays);
+}
+
+export const CONTACT_THREADS_LIMIT_SETTING_KEY = "contacts.recentThreadsLimit";
+
+/** How many recent threads a contact page lists (GET /api/contacts/:address). */
+export async function getContactThreadsLimitSetting(): Promise<number> {
+  return getPositiveIntSetting(CONTACT_THREADS_LIMIT_SETTING_KEY, 15);
 }
 
 export const LIBRARY_FOLDER_SETTING_KEY = "library.folder";

@@ -4,19 +4,24 @@ import { isLanguage, SUPPORTED_LANGUAGES } from "@trailin/shared";
 import { resetSessions } from "../agent/emailAgent.js";
 import { rescheduleAll } from "../automations/scheduler.js";
 import {
+  CONTACT_THREADS_LIMIT_SETTING_KEY,
   getAccountColors,
   getAccountDescriptions,
+  getContactThreadsLimitSetting,
   getLanguageSetting,
+  getSyncBackfillDaysSetting,
   getTimezoneSetting,
   getWriteAccessAccounts,
   isValidTimezone,
   LANGUAGE_SETTING_KEY,
+  SYNC_BACKFILL_DAYS_SETTING_KEY,
   setAccountColors,
   setAccountDescriptions,
   setSetting,
   setWriteAccessAccounts,
   TIMEZONE_SETTING_KEY,
 } from "../db/settings.js";
+import { restartBackfill } from "../email/sync/syncEngine.js";
 import { badRequest } from "../errors.js";
 
 const languageBody = Type.Object({ language: Type.String() });
@@ -32,6 +37,10 @@ const accountColorsBody = Type.Object({
 const accountDescriptionsBody = Type.Object({
   descriptions: Type.Array(Type.Object({ accountId: Type.String(), text: Type.String() })),
 });
+
+const backfillDaysBody = Type.Object({ days: Type.Integer({ minimum: 1, maximum: 3650 }) });
+
+const contactThreadsBody = Type.Object({ limit: Type.Integer({ minimum: 1, maximum: 100 }) });
 
 export const settingsRoutes: FastifyPluginAsyncTypebox = async (app) => {
   app.get("/api/settings/language", async () => ({ language: await getLanguageSetting() }));
@@ -76,6 +85,39 @@ export const settingsRoutes: FastifyPluginAsyncTypebox = async (app) => {
     await resetSessions();
     return { accountIds };
   });
+
+  // ---- Mail history (mirror backfill window + contact thread cap) ----
+
+  app.get("/api/settings/sync-backfill-days", async () => ({
+    days: await getSyncBackfillDaysSetting(),
+  }));
+
+  app.put(
+    "/api/settings/sync-backfill-days",
+    { schema: { body: backfillDaysBody } },
+    async (req) => {
+      const days = req.body.days;
+      const changed = days !== (await getSyncBackfillDaysSetting());
+      await setSetting(SYNC_BACKFILL_DAYS_SETTING_KEY, String(days));
+      // The window only matters during a bounded backfill, so re-run it —
+      // otherwise already-synced accounts would never pick up the new value.
+      if (changed) await restartBackfill();
+      return { days };
+    },
+  );
+
+  app.get("/api/settings/contact-threads-limit", async () => ({
+    limit: await getContactThreadsLimitSetting(),
+  }));
+
+  app.put(
+    "/api/settings/contact-threads-limit",
+    { schema: { body: contactThreadsBody } },
+    async (req) => {
+      await setSetting(CONTACT_THREADS_LIMIT_SETTING_KEY, String(req.body.limit));
+      return { limit: req.body.limit };
+    },
+  );
 
   // ---- Account colors ----
 

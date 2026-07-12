@@ -156,6 +156,8 @@ export function SettingsPanel({ onStatusChanged }: { onStatusChanged?: () => voi
           <LanguageRow />
           <TimezoneRow />
           <QuickActionsRow />
+          <SyncBackfillRow />
+          <ContactThreadsRow />
         </div>
       </Section>
 
@@ -397,6 +399,114 @@ function TimezoneRow() {
       onChange={(next) => void persist(next)}
       options={options}
       searchable
+    />
+  );
+}
+
+/**
+ * A numeric preference persisted on the server: loads the current value on
+ * mount and saves on change like every other preference row. A current value
+ * outside the preset choices (e.g. seeded through an env override) is kept as
+ * an extra option so the Select always shows the real setting.
+ */
+function ServerNumberRow({
+  id,
+  label,
+  description,
+  choices,
+  fallback,
+  load,
+  save,
+  format,
+}: {
+  id: string;
+  label: string;
+  description: string;
+  choices: number[];
+  fallback: number;
+  load: () => Promise<number>;
+  save: (value: number) => Promise<number>;
+  format: (value: number) => string;
+}) {
+  const [value, setValue] = React.useState<number | null>(null);
+  const [state, setState] = React.useState<"idle" | "saving" | "error">("idle");
+  const [error, setError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    load()
+      .then(setValue)
+      .catch((err) => setError(errorMessage(err)));
+  }, [load]);
+
+  // Show the server default until the fetch answers, like TimezoneRow's fallback.
+  const current = value ?? fallback;
+
+  const persist = async (next: number) => {
+    if (!Number.isInteger(next) || next === current) return;
+    setState("saving");
+    setError(null);
+    try {
+      setValue(await save(next));
+      setState("idle");
+    } catch (err) {
+      setState("error");
+      setError(errorMessage(err));
+    }
+  };
+
+  const values = choices.includes(current) ? choices : [...choices, current].sort((a, b) => a - b);
+
+  return (
+    <PreferenceRow
+      id={id}
+      label={label}
+      description={description}
+      error={error}
+      saving={state === "saving"}
+      value={String(current)}
+      onChange={(next) => void persist(Number(next))}
+      options={values.map((n) => ({ value: String(n), label: format(n) }))}
+    />
+  );
+}
+
+const BACKFILL_DAY_CHOICES = [7, 14, 30, 60, 90, 180, 365];
+const loadBackfillDays = () => api.syncBackfillDays().then((r) => r.days);
+const saveBackfillDays = (days: number) => api.setSyncBackfillDays(days).then((r) => r.days);
+
+function SyncBackfillRow() {
+  const { t } = useTranslation();
+  return (
+    <ServerNumberRow
+      id="settings-sync-backfill"
+      label={t("settings.syncBackfill.label")}
+      description={t("settings.syncBackfill.description")}
+      choices={BACKFILL_DAY_CHOICES}
+      fallback={30}
+      load={loadBackfillDays}
+      save={saveBackfillDays}
+      format={(days) => t("settings.syncBackfill.option", { count: days })}
+    />
+  );
+}
+
+const CONTACT_THREAD_CHOICES = [5, 10, 15, 25, 50];
+const loadContactThreads = () => api.contactThreadsLimit().then((r) => r.limit);
+const saveContactThreads = (limit: number) =>
+  api.setContactThreadsLimit(limit).then((r) => r.limit);
+
+function ContactThreadsRow() {
+  const { t } = useTranslation();
+  return (
+    <ServerNumberRow
+      id="settings-contact-threads"
+      label={t("settings.contactThreads.label")}
+      description={t("settings.contactThreads.description")}
+      choices={CONTACT_THREAD_CHOICES}
+      fallback={15}
+      load={loadContactThreads}
+      save={saveContactThreads}
+      format={(limit) => t("settings.contactThreads.option", { count: limit })}
     />
   );
 }

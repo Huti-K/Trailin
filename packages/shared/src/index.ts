@@ -1,3 +1,5 @@
+export * from "./unsubscribe.js";
+
 /**
  * Suggested email apps, shown before the user searches the full catalog.
  * These are the mail providers Pipedream exposes as Connect apps; any other
@@ -175,6 +177,12 @@ export interface Conversation {
   createdAt: string;
   /** True while the server is producing an assistant turn for this chat. */
   running?: boolean;
+  /** Conversation focus: the account this chat works in; null/absent = no focus. */
+  focusAccountId?: string | null;
+  /** The thread currently under discussion, while one email is the topic. */
+  focusThreadId?: string | null;
+  /** Display subject for the focused thread (chip label). */
+  focusThreadSubject?: string | null;
 }
 
 export interface ChatToolCall {
@@ -323,6 +331,39 @@ export interface AccountWaiting {
   error?: string;
 }
 
+/**
+ * One thread where the newest message is inbound and enrichment triaged it
+ * needs_reply (Home "Waiting on you" — the other lane of "Open
+ * conversations", alongside WaitingThread/AccountWaiting above).
+ */
+export interface WaitingOnYouThread {
+  threadId: string;
+  /** Connected account this thread belongs to; resolves the row's colour dot. */
+  accountId: string;
+  subject: string;
+  /** Display name/address of the message's sender. */
+  counterpart: string;
+  /** One-sentence summary from enrichment. */
+  gist: string;
+  urgency: ThreadUrgency;
+  /** Deep link to the thread in the provider's web UI. */
+  webUrl: string;
+}
+
+/** Threads needing the owner's reply, for one connected account (Home "Waiting on you"). */
+export interface AccountWaitingOnYou {
+  account: string;
+  accountId: string;
+  items: WaitingOnYouThread[];
+  error?: string;
+}
+
+/** GET /api/waiting's response: the two lanes of Home's "Open conversations" section. */
+export interface OpenConversations {
+  waitingOnYou: AccountWaitingOnYou[];
+  waitingOnOthers: AccountWaiting[];
+}
+
 /** The account a card's data came from. The client resolves its AccountColor. */
 export interface CardAccount {
   accountId: string;
@@ -407,6 +448,8 @@ export interface BriefingItem {
   receivedAt?: string;
   /** Draft this run saved against the thread, if it wrote one. */
   draftId?: string;
+  /** Deep link to the thread in the account's webmail UI, resolved server-side from threadId + account. */
+  webUrl?: string;
 }
 
 /** A bucket of low-value mail collapsed to a count instead of listed. */
@@ -543,14 +586,20 @@ export function isSetupComplete(status: AppStatus): boolean {
 /** Longest a memory's content may be — about a sentence, since entries are injected in full. */
 export const MEMORY_MAX_LENGTH = 300;
 
-/** One long-term memory entry, shown in the agent's system prompt. */
+/**
+ * One long-term memory entry, shown in the agent's system prompt. Scope is
+ * one of three states — global (accountId and contactId both null),
+ * account-scoped, or contact-scoped — never both accountId and contactId set.
+ */
 export interface MemoryEntry {
   id: string;
   content: string;
   /** "user" = added in Settings, "agent" = saved by the assistant itself. */
   source: "user" | "agent";
-  /** Connected-account id this fact is scoped to; null = applies everywhere. */
+  /** Connected-account id this fact is scoped to; null = not account-scoped. */
   accountId: string | null;
+  /** Contact address (contacts.address, lowercased) this fact is about; null = not contact-scoped. */
+  contactId: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -588,6 +637,76 @@ export function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+/**
+ * Whether an address is a real correspondent or a bulk/newsletter sender, as
+ * the contacts pipeline (server: email/contacts/) judged it. Authoritative —
+ * not derived from a no-reply regex, which is only a prior the judgment may
+ * consider.
+ */
+export const CONTACT_KINDS = ["person", "bulk"] as const;
+export type ContactKind = (typeof CONTACT_KINDS)[number];
+
+/** Relationship bucket for a "person" contact; not meaningful for "bulk". */
+export const CONTACT_CATEGORIES = [
+  "colleague",
+  "client_business",
+  "personal",
+  "service_vendor",
+  "other",
+] as const;
+export type ContactCategory = (typeof CONTACT_CATEGORIES)[number];
+
+/**
+ * One row of the mailbox-derived contacts core (server: email/contacts/) —
+ * one per correspondent address, never per person. Aggregates
+ * (messageCount/sentCount/lastContactAt/accounts) are re-derived from the
+ * mailbox mirror; kind/category/gist are LLM judgments that persist across
+ * re-derivation. `categorySource: "user"` marks the one field the Contacts
+ * page can override, which then survives future judgments.
+ */
+export interface Contact {
+  /** Normalized (lowercased) email address — the contact's identity. */
+  address: string;
+  displayName: string;
+  kind: ContactKind;
+  category: ContactCategory;
+  categorySource: "auto" | "user";
+  /** One LLM-written relationship line, e.g. "your accountant; formal tone". */
+  gist: string;
+  /** Connected-account ids this address corresponds on. */
+  accounts: string[];
+  messageCount: number;
+  /** Messages the user sent to this address. */
+  sentCount: number;
+  lastContactAt: string;
+  /** Model id that produced kind/category/gist; null before the first judgment. */
+  model: string | null;
+  error: string | null;
+  enrichedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** One thread involving a contact (GET /api/contacts/:address's recentThreads). */
+export interface ContactThread {
+  /** Provider thread id. */
+  threadId: string;
+  accountId: string;
+  subject: string;
+  /** The thread's last-message timestamp. */
+  date: string;
+  /** Enrichment gist, when the thread has been triaged; "" otherwise. */
+  gist: string;
+  /** Deep link to the thread in the provider's web UI; "" when unknown. */
+  webUrl: string;
+}
+
+/** GET /api/contacts/:address's response. */
+export interface ContactDetail extends Contact {
+  /** Up to 15 threads involving this address, newest first. */
+  recentThreads: ContactThread[];
+}
+
 /** Topics broadcast over GET /api/events when server-side data changes. */
 /**
  * Lifecycle triage of a mail thread relative to the user, as the enrichment
@@ -605,6 +724,7 @@ export type ServerEventTopic =
   | "drafts" // a Gmail draft was created or deleted
   | "mail" // the local mailbox mirror changed (messages synced/updated/removed)
   | "mail_state" // enrichment updated thread summaries/triage (email/enrich/)
+  | "contacts" // contacts derived/enriched, or a category overridden (email/contacts/)
   | "memories" // agent memory saved/updated/deleted
   | "library" // library document written/changed
   | "conversations" // chat/automation conversation list changed

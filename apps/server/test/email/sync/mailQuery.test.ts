@@ -72,6 +72,7 @@ function enrich(
     actionItems: [],
     triage: "fyi",
     urgency: "normal",
+    awaitingReply: false,
     ...overrides,
   };
   saveEnrichment(snapshot, result, "test-model");

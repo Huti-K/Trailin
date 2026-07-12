@@ -2,7 +2,6 @@ import type {
   AccountColor,
   AccountDescription,
   AccountDrafts,
-  AccountWaiting,
   ApiErrorCode,
   AppStatus,
   Automation,
@@ -11,6 +10,10 @@ import type {
   ChatStreamEvent,
   ConnectedAccount,
   ConnectTokenResponse,
+  Contact,
+  ContactCategory,
+  ContactDetail,
+  ContactKind,
   Conversation,
   EmailRef,
   EmailThread,
@@ -21,11 +24,14 @@ import type {
   MailSuggestion,
   MemoryEntry,
   ModelSettings,
+  NewsletterSender,
+  OpenConversations,
   PipedreamApp,
   PipedreamConfigInput,
   PipedreamStatus,
   RunFeedItem,
   SearchResult,
+  UnsubscribeResult,
 } from "@trailin/shared";
 import i18n from "@/lib/i18n";
 
@@ -38,19 +44,33 @@ export interface LibrarySearchHit {
   snippet: string;
 }
 
+/** A draft's recorded fate, from GET /api/drafts/:accountId/:draftId/status. */
+export interface DraftStatusResult {
+  status: "open" | "sent" | "discarded";
+  sentMessageId?: string;
+}
+
 /**
- * A failed API call. `code` is the server's machine-readable hint for
+ * A failed API call. `status` is the raw HTTP status (callers use it to tell
+ * a 404 — "gone upstream" — apart from other failures without matching
+ * message text). `code` is the server's machine-readable hint for
  * user-fixable failures — the toast layer maps it to a click-through action
  * (see lib/toast.ts); it's undefined for everything else.
  */
 export class ApiError extends Error {
   constructor(
     message: string,
+    readonly status: number,
     readonly code?: ApiErrorCode,
   ) {
     super(message);
     this.name = "ApiError";
   }
+}
+
+/** True for a failed request the server answered with 404 (the resource is gone). */
+export function isNotFound(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 404;
 }
 
 /** Plain-language message for an HTTP status class. */
@@ -80,7 +100,7 @@ async function throwOnError(res: Response): Promise<void> {
   } catch {
     // no JSON envelope — keep the status-class message
   }
-  throw new ApiError(message, code);
+  throw new ApiError(message, res.status, code);
 }
 
 /**
@@ -125,6 +145,14 @@ export const api = {
   timezone: () => get<{ timezone: string | null }>("/api/settings/timezone"),
   setTimezone: (timezone: string) =>
     http<{ timezone: string }>("PUT", "/api/settings/timezone", { timezone }),
+
+  syncBackfillDays: () => get<{ days: number }>("/api/settings/sync-backfill-days"),
+  setSyncBackfillDays: (days: number) =>
+    http<{ days: number }>("PUT", "/api/settings/sync-backfill-days", { days }),
+
+  contactThreadsLimit: () => get<{ limit: number }>("/api/settings/contact-threads-limit"),
+  setContactThreadsLimit: (limit: number) =>
+    http<{ limit: number }>("PUT", "/api/settings/contact-threads-limit", { limit }),
 
   writeAccess: () => get<{ accountIds: string[] }>("/api/settings/write-access"),
   setWriteAccess: (accountIds: string[]) =>
@@ -203,6 +231,18 @@ export const api = {
       `/api/drafts/${encodeURIComponent(accountId)}/${encodeURIComponent(draftId)}`,
       patch,
     ),
+  // Human-initiated only — sends the draft as it currently stands upstream.
+  sendDraft: (accountId: string, draftId: string) =>
+    http<{ ok: boolean }>(
+      "POST",
+      `/api/drafts/${encodeURIComponent(accountId)}/${encodeURIComponent(draftId)}/send`,
+    ),
+  // 404 means no snapshot exists (the draft wasn't agent-written) — callers
+  // treat that the same as any other failure to load a status.
+  draftStatus: (accountId: string, draftId: string) =>
+    get<DraftStatusResult>(
+      `/api/drafts/${encodeURIComponent(accountId)}/${encodeURIComponent(draftId)}/status`,
+    ),
   /** `excludeMessageId` drops the draft's own message — Gmail counts it as part of the thread. */
   draftThread: (accountId: string, threadId: string, excludeMessageId?: string) =>
     get<EmailThread>(
@@ -210,7 +250,13 @@ export const api = {
         excludeMessageId ? `?excludeMessageId=${encodeURIComponent(excludeMessageId)}` : ""
       }`,
     ),
-  waiting: () => get<AccountWaiting[]>("/api/waiting"),
+  waiting: () => get<OpenConversations>("/api/waiting"),
+  // Removes one thread from the "waiting on you" lane until a new inbound message revives it.
+  dismissWaiting: (accountId: string, threadId: string) =>
+    http<{ ok: boolean }>(
+      "POST",
+      `/api/waiting/${encodeURIComponent(accountId)}/${encodeURIComponent(threadId)}/dismiss`,
+    ),
 
   /** The composer's @-mention search — empty `q` returns recent threads instead of no results. */
   mailSuggest: (q: string, limit?: number) => {
@@ -232,6 +278,12 @@ export const api = {
   systemPrompt: () => get<{ prompt: string }>("/api/chat/system-prompt"),
   renameConversation: (id: string, title: string) =>
     http<{ ok: boolean }>("PATCH", `/api/conversations/${encodeURIComponent(id)}`, { title }),
+  // A string sets focus to that account (the server clears the thread part);
+  // null removes focus entirely.
+  setConversationFocus: (id: string, focusAccountId: string | null) =>
+    http<{ ok: boolean }>("PATCH", `/api/conversations/${encodeURIComponent(id)}`, {
+      focusAccountId,
+    }),
   deleteConversation: (id: string) =>
     http<{ ok: boolean }>("DELETE", `/api/conversations/${encodeURIComponent(id)}`),
 
@@ -255,22 +307,51 @@ export const api = {
     get<AutomationRun[]>(`/api/automations/${encodeURIComponent(id)}/runs`),
 
   memories: () => get<MemoryEntry[]>("/api/memories"),
-  // `accountId` is only sent when the caller passes it explicitly — omitting it
-  // must not appear in the JSON body, so the server keeps the entry's current scope.
-  addMemory: (content: string, accountId?: string | null) =>
-    http<MemoryEntry>(
-      "POST",
-      "/api/memories",
-      accountId !== undefined ? { content, accountId } : { content },
-    ),
-  updateMemory: (id: string, content: string, accountId?: string | null) =>
-    http<MemoryEntry>(
-      "PUT",
-      `/api/memories/${encodeURIComponent(id)}`,
-      accountId !== undefined ? { content, accountId } : { content },
-    ),
+  // accountId/contactId are only sent when the caller passes them explicitly —
+  // an omitted axis stays out of the JSON body, so on updates the server keeps
+  // that axis (or clears it when the other axis is being set — a memory
+  // carries at most one of the two; see db/memories.ts). Creates default both
+  // to global.
+  addMemory: (content: string, accountId?: string | null, contactId?: string | null) =>
+    http<MemoryEntry>("POST", "/api/memories", {
+      content,
+      ...(accountId !== undefined ? { accountId } : {}),
+      ...(contactId !== undefined ? { contactId } : {}),
+    }),
+  updateMemory: (
+    id: string,
+    content: string,
+    accountId?: string | null,
+    contactId?: string | null,
+  ) =>
+    http<MemoryEntry>("PUT", `/api/memories/${encodeURIComponent(id)}`, {
+      content,
+      ...(accountId !== undefined ? { accountId } : {}),
+      ...(contactId !== undefined ? { contactId } : {}),
+    }),
   deleteMemory: (id: string) =>
     http<{ ok: boolean }>("DELETE", `/api/memories/${encodeURIComponent(id)}`),
+
+  /** Mailbox-derived correspondents (see email/contacts/) — one row per address. */
+  contacts: (params: { kind?: ContactKind; category?: ContactCategory; q?: string } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.kind) qs.set("kind", params.kind);
+    if (params.category) qs.set("category", params.category);
+    if (params.q) qs.set("q", params.q);
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    return get<Contact[]>(`/api/contacts${suffix}`);
+  },
+  contactDetail: (address: string) =>
+    get<ContactDetail>(`/api/contacts/${encodeURIComponent(address)}`),
+  // The one manual override the Contacts page can make — pins category_source
+  // to "user" server-side so a later enrichment pass never reverts it.
+  setContactCategory: (address: string, category: ContactCategory) =>
+    http<Contact>("PATCH", `/api/contacts/${encodeURIComponent(address)}`, { category }),
+
+  /** Bulk/newsletter senders (contacts rows with kind="bulk") and their unsubscribe state. */
+  newsletters: () => get<NewsletterSender[]>("/api/newsletters"),
+  unsubscribeNewsletter: (address: string, accountId: string) =>
+    http<UnsubscribeResult>("POST", "/api/newsletters/unsubscribe", { address, accountId }),
 
   library: () => get<LibraryStatus>("/api/library"),
   setLibraryFolder: (folder: string) =>

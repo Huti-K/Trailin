@@ -13,11 +13,13 @@ import { accountRoutes } from "./routes/accounts.js";
 import { automationRoutes } from "./routes/automations.js";
 import { backupRoutes } from "./routes/backup.js";
 import { chatRoutes } from "./routes/chat.js";
+import { contactRoutes } from "./routes/contacts.js";
 import { draftRoutes } from "./routes/drafts.js";
 import { eventRoutes } from "./routes/events.js";
 import { libraryRoutes } from "./routes/library.js";
 import { llmRoutes } from "./routes/llm.js";
 import { memoryRoutes } from "./routes/memories.js";
+import { newsletterRoutes } from "./routes/newsletters.js";
 import { pipedreamRoutes } from "./routes/pipedream.js";
 import { searchRoutes } from "./routes/search.js";
 import { settingsRoutes } from "./routes/settings.js";
@@ -68,6 +70,7 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   await app.register(accountRoutes);
   await app.register(chatRoutes);
+  await app.register(contactRoutes);
   await app.register(automationRoutes);
   await app.register(llmRoutes);
   await app.register(pipedreamRoutes);
@@ -75,6 +78,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(draftRoutes);
   await app.register(waitingRoutes);
   await app.register(memoryRoutes);
+  await app.register(newsletterRoutes);
   await app.register(libraryRoutes);
   await app.register(eventRoutes);
   await app.register(searchRoutes);

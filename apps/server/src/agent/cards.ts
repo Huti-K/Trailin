@@ -98,17 +98,23 @@ export function isBriefingPriority(value: unknown): value is BriefingPriority {
 
 /**
  * Coerces a raw item-shaped record into a BriefingItem, given an
- * already-resolved accountId. Shared by compose_briefing (agent/briefingTool.ts,
- * which resolves the model's account name/address string against connected
- * accounts before calling this) and parseAgentCard below (which trusts a
- * card's `accountId` field directly) so the required-field rule and the
- * priority fallback live in exactly one place. Drops anything missing
- * threadId, sender, subject or gist rather than throwing; an unrecognized
- * priority degrades to the least-pressing tier rather than dropping the item.
+ * already-resolved accountId and webUrl. Shared by compose_briefing
+ * (agent/briefingTool.ts, which resolves the model's account name/address
+ * string against connected accounts and builds the webmail deep link from
+ * threadId + account before calling this) and parseAgentCard below (which
+ * trusts a stored card's `accountId`/`webUrl` fields directly) so the
+ * required-field rule and the priority fallback live in exactly one place.
+ * Both accountId and webUrl are taken only from the resolved parameters, never
+ * read off the raw model-supplied `value` — the model can't be trusted to
+ * name our internal account ids or construct a correct provider deep link.
+ * Drops anything missing threadId, sender, subject or gist rather than
+ * throwing; an unrecognized priority degrades to the least-pressing tier
+ * rather than dropping the item.
  */
 export function coerceBriefingItem(
   value: unknown,
   accountId: string | undefined,
+  webUrl: string | undefined,
 ): BriefingItem | undefined {
   if (!isRecord(value)) return undefined;
   const {
@@ -143,13 +149,15 @@ export function coerceBriefingItem(
     ...(isNonEmptyString(deadline) ? { deadline } : {}),
     ...(isNonEmptyString(receivedAt) ? { receivedAt } : {}),
     ...(isNonEmptyString(draftId) ? { draftId } : {}),
+    ...(webUrl ? { webUrl } : {}),
   };
 }
 
 function parseBriefingItem(value: unknown): BriefingItem | undefined {
   if (!isRecord(value)) return undefined;
   const accountId = isNonEmptyString(value.accountId) ? value.accountId : undefined;
-  return coerceBriefingItem(value, accountId);
+  const webUrl = isNonEmptyString(value.webUrl) ? value.webUrl : undefined;
+  return coerceBriefingItem(value, accountId, webUrl);
 }
 
 /**

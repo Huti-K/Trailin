@@ -1,11 +1,18 @@
 import { randomUUID } from "node:crypto";
 import type { AgentCard, EmailRef, MessageCard } from "@trailin/shared";
+import { linkDraftConversation } from "../db/draftStore.js";
 import { db, schema, sqlite } from "../db/index.js";
 import { emitServerEvent } from "../events.js";
 import { moduleLogger } from "../logger.js";
 import { errorMessage } from "../util.js";
 import { type AgentSession, createEphemeralSession, getOrCreateSession } from "./emailAgent.js";
 import { decoratePrompt, serializeRefs } from "./emailRefs.js";
+import {
+  applyConversationFocus,
+  conversationFocusNote,
+  focusFromCard,
+  focusFromRefs,
+} from "./focus.js";
 import type { RunHandlers, TurnLogger } from "./run.js";
 
 /**
@@ -22,10 +29,11 @@ const log = moduleLogger("turnRecorder");
 
 /**
  * Collects the cards one agent turn emits so the caller can persist them with
- * the assistant message, and records a draft_links row for every draft the
- * turn creates — that link is what lets the Drafts list reopen the exact
- * conversation a draft came from. Used by both the chat route and the
- * automation runner (a run id doubles as its conversation id).
+ * the assistant message, and links every draft the turn creates back to this
+ * conversation on its agent_drafts snapshot — that link is what lets the
+ * Drafts list reopen the exact conversation a draft came from. Used by both
+ * the chat route and the automation runner (a run id doubles as its
+ * conversation id).
  */
 function collectTurnCards(conversationId: string): {
   cards: MessageCard[];
@@ -42,22 +50,17 @@ function collectTurnCards(conversationId: string): {
     if (card.kind === "email_draft" && card.draft.draftId) {
       // Fire-and-forget: the link is a navigation nicety and must never fail
       // or stall the turn. Re-emit "drafts" once the link exists — the draft
-      // tool's own emit can race ahead of this insert, and the refetch it
+      // tool's own emit can race ahead of this update, and the refetch it
       // triggers would miss the conversationId.
-      db.insert(schema.draftLinks)
-        .values({
-          draftId: card.draft.draftId,
-          accountId: card.account?.accountId ?? "",
-          conversationId,
-          createdAt: new Date().toISOString(),
-        })
-        .onConflictDoUpdate({
-          target: schema.draftLinks.draftId,
-          set: { conversationId },
-        })
+      linkDraftConversation(card.account?.accountId ?? "", card.draft.draftId, conversationId)
         .then(() => emitServerEvent("drafts"))
         .catch(() => {});
     }
+
+    // Cards are also how the agent's activity moves the conversation's focus
+    // (agent/focus.ts) — fire-and-forget for the same reason as the link.
+    const focus = focusFromCard(card);
+    if (focus) applyConversationFocus(conversationId, focus).catch(() => {});
   };
 
   return { cards, onCard };
@@ -191,6 +194,15 @@ export function beginTurn(conversationId: string): Turn {
           createdAt: new Date().toISOString(),
         });
 
+        // Focus follows an @-mention (last one wins), and the standing focus
+        // is read back AFTER that write so this turn's note reflects it. The
+        // note is what makes focus the agent's tool-call default.
+        const refFocus = focusFromRefs(opts.refs);
+        if (refFocus) {
+          await applyConversationFocus(conversationId, refFocus).catch(() => {});
+        }
+        const focusNote = await conversationFocusNote(conversationId).catch(() => "");
+
         // Collects this turn's cards for the outcome row below (and links
         // any created draft back to this conversation — collectTurnCards'
         // own job). The caller's onCard (chat's SSE "card" event) must see
@@ -226,7 +238,7 @@ export function beginTurn(conversationId: string): Turn {
           // runTurn. The prompt is decorated with any attached-email notes
           // right before it reaches the model.
           text = await session.runTurn(
-            decoratePrompt(opts.prompt, opts.refs),
+            decoratePrompt(opts.prompt, opts.refs) + focusNote,
             handlers,
             opts.signal,
             opts.log,

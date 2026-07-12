@@ -1,8 +1,8 @@
 import type {
   AccountColor,
   AccountDrafts,
-  AccountWaiting,
   Automation,
+  OpenConversations,
   RunFeedItem,
 } from "@trailin/shared";
 import {
@@ -30,7 +30,7 @@ import { BriefingHero, findBriefingCard } from "@/features/home/BriefingHero";
 import { CollapsibleSectionTitle } from "@/features/home/CollapsibleSectionTitle";
 import { DraftRow } from "@/features/home/DraftRow";
 import { GlanceStrip } from "@/features/home/GlanceStrip";
-import { WaitingSection } from "@/features/home/WaitingSection";
+import { OpenConversationsSection } from "@/features/home/OpenConversationsSection";
 import { api } from "@/lib/api";
 import {
   dateTimeLabel,
@@ -78,7 +78,7 @@ const cache: {
   runs: RunFeedItem[] | null;
   automations: Automation[] | null;
   colors: AccountColor[];
-  waiting: AccountWaiting[] | null;
+  waiting: OpenConversations | null;
   pinned: PinnedRun | null;
 } = { drafts: null, runs: null, automations: null, colors: [], waiting: null, pinned: null };
 
@@ -101,7 +101,7 @@ export function HomePanel({
   const [runs, setRuns] = React.useState<RunFeedItem[] | null>(cache.runs);
   const [automations, setAutomations] = React.useState<Automation[] | null>(cache.automations);
   const [colors, setColors] = React.useState<AccountColor[]>(cache.colors);
-  const [waiting, setWaiting] = React.useState<AccountWaiting[] | null>(cache.waiting);
+  const [waiting, setWaiting] = React.useState<OpenConversations | null>(cache.waiting);
   const [pinned, setPinned] = React.useState<PinnedRun | null>(cache.pinned);
   const [error, setError] = React.useState<string | null>(null);
   // Set by the search palette (see SearchPalette.tsx) when a draft hit is opened.
@@ -262,7 +262,7 @@ export function HomePanel({
         onChanged={() => void load()}
         focusDraft={focusDraft}
       />
-      <WaitingSection waiting={waiting} colors={colors} />
+      <OpenConversationsSection waiting={waiting} colors={colors} />
       <ActivitySection
         runs={activityRuns}
         automations={automations}

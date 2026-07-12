@@ -23,6 +23,8 @@ import { LoadingRow } from "@/components/ui/feedback";
 import { Toaster } from "@/components/ui/toaster";
 import { AutomationsPanel } from "@/features/automations/AutomationsPanel";
 import { ChatPanel, HistoryList } from "@/features/chat/ChatPanel";
+import { FocusChip } from "@/features/chat/FocusChip";
+import { ContactsPanel } from "@/features/contacts/ContactsPanel";
 import { HomePanel } from "@/features/home/HomePanel";
 import { KnowledgePanel } from "@/features/knowledge/KnowledgePanel";
 import { SettingsPanel } from "@/features/settings/SettingsPanel";
@@ -393,6 +395,7 @@ export default function App() {
               <Route path="/chat" element={null} />
               <Route path="/settings" element={<SettingsPanel onStatusChanged={refreshStatus} />} />
               <Route path="/automations" element={<AutomationsPanel />} />
+              <Route path="/contacts" element={<ContactsPanel />} />
               <Route path="/knowledge" element={<KnowledgePanel />} />
               {/* DEV showcase / theme lab — delete this line and the ShowcasePanel file to remove. */}
               {import.meta.env.DEV && <Route path="/showcase" element={<ShowcasePanel />} />}
@@ -561,7 +564,10 @@ export default function App() {
                   <ChevronRight />
                 </HeaderIconButton>
               )}
-              <p className="text-sm font-semibold tracking-tight">{t("views.chat.title")}</p>
+              <p className="shrink-0 text-sm font-semibold tracking-tight">
+                {t("views.chat.title")}
+              </p>
+              <FocusChip conversationId={activeConversationId} />
               {onChatRoute && (
                 <HeaderIconButton
                   label={theme === "dark" ? t("sidebar.lightMode") : t("sidebar.darkMode")}

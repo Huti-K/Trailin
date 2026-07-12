@@ -33,23 +33,46 @@ export interface CreateMemoryResult {
   created: boolean;
 }
 
+/** Lowercased, trimmed — matches how contacts.address is normalized. */
+function normalizeContactId(contactId: string): string {
+  return contactId.trim().toLowerCase();
+}
+
+/** A memory is global (both null), account-scoped, OR contact-scoped — never both. */
+function assertSingleScope(accountId: string | null, contactId: string | null): void {
+  if (accountId !== null && contactId !== null) {
+    throw new Error("memory cannot be scoped to both an account and a contact");
+  }
+}
+
 export async function createMemory(
   content: string,
   source: MemoryEntry["source"],
   accountId: string | null = null,
+  contactId: string | null = null,
 ): Promise<CreateMemoryResult> {
   const trimmed = content.trim();
   if (!trimmed) throw new Error("memory content must not be empty");
   if (trimmed.length > MEMORY_MAX_LENGTH) {
     throw new Error(`memory content must be at most ${MEMORY_MAX_LENGTH} characters`);
   }
+  // An empty string on either axis means "no scope" — the route layer's
+  // schema coercion can deliver "" where the client sent an explicit null.
+  const normalizedAccountId = accountId || null;
+  const normalizedContactId = contactId ? normalizeContactId(contactId) : null;
+  assertSingleScope(normalizedAccountId, normalizedContactId);
 
-  // Dedup within the same scope only — the same fact may legitimately exist
-  // for two different accounts (or once globally and once account-specific).
+  // Dedup within the same (accountId, contactId) scope only — the same fact
+  // may legitimately exist for two different accounts, two different
+  // contacts, or once globally and once scoped.
   const rows = await db.select().from(schema.memories);
   const target = normalizeForDedup(trimmed);
   for (const row of rows) {
-    if ((row.accountId ?? null) === accountId && normalizeForDedup(row.content) === target) {
+    if (
+      (row.accountId ?? null) === normalizedAccountId &&
+      (row.contactId ?? null) === normalizedContactId &&
+      normalizeForDedup(row.content) === target
+    ) {
       return { entry: row as MemoryEntry, created: false };
     }
   }
@@ -62,7 +85,8 @@ export async function createMemory(
     id: randomUUID(),
     content: trimmed,
     source,
-    accountId,
+    accountId: normalizedAccountId,
+    contactId: normalizedContactId,
     createdAt: now,
     updatedAt: now,
   };
@@ -89,8 +113,10 @@ export async function resolveMemoryId(idOrPrefix: string): Promise<string | null
 export async function updateMemory(
   idOrPrefix: string,
   content: string,
-  /** undefined = keep the current scope; null = make it global. */
+  /** undefined = keep the current account scope; null = clear it. */
   accountId?: string | null,
+  /** undefined = keep the current contact scope; null = clear it. */
+  contactId?: string | null,
 ): Promise<MemoryEntry | null> {
   const id = await resolveMemoryId(idOrPrefix);
   if (!id) return null;
@@ -99,12 +125,34 @@ export async function updateMemory(
   if (trimmed.length > MEMORY_MAX_LENGTH) {
     throw new Error(`memory content must be at most ${MEMORY_MAX_LENGTH} characters`);
   }
+  const [current] = await db.select().from(schema.memories).where(eq(schema.memories.id, id));
+  if (!current) return null;
+
+  // An empty string on either axis means "clear it", same as null — the route
+  // layer's schema coercion can deliver "" where the client sent an explicit
+  // null. undefined still means "keep the current value".
+  const normalizedAccountId = accountId === undefined ? undefined : accountId || null;
+  const normalizedContactId =
+    contactId !== undefined ? (contactId ? normalizeContactId(contactId) : null) : undefined;
+  let nextAccountId =
+    normalizedAccountId !== undefined ? normalizedAccountId : (current.accountId ?? null);
+  let nextContactId =
+    normalizedContactId !== undefined ? normalizedContactId : (current.contactId ?? null);
+  // Setting one scope axis moves the entry there: the other axis clears unless
+  // the caller sent it too. Under the one-scope rule, "set this axis and keep
+  // the other" could only ever be a conflict — a caller moving a memory's
+  // scope shouldn't have to know (and explicitly clear) its previous one.
+  if (normalizedAccountId != null && normalizedContactId === undefined) nextContactId = null;
+  if (normalizedContactId != null && normalizedAccountId === undefined) nextAccountId = null;
+  assertSingleScope(nextAccountId, nextContactId);
+
   await db
     .update(schema.memories)
     .set({
       content: trimmed,
       updatedAt: new Date().toISOString(),
-      ...(accountId !== undefined ? { accountId } : {}),
+      accountId: nextAccountId,
+      contactId: nextContactId,
     })
     .where(eq(schema.memories.id, id));
   emitServerEvent("memories");

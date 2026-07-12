@@ -162,3 +162,57 @@ describe("loadEmailTools — providerWrites gating", () => {
     expect(names).toContain("gmail-save-attachment");
   });
 });
+
+describe("loadEmailTools — unsubscribe tool gating", () => {
+  it("registers an unsubscribe tool for a write-armed account whose app has a SyncProvider", async () => {
+    const acc = account("acc-gmail-unsub-armed", "gmail", "kadim@gmail.com");
+    listAccountsMock.mockResolvedValue([acc]);
+    writeAccessMock.mockResolvedValue([acc.id]);
+    toolsByAccountId.set(acc.id, [tool("gmail-find-email"), tool("gmail-send-email")]);
+
+    const { tools, close } = await loadEmailTools();
+    const names = tools.map((t) => t.name);
+    await close();
+
+    expect(names).toContain("gmail-unsubscribe");
+  });
+
+  it("withholds the unsubscribe tool for a read-only account (write access not armed)", async () => {
+    const acc = account("acc-gmail-unsub-readonly", "gmail", "kadim@gmail.com");
+    listAccountsMock.mockResolvedValue([acc]);
+    writeAccessMock.mockResolvedValue([]);
+    toolsByAccountId.set(acc.id, [tool("gmail-find-email"), tool("gmail-send-email")]);
+
+    const { tools, close } = await loadEmailTools();
+    const names = tools.map((t) => t.name);
+    await close();
+
+    expect(names).not.toContain("gmail-unsubscribe");
+  });
+
+  it("withholds the unsubscribe tool for every account when providerWrites is false, even if write-armed", async () => {
+    const acc = account("acc-gmail-unsub-pw", "gmail", "kadim@gmail.com");
+    listAccountsMock.mockResolvedValue([acc]);
+    writeAccessMock.mockResolvedValue([acc.id]);
+    toolsByAccountId.set(acc.id, [tool("gmail-find-email"), tool("gmail-send-email")]);
+
+    const { tools, close } = await loadEmailTools({ providerWrites: false });
+    const names = tools.map((t) => t.name);
+    await close();
+
+    expect(names).not.toContain("gmail-unsubscribe");
+  });
+
+  it("withholds the unsubscribe tool for a write-armed account whose app has no SyncProvider", async () => {
+    const acc = account("acc-slack-unsub", "slack", "workspace");
+    listAccountsMock.mockResolvedValue([acc]);
+    writeAccessMock.mockResolvedValue([acc.id]);
+    toolsByAccountId.set(acc.id, [tool("slack-send-message")]);
+
+    const { tools, close } = await loadEmailTools();
+    const names = tools.map((t) => t.name);
+    await close();
+
+    expect(names).not.toContain("slack-unsubscribe");
+  });
+});

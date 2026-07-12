@@ -6,10 +6,11 @@ import type {
   CreateDraftInput,
   CreateDraftResult,
   DraftProvider,
+  SendDraftResult,
   UpdateDraftPatch,
 } from "../providers.js";
 import { snippetFrom, stripHtml } from "../textUtils.js";
-import { OUTLOOK_WEB_ROOT } from "../webLinks.js";
+import { isConsumerOutlookAccount, outlookWebRoot, withOutlookLoginHint } from "../webLinks.js";
 import { addressListOf, GRAPH_API, type GraphRecipient, newestByReceivedDate } from "./message.js";
 
 /**
@@ -68,17 +69,32 @@ function toRecipientsPayload(addresses: string[]): { emailAddress: { address: st
   return addresses.map((address) => ({ emailAddress: { address } }));
 }
 
-/**
- * Graph is documented to return `webLink` on every message resource by
- * default, including the one echoed back from a create/update call — but if
- * a future API change ever omits it, land on the Drafts folder itself rather
- * than a broken deep link to the specific message.
- */
-function outlookFallbackUrl(): string {
-  return `${OUTLOOK_WEB_ROOT}drafts`;
+/** The account's Drafts folder; consumer Outlook web nests folders under a fixed primary-mailbox index. */
+function outlookDraftsFolderUrl(accountName: string): string {
+  const root = outlookWebRoot(accountName);
+  return isConsumerOutlookAccount(accountName) ? `${root}0/drafts` : `${root}drafts`;
 }
 
-function toEmailDraft(message: GraphMessage): EmailDraft {
+/**
+ * Graph is documented to return `webLink` on every message resource by
+ * default, including the one echoed back from a create/update call — but it
+ * is only usable for work/school accounts: it points at the organizational
+ * web host, whose sign-in rejects personal Microsoft accounts outright (and
+ * it's a known-broken link for outlook.com mailboxes regardless). Personal
+ * accounts land on their Drafts folder instead, as does any message missing
+ * webLink. Every variant carries the account's login_hint — webLink itself
+ * names no account, so without it the browser opens whichever Microsoft
+ * account the session defaults to.
+ */
+function outlookDraftUrl(account: ConnectedAccount, webLink: string | undefined): string {
+  const url =
+    webLink && !isConsumerOutlookAccount(account.name)
+      ? webLink
+      : outlookDraftsFolderUrl(account.name);
+  return withOutlookLoginHint(url, account.name);
+}
+
+function toEmailDraft(account: ConnectedAccount, message: GraphMessage): EmailDraft {
   const snippet = message.bodyPreview ? snippetFrom(message.bodyPreview) : "";
   return {
     id: message.id,
@@ -89,7 +105,7 @@ function toEmailDraft(message: GraphMessage): EmailDraft {
     subject: message.subject ?? "",
     to: addressListOf(message.toRecipients),
     date: message.lastModifiedDateTime ?? "",
-    webUrl: message.webLink ?? outlookFallbackUrl(),
+    webUrl: outlookDraftUrl(account, message.webLink),
     ...(snippet ? { snippet } : {}),
   };
 }
@@ -103,7 +119,7 @@ async function listOutlookDrafts(account: ConnectedAccount, limit = 15): Promise
     },
   })) as ListMessagesResponse;
 
-  return (res.value ?? []).map(toEmailDraft);
+  return (res.value ?? []).map((message) => toEmailDraft(account, message));
 }
 
 async function getOutlookDraftDetail(
@@ -249,7 +265,7 @@ async function createOutlookDraft(
     draftId: res.id,
     messageId: res.id,
     threadId: res.conversationId ?? "",
-    webUrl: res.webLink ?? outlookFallbackUrl(),
+    webUrl: outlookDraftUrl(account, res.webLink),
   };
 }
 
@@ -277,6 +293,21 @@ async function updateOutlookDraft(
   draftsMutated(account.id);
 }
 
+/**
+ * Dispatch an existing draft via Graph's message send. Graph answers an empty
+ * 202 with no message id — the sent copy gets a new id in Sent Items — so the
+ * result carries no sentMessageId and the learning loop matches this send
+ * from the mirror instead.
+ */
+async function sendOutlookDraft(
+  account: ConnectedAccount,
+  draftId: string,
+): Promise<SendDraftResult> {
+  await proxyRequest(account.id, "post", `${GRAPH_API}/messages/${draftId}/send`, { body: {} });
+  draftsMutated(account.id);
+  return {};
+}
+
 /** This module's DraftProvider — registered by ../registerProviders.ts. */
 export const outlookDraftProvider: DraftProvider = {
   listDrafts: listOutlookDrafts,
@@ -284,4 +315,5 @@ export const outlookDraftProvider: DraftProvider = {
   createDraft: createOutlookDraft,
   deleteDraft: deleteOutlookDraft,
   updateDraft: updateOutlookDraft,
+  sendDraft: sendOutlookDraft,
 };

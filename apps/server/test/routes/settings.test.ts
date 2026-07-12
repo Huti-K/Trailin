@@ -51,6 +51,68 @@ describe("PUT /api/settings/timezone — validation", () => {
   });
 });
 
+describe("GET/PUT /api/settings/sync-backfill-days", () => {
+  it("defaults to the env window", async () => {
+    const res = await app.inject({ method: "GET", url: "/api/settings/sync-backfill-days" });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ days: 30 });
+  });
+
+  it("persists a new window (Pipedream being unconfigured must not fail the backfill restart)", async () => {
+    const put = await app.inject({
+      method: "PUT",
+      url: "/api/settings/sync-backfill-days",
+      payload: { days: 90 },
+    });
+    expect(put.statusCode).toBe(200);
+    expect(put.json()).toEqual({ days: 90 });
+
+    const get = await app.inject({ method: "GET", url: "/api/settings/sync-backfill-days" });
+    expect(get.json()).toEqual({ days: 90 });
+  });
+
+  it("rejects a non-positive or fractional window with 400", async () => {
+    for (const days of [0, -5, 1.5]) {
+      const res = await app.inject({
+        method: "PUT",
+        url: "/api/settings/sync-backfill-days",
+        payload: { days },
+      });
+      expect(res.statusCode).toBe(400);
+    }
+  });
+});
+
+describe("GET/PUT /api/settings/contact-threads-limit", () => {
+  it("defaults to 15", async () => {
+    const res = await app.inject({ method: "GET", url: "/api/settings/contact-threads-limit" });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ limit: 15 });
+  });
+
+  it("persists a new limit", async () => {
+    const put = await app.inject({
+      method: "PUT",
+      url: "/api/settings/contact-threads-limit",
+      payload: { limit: 50 },
+    });
+    expect(put.statusCode).toBe(200);
+    expect(put.json()).toEqual({ limit: 50 });
+
+    const get = await app.inject({ method: "GET", url: "/api/settings/contact-threads-limit" });
+    expect(get.json()).toEqual({ limit: 50 });
+  });
+
+  it("rejects a non-positive limit with 400", async () => {
+    const res = await app.inject({
+      method: "PUT",
+      url: "/api/settings/contact-threads-limit",
+      payload: { limit: 0 },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+});
+
 describe("GET/PUT /api/settings/write-access", () => {
   it("defaults to no armed accounts", async () => {
     const res = await app.inject({ method: "GET", url: "/api/settings/write-access" });
