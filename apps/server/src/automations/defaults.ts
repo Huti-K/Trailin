@@ -26,9 +26,9 @@ const DEFAULT_AUTOMATIONS: DefaultAutomation[] = [
     schedule: "0 8 * * *",
     enabled: true,
     showInActivity: true,
-    instruction: `Across all connected email accounts, review the mail that needs me now — everything received since yesterday (roughly the last 24 hours), plus anything still unread from the past week — triage it, draft the replies that are warranted, and publish the result as a structured briefing.
+    instruction: `Across all connected email accounts, review the mail from the last 24 hours — triage it, draft the replies that are warranted, and publish the result as a structured briefing.
 
-REVIEW: Start from the local mail index: list_threads covers every account in one call, and each line already carries the thread's enriched gist, triage, urgency and deadline (pass refresh true so the very latest mail is included). Make three passes and merge them by threadId, so a thread that matches more than one pass becomes a single briefing item: (1) the default "recent" list with sinceDays 2, for today's and yesterday's mail; (2) filter "needs_attention" with sinceDays 7, so nothing the enrichment flagged this week for a reply, an action or as urgent slips through; (3) filter "unread" with sinceDays 7, to surface messages from earlier in the week that I still haven't opened. Always pass sinceDays on these calls and never reach back more than 7 days: the digest is today and yesterday plus this week's flagged or still-unopened mail and nothing older, so a message from last month never resurfaces. Without a sinceDays, "recent" returns the newest threads regardless of age, so a quiet inbox drags in months-old mail — that is exactly what the bounds above prevent. Read in full (read_thread) only the threads that will become briefing items or drafts — the printed gists are enough to dismiss the rest — and when many threads need a full read, fan the read-and-summarize work out with the delegate tool rather than working through them serially. read_thread quotes saved context about each participant; use it, and lookup_contact when you need more background on a sender, to judge how much a thread really matters. Also call list_waiting_threads, so a thread that has been sitting unanswered for days can be raised alongside today's mail.
+REVIEW: Start from the local mail index: list_threads covers every account in one call, and each line already carries the thread's enriched gist, triage, urgency and deadline (pass refresh true so the very latest mail is included). List the recent threads with sinceDays 1 (the default "recent" filter), so the digest covers only the last 24 hours. Always pass sinceDays 1 and never omit it — without a sinceDays, "recent" returns the newest threads regardless of age, so a quiet inbox drags in months-old mail; the bound keeps the digest to the past day and nothing older. Read in full (read_thread) only the threads that will become briefing items or drafts — the printed gists are enough to dismiss the rest — and when many threads need a full read, fan the read-and-summarize work out with the delegate tool rather than working through them serially. read_thread quotes saved context about each participant; use it, and lookup_contact when you need more background on a sender, to judge how much a thread really matters. Also call list_waiting_threads, so a thread that has been sitting unanswered for days can be raised alongside today's mail.
 
 TRIAGE: Put every noteworthy message in exactly one tier. "urgent" when it is time-sensitive, a deadline could pass, or somebody is blocked on me. "reply" when a real person is waiting on my answer but nothing is on fire. "action" when it needs a decision or a task from me and nobody is waiting. "fyi" when it is worth knowing and needs nothing. The triage printed on a list_threads line is a hint, not the verdict — override it when the full thread reads differently. Newsletters, promotions, receipts, shipping updates and automated notifications are not tier items: group them into rollups by kind ("Newsletters", "Receipts", "Promotions", "Notifications"). A rollup is not a summary line — it carries its messages: list every message in the group as a rollup item, each with its real threadId and account and a one-line gist drawn from the list_threads line, exactly like a tier item (sender, subject, gist), so the card renders each as its own row I can open or draft from. Do not full-read these to build them — the enriched list_threads line is enough.
 
@@ -82,6 +82,9 @@ const SUPERSEDED_INSTRUCTION_HASHES: Record<string, readonly string[]> = {
   //   was unbounded ("whatever its age"), so list_threads (recent = 1=1, no
   //   age floor) dragged in months-old mail; now pass 1 is sinceDays 2 and
   //   pass 2 sinceDays 7, capping the whole digest at a week.
+  // v13 — dropped the week-long reach entirely (the needs_attention and unread
+  //   passes) in favour of a single "recent" pass with sinceDays 1, so the
+  //   digest is strictly the last 24 hours.
   "Morning briefing": [
     "0998189fc3533bde38d61e1d508ec6e77378a3d73209cc8e5dbeb6f2d6511034",
     "eb629153709687168e1bd914a1bcf2f8ff2aedcbcc20003b232225b7c95eb59f",
@@ -95,6 +98,7 @@ const SUPERSEDED_INSTRUCTION_HASHES: Record<string, readonly string[]> = {
     "970259db349d8b1a3381a12b55d5bd3f89816ffab7ed1fd454e114b33a3fe1f3",
     "9e4c71afed90559d4656e7fd5eb066290ced32eeb8172a3cd17d5d3aa8db0feb",
     "592cd77cd0c5c40c6a30caa663c8a910c59217c40cd5abe19a91faf442eadbc8",
+    "e2a47a74653ca955ea376ba5da9731c8ae21a8e22c8602be73930facf33d7fc3",
   ],
 };
 

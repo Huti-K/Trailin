@@ -188,7 +188,9 @@
           "draftsReady_other": "{{count}} Entwürfe bereit",
           "scanned_one": "{{count}} geprüft",
           "scanned_other": "{{count}} geprüft"
-        }
+        },
+        "rolledUp_one": "Zusammengefasst · {{count}} Nachricht",
+        "rolledUp_other": "Zusammengefasst · {{count}} Nachrichten"
       }
     },
     "showcase": {

@@ -188,7 +188,9 @@
           "draftsReady_other": "{{count}} drafts ready",
           "scanned_one": "{{count}} reviewed",
           "scanned_other": "{{count}} reviewed"
-        }
+        },
+        "rolledUp_one": "Rolled up · {{count}} message",
+        "rolledUp_other": "Rolled up · {{count}} messages"
       }
     },
     "showcase": {

@@ -3,6 +3,7 @@ import type {
   AgentCard,
   BriefingItem,
   BriefingPriority,
+  BriefingRollup,
   CardAccount,
 } from "@trailin/shared";
 import { BRIEFING_PRIORITIES } from "@trailin/shared";
@@ -147,33 +148,14 @@ export function BriefingCard({
         })
       )}
 
-      {/* Rolled-up low-value mail: one headed group per kind (Newsletters,
-          Receipts…). Deliberately quieter than the tiers — each message is a
-          compact one-line RollupRow, not a full BriefingRow, so the noise never
-          competes with the mail that needs the user. Its one action is opening
-          the message in webmail. */}
-      {rollups?.map((rollup) => (
-        <div key={rollup.label} className="flex flex-col gap-1">
-          <div className="flex items-center gap-1.5 px-0.5">
-            <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              {rollup.label}
-            </h4>
-            <span className="font-mono text-2xs tabular-nums text-muted-foreground/70">
-              {rollup.items.length}
-            </span>
-          </div>
-          <div className="flex flex-col">
-            {rollup.items.map((item, index) => (
-              <RollupRow
-                key={`${item.threadId}-${item.messageId ?? index}`}
-                item={item}
-                accounts={accounts}
-                colors={colors}
-              />
-            ))}
-          </div>
-        </div>
-      ))}
+      {/* Rolled-up low-value mail: the whole region folds under one toggle, and
+          each kind (Newsletters, Receipts…) folds on its own within it.
+          Deliberately quieter than the tiers — each message is a compact
+          one-line RollupRow, not a full BriefingRow, so the noise never competes
+          with the mail that needs the user. */}
+      {rollups && rollups.length > 0 && (
+        <RollupsSection rollups={rollups} accounts={accounts} colors={colors} />
+      )}
     </div>
   );
 
@@ -337,10 +319,90 @@ function BriefingRow({
 }
 
 /**
+ * The whole rolled-up region under one master toggle, on top of each kind
+ * group's own toggle — so all the low-value mail folds away in one click, or
+ * kind by kind. Open by default: the noise stays visible but is never in the
+ * way.
+ */
+function RollupsSection({
+  rollups,
+  accounts,
+  colors,
+}: {
+  rollups: BriefingRollup[];
+  accounts?: CardAccount[];
+  colors?: AccountColor[];
+}) {
+  const { t } = useTranslation();
+  const [open, setOpen] = React.useState(true);
+  const total = rollups.reduce((n, r) => n + r.items.length, 0);
+
+  return (
+    <div className="flex flex-col gap-2">
+      <DisclosureToggle open={open} onToggle={() => setOpen((v) => !v)} className="px-0.5 py-0.5">
+        {t("chat.cards.briefing.rolledUp", { count: total })}
+      </DisclosureToggle>
+      {open && (
+        <div className="flex flex-col gap-2 pl-2">
+          {rollups.map((rollup) => (
+            <RollupGroup key={rollup.label} rollup={rollup} accounts={accounts} colors={colors} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * A collapsible group of rolled-up low-value mail of one kind (Newsletters,
+ * Receipts…). The heading is a disclosure toggle — open by default, so the mail
+ * stays visible, but foldable away when the noise isn't wanted. Mirrors the FYI
+ * tier's toggle rather than the plain tier headings.
+ */
+function RollupGroup({
+  rollup,
+  accounts,
+  colors,
+}: {
+  rollup: BriefingRollup;
+  accounts?: CardAccount[];
+  colors?: AccountColor[];
+}) {
+  const [open, setOpen] = React.useState(true);
+
+  return (
+    <div className="flex flex-col gap-1">
+      <DisclosureToggle
+        open={open}
+        onToggle={() => setOpen((v) => !v)}
+        className="px-0.5 py-0.5 font-semibold uppercase tracking-wide"
+      >
+        {rollup.label}
+        <span className="font-mono text-2xs tabular-nums text-muted-foreground/70">
+          {rollup.items.length}
+        </span>
+      </DisclosureToggle>
+      {open && (
+        <div className="flex flex-col">
+          {rollup.items.map((item, index) => (
+            <RollupRow
+              key={`${item.threadId}-${item.messageId ?? index}`}
+              item={item}
+              accounts={accounts}
+              colors={colors}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
  * One rolled-up low-value message — a compact, quiet counterpart to
  * BriefingRow: smaller type, tighter rows, no priority tint, deadline/draft
- * badges or draft/ask actions. Its single action is the always-visible
- * open-in-webmail button, so the noise stays scannable and one click away from
+ * badges or draft/ask actions. Its single action is an open-in-webmail button
+ * that surfaces on hover, so the noise stays scannable and one click away from
  * the real thing without ever competing with a tier item.
  */
 function RollupRow({
@@ -372,7 +434,7 @@ function RollupRow({
         <Button
           variant="ghost"
           size="icon-xs"
-          className="h-5 w-5 shrink-0 text-muted-foreground"
+          className="h-5 w-5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
           onClick={() => item.webUrl && openExternal(item.webUrl)}
           title={t("chat.cards.draft.open")}
           aria-label={t("chat.cards.draft.open")}
