@@ -19,7 +19,7 @@ const defaultLog = moduleLogger("compaction");
  * Three seams share the same core (compactedMessages), all wired by the
  * session owner: runPrompt's injected `compact` option trims the transcript
  * before every agent.prompt(...) and force-compacts once when the provider
- * reports a context overflow the estimate missed, and emailAgent's
+ * reports a context overflow the estimate missed, and assembly.ts's
  * between-turns hook trims mid-run when a tool-heavy run outgrows the window
  * between LLM calls.
  */

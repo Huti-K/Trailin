@@ -73,7 +73,7 @@ const linkedChangeListeners = new Set<LinkedChangeListener>();
 /**
  * Runs whenever `linked` flips (pairing completed, account unlinked) — the
  * moments the agent's tool surface changes. A callback registry rather than
- * an emailAgent import, so this module stays importable from the agent side
+ * a session-cache import, so this module stays importable from the agent side
  * without a cycle.
  */
 export function onWhatsAppLinkedChange(listener: LinkedChangeListener): void {

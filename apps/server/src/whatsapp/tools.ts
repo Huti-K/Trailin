@@ -209,7 +209,7 @@ const READ_TOOLS: AgentTool[] = [listChatsTool, readMessagesTool, searchContacts
 
 /**
  * The session's WhatsApp tools. `allowSend` comes from the capability
- * profile (emailAgent.sessionCapabilities): the Settings grant on interactive
+ * profile (agent/capabilities.ts): the Settings grant on interactive
  * sessions, never unattended runs.
  */
 export function buildWhatsAppTools(options: { allowSend: boolean }): AgentTool[] {

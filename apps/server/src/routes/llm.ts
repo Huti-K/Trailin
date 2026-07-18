@@ -1,6 +1,6 @@
 import type { FastifyPluginAsyncTypebox } from "@fastify/type-provider-typebox";
 import { Type } from "@sinclair/typebox";
-import { resetSessions } from "../agent/emailAgent.js";
+import { resetSessions } from "../agent/sessionCache.js";
 import { badRequest, conflict } from "../errors.js";
 import {
   cancelLogin,

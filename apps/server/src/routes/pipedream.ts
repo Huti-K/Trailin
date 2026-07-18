@@ -1,7 +1,7 @@
 import type { FastifyPluginAsyncTypebox } from "@fastify/type-provider-typebox";
 import { Type } from "@sinclair/typebox";
 import { type ConnectedAccount, EMAIL_APPS } from "@trailin/shared";
-import { resetSessions } from "../agent/emailAgent.js";
+import { resetSessions } from "../agent/sessionCache.js";
 import { startVoiceLearnOnConnect } from "../agent/voiceLearn.js";
 import { deleteVoiceLearnRun } from "../db/voiceRuns.js";
 import { invalidateDraftsCache } from "../email/draftsCache.js";

@@ -6,7 +6,7 @@ import { runPrompt } from "./run.js";
 /**
  * Routes an Agent's model calls through the registry so stored credentials
  * apply (subscription OAuth with auto-refresh, saved API keys, then env
- * vars). Shared by runOneShot below and emailAgent.ts's persistent session,
+ * vars). Shared by runOneShot below and assembly.ts's buildAgent,
  * which builds its Agent directly rather than through runOneShot.
  */
 export const streamViaModelRegistry: StreamFn = (model, context, options) =>

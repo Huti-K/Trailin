@@ -1,7 +1,7 @@
 import type { FastifyPluginAsyncTypebox } from "@fastify/type-provider-typebox";
 import { Type } from "@sinclair/typebox";
 import { isLanguage, SUPPORTED_LANGUAGES } from "@trailin/shared";
-import { resetSessions } from "../agent/emailAgent.js";
+import { resetSessions } from "../agent/sessionCache.js";
 import { rescheduleAll } from "../automations/scheduler.js";
 import { rescheduleNightlySuggest } from "../automations/suggestService.js";
 import {

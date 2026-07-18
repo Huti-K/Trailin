@@ -6,12 +6,6 @@ import { db, schema, sqlite } from "../db/index.js";
 import { emitServerEvent } from "../events.js";
 import { moduleLogger } from "../logger.js";
 import { errorMessage } from "../utils/util.js";
-import {
-  type AgentSession,
-  buildTurnTimeNote,
-  createEphemeralSession,
-  getOrCreateSession,
-} from "./emailAgent.js";
 import { decoratePrompt, serializeRefs } from "./emailRefs.js";
 import {
   applyConversationFocus,
@@ -19,7 +13,9 @@ import {
   focusFromCard,
   focusFromRefs,
 } from "./focus.js";
+import { buildTurnTimeNote } from "./prompt.js";
 import type { RunHandlers, TurnLogger } from "./run.js";
+import { type AgentSession, createEphemeralSession, getOrCreateSession } from "./sessionCache.js";
 
 /**
  * Writes turns: one user message and the assistant reply that ends it, with
@@ -105,7 +101,7 @@ export class TurnInFlightError extends Error {
 
 /**
  * Resolves the Agent session a turn runs against. Exists as an injectable
- * seam — defaulting to the real emailAgent.ts functions below — because the
+ * seam — defaulting to the real sessionCache.ts functions below — because the
  * real sessions build an Agent against the modelRegistry singleton (live
  * model config, live credentials) and cannot run in tests; tests substitute
  * a scripted fake Agent through _setSessionsForTest instead.
@@ -125,7 +121,7 @@ const realSessions: TurnSessions = {
 let sessions: TurnSessions = realSessions;
 
 /**
- * Test-only seam: pass null to restore the real emailAgent-backed sessions.
+ * Test-only seam: pass null to restore the real sessionCache-backed sessions.
  * @internal
  */
 export function _setSessionsForTest(override: TurnSessions | null): void {
@@ -196,8 +192,7 @@ export function beginTurn(conversationId: string): Turn {
       try {
         // Ensured first and unconditionally: even a turn that never starts
         // (the session below fails to build) must leave the conversation
-        // visible for the user to retry, the same guarantee routes/chat.ts
-        // gave by inserting the row before ever calling into a turn.
+        // visible for the user to retry.
         await ensureConversation(conversationId, opts.conversation);
         session =
           opts.session === "pooled"
@@ -255,7 +250,7 @@ export function beginTurn(conversationId: string): Turn {
         const focusNote = await conversationFocusNote(conversationId).catch(() => "");
         // The clock rides the turn prompt, not the system prompt, so the model
         // knows "now" without invalidating the cached system-prompt prefix
-        // (see buildSystemPrompt's cache invariant in emailAgent.ts).
+        // (see buildSystemPrompt's cache invariant in agent/prompt.ts).
         const timeNote = await buildTurnTimeNote().catch(() => "");
 
         // Collects this turn's cards for the outcome row below (and links
@@ -287,7 +282,7 @@ export function beginTurn(conversationId: string): Turn {
         let text: string;
         try {
           // session.runTurn (not the bare runPrompt) so the session's own
-          // inFlight bookkeeping covers this call too — emailAgent.ts's idle
+          // inFlight bookkeeping covers this call too — sessionCache.ts's idle
           // sweep refuses to close a session's toolset out from under a turn
           // still running against it, but only for turns that went through
           // runTurn. The prompt is decorated with any attached-email notes
@@ -328,7 +323,7 @@ export function beginTurn(conversationId: string): Turn {
       } finally {
         // An ephemeral session belongs to nobody but this run — this run
         // created it, so this run closes it. A pooled session stays open for
-        // the conversation's next turn (see emailAgent.ts's LRU/idle sweep).
+        // the conversation's next turn (see sessionCache.ts's LRU/idle sweep).
         if (opts.session === "ephemeral") {
           await session.toolset.close().catch((error: unknown) => {
             opts.log.warn({ err: error }, "closing the run's MCP sessions failed");
