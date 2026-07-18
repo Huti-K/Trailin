@@ -4,7 +4,7 @@ import { type EnsureConversationInput, ensureConversation } from "../db/conversa
 import { linkDraftConversation } from "../db/draftStore.js";
 import { db, schema, sqlite } from "../db/index.js";
 import { emitServerEvent } from "../events.js";
-import { moduleLogger } from "../logger.js";
+import { moduleLogger, type TurnLogger } from "../logger.js";
 import { errorMessage } from "../utils/util.js";
 import { decoratePrompt, serializeRefs } from "./emailRefs.js";
 import {
@@ -14,7 +14,7 @@ import {
   focusFromRefs,
 } from "./focus.js";
 import { buildTurnTimeNote } from "./prompt.js";
-import type { RunHandlers, TurnLogger } from "./run.js";
+import type { RunHandlers } from "./run.js";
 import { type AgentSession, createEphemeralSession, getOrCreateSession } from "./sessionCache.js";
 
 /**

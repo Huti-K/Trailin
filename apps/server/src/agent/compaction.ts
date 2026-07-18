@@ -5,10 +5,9 @@ import {
   serializeConversation,
 } from "@earendil-works/pi-agent-core";
 import type { Message } from "@earendil-works/pi-ai";
-import { moduleLogger } from "../logger.js";
+import { moduleLogger, type TurnLogger } from "../logger.js";
 import { prompts } from "../prompts.js";
 import { runOneShot } from "./oneShot.js";
-import type { TurnLogger } from "./run.js";
 
 const defaultLog = moduleLogger("compaction");
 

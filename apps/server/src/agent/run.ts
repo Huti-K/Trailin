@@ -1,18 +1,8 @@
 import type { Agent } from "@earendil-works/pi-agent-core";
 import { type AssistantMessage, isRetryableAssistantError } from "@earendil-works/pi-ai";
 import type { AgentCard } from "@trailin/shared";
-import { moduleLogger } from "../logger.js";
+import { moduleLogger, type TurnLogger } from "../logger.js";
 import { parseAgentCard } from "./cards.js";
-
-/**
- * The slice of pino's Logger a turn needs. Spelling out the narrow shape lets
- * a route hand over `req.log.child(...)` — which Fastify types as
- * FastifyBaseLogger, not pino.Logger — without a cast.
- */
-export interface TurnLogger {
-  info(fields: Record<string, unknown>, message: string): void;
-  warn(fields: Record<string, unknown>, message: string): void;
-}
 
 export interface RunHandlers {
   onTextDelta?: (delta: string) => void;

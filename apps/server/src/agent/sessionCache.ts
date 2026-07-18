@@ -1,12 +1,12 @@
 import type { Agent } from "@earendil-works/pi-agent-core";
-import { moduleLogger } from "../logger.js";
+import { moduleLogger, type TurnLogger } from "../logger.js";
 import { buildAgent } from "./assembly.js";
 import { sessionCapabilities } from "./capabilities.js";
 import { maybeCompact } from "./compaction.js";
 import { type EmailToolset, loadEmailTools } from "./emailToolset.js";
 import { loadHistory } from "./history.js";
 import { buildSystemPrompt } from "./prompt.js";
-import { type RunHandlers, runPrompt, type TurnLogger } from "./run.js";
+import { type RunHandlers, runPrompt } from "./run.js";
 
 /**
  * The agent sessions themselves: one pooled pi Agent per conversation (idle

@@ -1,11 +1,12 @@
 import { resetSessions } from "./agent/sessionCache.js";
-import { recoverInterruptedTurns } from "./agent/turnRecorder.js";
+import { beginTurn, recoverInterruptedTurns, serializeTurnCards } from "./agent/turnRecorder.js";
 import { reconcileVoiceLearns } from "./agent/voiceLearn.js";
 import { buildApp } from "./app.js";
 import { seedDefaultAutomations } from "./automations/defaults.js";
 import { startMailProbe, stopMailProbe } from "./automations/mailProbe.js";
 import { startScheduler, stopScheduler } from "./automations/scheduler.js";
 import { startNightlySuggest, stopNightlySuggest } from "./automations/suggestService.js";
+import { registerTurnRunner } from "./automations/turnRunner.js";
 import { startLearning, stopLearning } from "./email/learn/service.js";
 import { env } from "./env.js";
 import { getLibraryDir, startLibrary, stopLibrary } from "./library/ingest.js";
@@ -16,6 +17,21 @@ import { onWhatsAppLinkedChange, startWhatsApp, stopWhatsApp } from "./whatsapp/
 
 async function main(): Promise<void> {
   const app = await buildApp();
+
+  // The agent-backed turn runner automations drive their runs through
+  // (automations/turnRunner.ts) — registered before the scheduler starts so
+  // even a run fired during boot finds it.
+  registerTurnRunner(async ({ runId, prompt, title, signal, log }) => {
+    const turn = beginTurn(runId);
+    const { text, cards } = await turn.run({
+      prompt,
+      session: "ephemeral",
+      conversation: { type: "automation", title },
+      signal,
+      log,
+    });
+    return { text, cardsJson: serializeTurnCards(cards) };
+  });
 
   // Populate the built-in automations on a fresh install, then schedule
   // everything (defaults included) for this boot.

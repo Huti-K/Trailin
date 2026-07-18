@@ -3,6 +3,17 @@ import { type Logger, pino, type TransportMultiOptions, type TransportSingleOpti
 import { env } from "./env.js";
 
 /**
+ * The slice of pino's Logger the turn machinery passes around. Spelling out
+ * the narrow shape lets a route hand over `req.log.child(...)` — which
+ * Fastify types as FastifyBaseLogger, not pino.Logger — without a cast, and
+ * lets automations/ depend on the shape without importing the agent.
+ */
+export interface TurnLogger {
+  info(fields: Record<string, unknown>, message: string): void;
+  warn(fields: Record<string, unknown>, message: string): void;
+}
+
+/**
  * Key names whose values must never reach a log line: the Pipedream OAuth
  * client secret, its access token, saved LLM API keys, and the Authorization
  * headers built from them.
@@ -65,10 +76,10 @@ function prettyTransport(): { target: string; options: Record<string, unknown> }
 }
 
 /**
- * Where logs go. With no LOG_FILE this is unchanged: pino-pretty in a dev TTY,
- * or `undefined` (pino's fast direct-to-stdout JSON) otherwise. When LOG_FILE
- * is set, tee the same stream to a rotating file (pino-roll: daily or at 10MB,
- * 14 files kept) so an unattended run's output survives the terminal closing.
+ * Where logs go. With no LOG_FILE: pino-pretty in a dev TTY, or `undefined`
+ * (pino's fast direct-to-stdout JSON) otherwise. When LOG_FILE is set, tee the
+ * same stream to a rotating file (pino-roll: daily or at 10MB, 14 files kept)
+ * so an unattended run's output survives the terminal closing.
  */
 function buildTransport(): TransportSingleOptions | TransportMultiOptions | undefined {
   const pretty = prettyTransport();

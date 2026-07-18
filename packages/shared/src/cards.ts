@@ -1,12 +1,31 @@
-import type { EmailRef } from "./index.js";
-
 /**
  * The chat-card render contract: the `AgentCard` discriminated union the chat
  * renders instead of prose, plus the payload shapes its arms carry. A tool
  * returns one on its result's `details` slot; the server streams it as a
- * `card` event and the web app renders it. Re-exported from index.js, so every
- * consumer still imports these from "@trailin/shared".
+ * `card` event and the web app renders it. Re-exported from index.js, so
+ * consumers import these from "@trailin/shared".
  */
+
+/**
+ * One specific email pinned to a chat message — the composer's @-mention, a
+ * card's "add to chat" action, or a choices-card pick. threadId/accountId are
+ * the authoritative handles (provider-native thread id + connected-account
+ * id); the display fields ride along so chips and prompt notes render without
+ * re-querying the mirror.
+ */
+export interface EmailRef {
+  /** Provider-native thread id — what read_thread and create-draft understand. */
+  threadId: string;
+  accountId: string;
+  /** Display name of the account, usually its address. */
+  accountName?: string;
+  /** Provider-native message id, when the mention targets one message rather than the whole thread. */
+  messageId?: string;
+  subject?: string;
+  /** "Name <address>" or a bare address. */
+  from?: string;
+  date?: string;
+}
 
 /** The account a card's data came from. The client resolves its AccountColor. */
 export interface CardAccount {

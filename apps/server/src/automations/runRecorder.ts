@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { beginTurn, serializeTurnCards } from "../agent/turnRecorder.js";
 import { db, schema } from "../db/index.js";
 import { env } from "../env.js";
 import { emitRunNotification, emitServerEvent } from "../events.js";
 import { moduleLogger } from "../logger.js";
 import { errorMessage } from "../utils/util.js";
+import { getTurnRunner } from "./turnRunner.js";
 
 const log = moduleLogger("runRecorder");
 
@@ -42,8 +42,8 @@ export interface AutomationRunResult {
 
 /**
  * Run one automation now: inserts the automation_runs row, mirrors the run
- * into its own Conversation (id = the run id, via agent/turnRecorder.ts and
- * db/conversationStore.ts), and writes the terminal status — success, error,
+ * into its own Conversation (id = the run id, via the registered turn runner
+ * and db/conversationStore.ts), and writes the terminal status — success, error,
  * or a timeout — back onto the run row. The structural twin of
  * turnRecorder.ts's beginTurn for Runs instead of Turns: this is the only
  * place an automation_runs row is written, and automations/scheduler.ts is
@@ -104,15 +104,15 @@ export async function executeAutomationRun(
 
     // The run id is the conversation id, so drafts created by this run link
     // back to the run's transcript and its cards render when it's reopened.
-    // turnRecorder ensures the parent Conversation row and writes the turn's
+    // The turn runner (agent/turnRecorder.ts behind turnRunner.ts's registry)
+    // ensures the parent Conversation row and writes the turn's
     // user/assistant rows itself — including its own transcript-capping row
     // on failure or cancellation — so this run row only tracks the run's own
     // status, timing and, on success, its result.
-    const turn = beginTurn(runId);
-    const { text, cards } = await turn.run({
+    const { text, cardsJson } = await getTurnRunner()({
+      runId,
       prompt: instructionMessage,
-      session: "ephemeral",
-      conversation: { type: "automation", title: `Run: ${automation.name}` },
+      title: `Run: ${automation.name}`,
       signal,
       log: runLog,
     });
@@ -122,7 +122,7 @@ export async function executeAutomationRun(
       .set({
         status: "success",
         result: text,
-        cards: serializeTurnCards(cards),
+        cards: cardsJson,
         finishedAt: new Date().toISOString(),
       })
       .where(eq(schema.automationRuns.id, runId));

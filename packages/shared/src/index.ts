@@ -1,4 +1,4 @@
-import type { AgentCard } from "./cards.js";
+import type { AgentCard, EmailRef } from "./cards.js";
 
 export * from "./cards.js";
 export * from "./onoffice.js";
@@ -230,27 +230,6 @@ export interface ChatMessage {
   refs?: EmailRef[];
   /** Turn-level failure shown inline when a response could not complete. */
   error?: string;
-}
-
-/**
- * One specific email pinned to a chat message — the composer's @-mention, a
- * card's "add to chat" action, or a choices-card pick. threadId/accountId are
- * the authoritative handles (provider-native thread id + connected-account
- * id); the display fields ride along so chips and prompt notes render without
- * re-querying the mirror.
- */
-export interface EmailRef {
-  /** Provider-native thread id — what read_thread and create-draft understand. */
-  threadId: string;
-  accountId: string;
-  /** Display name of the account, usually its address. */
-  accountName?: string;
-  /** Provider-native message id, when the mention targets one message rather than the whole thread. */
-  messageId?: string;
-  subject?: string;
-  /** "Name <address>" or a bare address. */
-  from?: string;
-  date?: string;
 }
 
 /** One persisted card of an assistant turn, keyed by the tool call that produced it. */
@@ -607,7 +586,6 @@ export function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-/** Topics broadcast over GET /api/events when server-side data changes. */
 /** Provider handles of a just-created draft (POST /api/drafts/:accountId). */
 export interface CreatedDraft {
   draftId: string;
@@ -617,6 +595,7 @@ export interface CreatedDraft {
   webUrl: string;
 }
 
+/** Topics broadcast over GET /api/events when server-side data changes. */
 export type ServerEventTopic =
   | "runs" // automation run started/finished (activity feed, run history)
   | "drafts" // a Gmail draft was created or deleted
