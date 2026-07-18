@@ -6,14 +6,9 @@ import { db, schema, sqlite } from "../db/index.js";
 import { emitServerEvent } from "../events.js";
 import { moduleLogger, type TurnLogger } from "../logger.js";
 import { errorMessage } from "../utils/util.js";
-import { decoratePrompt, serializeRefs } from "./emailRefs.js";
-import {
-  applyConversationFocus,
-  conversationFocusNote,
-  focusFromCard,
-  focusFromRefs,
-} from "./focus.js";
-import { buildTurnTimeNote } from "./prompt.js";
+import { serializeRefs } from "./emailRefs.js";
+import { applyConversationFocus, focusFromCard, focusFromRefs } from "./focus.js";
+import { buildTurnPrompt } from "./prompt.js";
 import type { RunHandlers } from "./run.js";
 import { type AgentSession, createEphemeralSession, getOrCreateSession } from "./sessionCache.js";
 
@@ -238,20 +233,16 @@ export function beginTurn(conversationId: string): Turn {
           });
         }
 
-        // Focus follows an @-mention (last one wins), and the standing focus
-        // is read back AFTER that write so this turn's note reflects it. The
-        // note is what makes focus the agent's tool-call default.
+        // Focus follows an @-mention (last one wins); buildTurnPrompt below
+        // reads the standing focus back AFTER this write, so the turn's focus
+        // note reflects it. The note is what makes focus the agent's
+        // tool-call default.
         const refFocus = focusFromRefs(opts.refs);
         if (refFocus) {
           await applyConversationFocus(conversationId, refFocus).catch((err: unknown) => {
             opts.log.warn({ err }, "applying the @-mention's conversation focus failed");
           });
         }
-        const focusNote = await conversationFocusNote(conversationId).catch(() => "");
-        // The clock rides the turn prompt, not the system prompt, so the model
-        // knows "now" without invalidating the cached system-prompt prefix
-        // (see buildSystemPrompt's cache invariant in agent/prompt.ts).
-        const timeNote = await buildTurnTimeNote().catch(() => "");
 
         // Collects this turn's cards for the outcome row below (and links
         // any created draft back to this conversation — collectTurnCards'
@@ -285,10 +276,11 @@ export function beginTurn(conversationId: string): Turn {
           // inFlight bookkeeping covers this call too — sessionCache.ts's idle
           // sweep refuses to close a session's toolset out from under a turn
           // still running against it, but only for turns that went through
-          // runTurn. The prompt is decorated with any attached-email notes
-          // right before it reaches the model.
+          // runTurn. buildTurnPrompt decorates the raw prompt with its
+          // attached-email notes and the volatile per-turn notes right before
+          // it reaches the model.
           text = await session.runTurn(
-            decoratePrompt(opts.prompt, opts.refs) + timeNote + focusNote,
+            await buildTurnPrompt(opts.prompt, opts.refs, conversationId),
             handlers,
             opts.signal,
             opts.log,

@@ -1,17 +1,20 @@
-import { LANGUAGE_ENGLISH_NAMES, type Language } from "@trailin/shared";
+import { type EmailRef, LANGUAGE_ENGLISH_NAMES, type Language } from "@trailin/shared";
 import { getAccountPermissions, getLanguageSetting, getTimezoneSetting } from "../db/settings.js";
 import { prompts } from "../prompts.js";
 import { buildAccountsContext } from "./accounts.js";
 import { type SessionCapabilities, sessionCapabilities } from "./capabilities.js";
+import { decoratePrompt } from "./emailRefs.js";
 import { buildFileAccessContext } from "./fileTools.js";
+import { conversationFocusNote } from "./focus.js";
 import { buildKnowledgeContext } from "./knowledgeTools.js";
 import { buildSkillsContext } from "./skillTools.js";
 
 /**
- * What the model reads: the session system prompt and the per-turn notes.
+ * What the model reads: the session system prompt and the per-turn prompt.
  * The split is deliberate — the system prompt must stay byte-stable across
  * turns for provider prompt caching (see buildSystemPrompt), so anything
- * volatile (the clock) rides the turn prompt instead.
+ * volatile (the clock, the conversation's standing focus) rides the turn
+ * prompt instead (buildTurnPrompt).
  */
 
 /** Intl locale used for the system prompt's date/time, keyed by the app's language setting. */
@@ -179,11 +182,11 @@ export async function buildSystemPrompt(caps?: SessionCapabilities): Promise<str
 
 /**
  * Bracketed note carrying the current date/time, appended to each turn's
- * prompt (see turnRecorder.ts) rather than written into the system prompt.
+ * prompt (buildTurnPrompt below) rather than written into the system prompt.
  * Keeping the clock out of the system prompt is what keeps that prompt
  * byte-stable across turns — see buildSystemPrompt's cache invariant.
  */
-export async function buildTurnTimeNote(): Promise<string> {
+async function buildTurnTimeNote(): Promise<string> {
   const language = (await getLanguageSetting()) ?? "de";
   const timezone = (await getTimezoneSetting()) ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
   return (
@@ -191,4 +194,22 @@ export async function buildTurnTimeNote(): Promise<string> {
     `(${timezone}). The user lives in this timezone — present times in it and interpret relative ` +
     `dates ("today", "next Monday") against it.]`
   );
+}
+
+/**
+ * The full prompt one turn actually runs: the user's raw text decorated with
+ * its attached-email notes (emailRefs.ts), then the volatile per-turn notes —
+ * the clock and the conversation's standing focus. Called AFTER the turn's
+ * focus writes have landed (turnRecorder.ts), so the focus note reflects this
+ * turn's own @-mention. Each note fails soft to "" — a broken clock or focus
+ * read must never sink the turn itself.
+ */
+export async function buildTurnPrompt(
+  prompt: string,
+  refs: EmailRef[] | undefined,
+  conversationId: string,
+): Promise<string> {
+  const timeNote = await buildTurnTimeNote().catch(() => "");
+  const focusNote = await conversationFocusNote(conversationId).catch(() => "");
+  return decoratePrompt(prompt, refs) + timeNote + focusNote;
 }
