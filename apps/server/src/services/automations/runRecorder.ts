@@ -29,9 +29,20 @@ export interface AutomationRunResult {
   schedule?: string;
 }
 
+/**
+ * Why a run started, beyond its schedule. Rendered into the run's opening
+ * message, so the agent knows what the run concerns — the firing mechanisms
+ * themselves (todo completion, mail probe, catch-up) carry no other context
+ * into the session.
+ */
+export type RunTrigger =
+  | { kind: "todo"; todoId: string; title: string }
+  | { kind: "mail"; accountNames: string[] }
+  | { kind: "catchUp"; dueAt: string };
+
 export async function executeAutomationRun(
   automationId: string,
-  opts: { manual?: boolean; timeoutMs?: number; catchUpDueAt?: string } = {},
+  opts: { manual?: boolean; timeoutMs?: number; trigger?: RunTrigger } = {},
 ): Promise<AutomationRunResult> {
   const [automation] = await db
     .select()
@@ -92,9 +103,18 @@ export async function executeAutomationRun(
         ? `The previous successful run finished at ${lastSuccess.finishedAt}.`
         : "This automation has no previous successful run.",
     ];
-    if (opts.catchUpDueAt) {
+    const trigger = opts.trigger;
+    if (trigger?.kind === "catchUp") {
       context.push(
-        `This is a catch-up run: the scheduled slot due at ${opts.catchUpDueAt} was missed because the app was not running, and earlier slots since the previous successful run may have been skipped too. Cover the entire period since that run, widening any time window in the instruction accordingly.`,
+        `This is a catch-up run: the scheduled slot due at ${trigger.dueAt} was missed because the app was not running, and earlier slots since the previous successful run may have been skipped too. Cover the entire period since that run, widening any time window in the instruction accordingly.`,
+      );
+    } else if (trigger?.kind === "todo") {
+      context.push(
+        `This run fired because the user completed the linked todo "${trigger.title}" (todo id ${trigger.todoId}). Whoever or whatever that todo names is the subject of this run.`,
+      );
+    } else if (trigger?.kind === "mail") {
+      context.push(
+        `This run was triggered by new inbound mail in: ${trigger.accountNames.join(", ")}. Start from that mailbox's newest messages instead of sweeping every account.`,
       );
     }
     const instructionMessage = `Scheduled automation "${automation.name}". ${context.join(" ")} Execute this instruction now and report the outcome:\n\n${automation.instruction}`;

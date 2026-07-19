@@ -5,9 +5,10 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 /**
  * The run prompt is the contract between the scheduler and the agent: it must
- * carry the last-successful-run anchor and, on a coalesced catch-up, the missed
- * slot — otherwise "check the past 24 hours" automations silently lose the gap
- * the machine slept through.
+ * carry the last-successful-run anchor and the run's trigger — the missed slot
+ * of a catch-up, or the todo whose completion fired a chained automation.
+ * Without it, "check the past 24 hours" automations silently lose the gap the
+ * machine slept through, and chained runs can't tell what they fired for.
  */
 
 let dbModule: typeof import("../../src/db/index.js");
@@ -44,11 +45,21 @@ describe("automation run prompt context", () => {
 
     const [recorded] = await dbModule.db.select().from(dbModule.schema.automationRuns);
     const catchUp = await runRecorder.executeAutomationRun("auto-1", {
-      catchUpDueAt: "2026-07-18T06:00:00.000Z",
+      trigger: { kind: "catchUp", dueAt: "2026-07-18T06:00:00.000Z" },
     });
     expect(catchUp.succeeded).toBe(true);
     expect(prompts[1]).toContain(`previous successful run finished at ${recorded?.finishedAt}`);
     expect(prompts[1]).toContain("catch-up run");
     expect(prompts[1]).toContain("2026-07-18T06:00:00.000Z");
+  });
+
+  it("hands a chained run the todo that fired it", async () => {
+    const run = await runRecorder.executeAutomationRun("auto-1", {
+      trigger: { kind: "todo", todoId: "todo-9", title: "Erreicht: Unterlagen an Familie Berger" },
+    });
+    expect(run.succeeded).toBe(true);
+    const prompt = prompts.at(-1) ?? "";
+    expect(prompt).toContain('completed the linked todo "Erreicht: Unterlagen an Familie Berger"');
+    expect(prompt).toContain("todo-9");
   });
 });

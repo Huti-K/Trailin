@@ -48,6 +48,10 @@ import { useServerEvents } from "@/lib/serverEvents";
 import { toast } from "@/lib/toast";
 import { stagger, UNASSIGNED_ACCOUNT_COLOR } from "@/lib/utils";
 
+const CONNECT_POLL_INTERVAL_MS = 3000;
+/** Give up watching for a linked account after this long (or at token expiry). */
+const CONNECT_WATCH_TIMEOUT_MS = 10 * 60_000;
+
 /** One selectable app in the picker — a grey listbox row. */
 function PickerRow({
   app,
@@ -273,60 +277,75 @@ export function Accounts({ onChanged }: { onChanged?: () => void }) {
     });
   }, [load, loadColors, loadPermissions, ensureColors]);
 
+  // Stops the completion watch of the current connect attempt, if any.
+  const stopWatchRef = React.useRef<(() => void) | null>(null);
+  React.useEffect(() => () => stopWatchRef.current?.(), []);
+
+  // The Connect Link finishes in an external browser tab, which can't signal
+  // back — so watch the account list (each fetch is live from Pipedream)
+  // until an account not in priorIds appears, then finish up like a
+  // successful in-app connect: colors, voice learning, onChanged.
+  const watchForNewAccount = (priorIds: Set<string>, expiresAt: string) => {
+    stopWatchRef.current?.();
+    let stopped = false;
+    stopWatchRef.current = () => {
+      stopped = true;
+      setConnecting(false);
+    };
+    const expiry = Date.parse(expiresAt);
+    const deadline = Math.min(
+      Number.isNaN(expiry) ? Infinity : expiry,
+      Date.now() + CONNECT_WATCH_TIMEOUT_MS,
+    );
+    void (async () => {
+      while (!stopped && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, CONNECT_POLL_INTERVAL_MS));
+        if (stopped) return;
+        // Silent fetch: a transient Pipedream error must not toast every tick.
+        const next = await api.pipedreamAccounts().catch(() => null);
+        if (!next) continue;
+        setAccounts(next);
+        const added = next.find((a) => !priorIds.has(a.id));
+        if (!added) continue;
+        stopWatchRef.current = null;
+        setConnecting(false);
+        // The new account has no color yet — assign one against the latest
+        // saved colors rather than waiting for a remount to pick it up.
+        void loadColors().then((saved) => ensureColors(next, saved));
+        // Start voice learning for a freshly linked email account right
+        // away — no consent step. Should this trigger get lost, the
+        // server's boot reconcile pass picks the account up.
+        if (isEmailApp(added.app)) {
+          void api
+            .learnAccountVoice(added.id)
+            .then(() => toast.success(t("connections.learnVoiceStarted", { name: added.name })))
+            .catch((err: unknown) => toast.error(err));
+        }
+        onChanged?.();
+        return;
+      }
+      if (!stopped) {
+        stopWatchRef.current = null;
+        setConnecting(false);
+      }
+    })();
+  };
+
   const connect = async (app: string) => {
     setBusy(app);
-    // Account ids present before this link, so onSuccess can single out the
-    // one that was just added and start learning its writing style.
+    // Account ids present before this link, so the watch can single out the
+    // one that gets added.
     const priorIds = new Set((accounts ?? []).map((a) => a.id));
     try {
-      // Lazy-loaded: the Connect SDK is only needed when linking an account,
-      // so it stays out of the initial bundle.
-      const { createFrontendClient } = await import("@pipedream/sdk/browser");
       const token = await api.pipedreamConnectToken(app);
-      const pd = createFrontendClient({
-        externalUserId: token.externalUserId,
-        tokenCallback: async () => ({
-          token: token.token,
-          connectLinkUrl: token.connectLinkUrl,
-          expiresAt: new Date(token.expiresAt),
-        }),
-      });
+      // The Connect Link must open in the user's own browser (the desktop
+      // shell routes window.open there): that's where their Pipedream and
+      // provider sessions live, an embedded window has neither.
+      window.open(token.connectLinkUrl, "_blank", "noopener");
       setPickerOpen(false);
       setQuery("");
       setConnecting(true);
-      await pd.connectAccount({
-        app,
-        token: token.token,
-        onSuccess: () => {
-          setConnecting(false);
-          // The new account has no color yet — assign one against the latest
-          // saved colors rather than waiting for a remount to pick it up.
-          void load().then((next) => {
-            if (next) {
-              void loadColors().then((saved) => ensureColors(next, saved));
-              // Start voice learning for the freshly linked email account
-              // right away — no consent step. Should this trigger get lost
-              // (popup quirk, list lag), the server's boot reconcile pass
-              // picks the account up, so a miss is recoverable either way.
-              const added = next.find((a) => !priorIds.has(a.id) && isEmailApp(a.app));
-              if (added) {
-                void api
-                  .learnAccountVoice(added.id)
-                  .then(() =>
-                    toast.success(t("connections.learnVoiceStarted", { name: added.name })),
-                  )
-                  .catch((err: unknown) => toast.error(err));
-              }
-            }
-            onChanged?.();
-          });
-        },
-        onError: (err) => {
-          setConnecting(false);
-          toast.error(err.message);
-        },
-        onClose: () => setConnecting(false),
-      });
+      watchForNewAccount(priorIds, token.expiresAt);
     } catch (err) {
       toast.error(err);
     } finally {
@@ -528,7 +547,13 @@ export function Accounts({ onChanged }: { onChanged?: () => void }) {
         )}
 
         {connecting && (
-          <p className="text-xs text-muted-foreground">{t("connections.finishConnecting")}</p>
+          <div className="flex items-center gap-2">
+            <Spinner className="h-3 w-3 shrink-0" />
+            <p className="text-xs text-muted-foreground">{t("connections.finishConnecting")}</p>
+            <Button variant="ghost" size="sm" onClick={() => stopWatchRef.current?.()}>
+              {t("common.cancel")}
+            </Button>
+          </div>
         )}
 
         {onOfficeFormOpen && onOffice && (

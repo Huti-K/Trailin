@@ -6,6 +6,7 @@ import { db, schema } from "../../db/index.js";
 import { getSetting, setSetting } from "../../db/settings.js";
 import { getMailReadProvider, type MailReadProvider } from "../../email/read/readProviders.js";
 import { listAccounts } from "../../integrations/pipedream/connect.js";
+import type { RunTrigger } from "./runRecorder.js";
 import { requestRun } from "./scheduler.js";
 
 const log = moduleLogger("mailProbe");
@@ -30,7 +31,7 @@ async function loadCursors(): Promise<ProbeCursors> {
 export interface MailProbeDeps {
   readerFor?: (app: string) => MailReadProvider | null;
   listAccounts?: () => Promise<ConnectedAccount[]>;
-  requestRun?: (automationId: string) => Promise<void>;
+  requestRun?: (automationId: string, trigger?: RunTrigger) => Promise<void>;
 }
 
 /**
@@ -51,7 +52,7 @@ export async function probeOnce(deps: MailProbeDeps = {}): Promise<void> {
   const accounts = await (deps.listAccounts ?? listAccounts)();
   const cursors = await loadCursors();
   const next: ProbeCursors = {};
-  let sawNewMail = false;
+  const newMailAccounts: string[] = [];
 
   for (const account of accounts) {
     const provider = readerFor(account.app);
@@ -82,17 +83,17 @@ export async function probeOnce(deps: MailProbeDeps = {}): Promise<void> {
       next[account.id] = cursor;
       continue;
     }
-    if (observed.date !== null && observed.date > cursor.date) sawNewMail = true;
+    if (observed.date !== null && observed.date > cursor.date) newMailAccounts.push(account.name);
     next[account.id] = { id: observed.id, date: observed.date ?? cursor.date };
   }
 
   await setSetting(CURSORS_SETTING_KEY, JSON.stringify(next));
 
-  if (!sawNewMail) return;
+  if (newMailAccounts.length === 0) return;
   const run = deps.requestRun ?? requestRun;
   for (const automation of flagged) {
     // One request per automation per burst; requestRun coalesces the rest.
-    run(automation.id).catch((error: unknown) =>
+    run(automation.id, { kind: "mail", accountNames: newMailAccounts }).catch((error: unknown) =>
       log.error({ err: error, automationId: automation.id }, "new-mail run failed"),
     );
   }

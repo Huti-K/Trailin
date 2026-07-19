@@ -1,6 +1,23 @@
+import {
+  closestCenter,
+  DndContext,
+  type DragEndEvent,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Automation, AutomationSuggestion } from "@trailin/shared";
-import { CalendarClock, Plus, Sparkles } from "lucide-react";
+import { CalendarClock, Menu, Plus, Sparkles } from "lucide-react";
 import * as React from "react";
 import { Trans, useTranslation } from "react-i18next";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -37,7 +54,7 @@ import {
 import { api } from "@/lib/api";
 import { desktopBridge } from "@/lib/desktop";
 import { toast } from "@/lib/toast";
-import { cn } from "@/lib/utils";
+import { cn, midpoint } from "@/lib/utils";
 
 const WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 0];
 
@@ -55,15 +72,23 @@ export function AutomationsPanel() {
   const queryClient = useQueryClient();
   const location = useLocation();
   const navigate = useNavigate();
-  // Captured once on mount: Home's "suggestions waiting" row navigates here
-  // with this router-state flag; the cards then play a one-shot arrival flash.
-  const [flashSuggestions] = React.useState(() =>
-    Boolean((location.state as { focusSuggestions?: boolean } | null)?.focusSuggestions),
-  );
+  // Captured once on mount: Home navigates here with router state — the
+  // "suggestions waiting" row sets focusSuggestions, an upcoming-run row sets
+  // focusAutomation (an id). The targeted cards play a one-shot arrival flash.
+  const [{ flashSuggestions, focusAutomation }] = React.useState(() => {
+    const state = location.state as {
+      focusSuggestions?: boolean;
+      focusAutomation?: string;
+    } | null;
+    return {
+      flashSuggestions: Boolean(state?.focusSuggestions),
+      focusAutomation: state?.focusAutomation ?? null,
+    };
+  });
   React.useEffect(() => {
-    // Consume the flag so a refresh or back-navigation doesn't replay the flash.
-    if (flashSuggestions) navigate(location.pathname, { replace: true });
-  }, [flashSuggestions, navigate, location.pathname]);
+    // Consume the state so a refresh or back-navigation doesn't replay the flash.
+    if (flashSuggestions || focusAutomation) navigate(location.pathname, { replace: true });
+  }, [flashSuggestions, focusAutomation, navigate, location.pathname]);
   // Server-side changes (agent tools, scheduled runs, the suggestion sweep)
   // land via "automations" topic invalidation; refetches keep previous data,
   // so the cards never unmount and drop their state.
@@ -178,6 +203,38 @@ export function AutomationsPanel() {
     } finally {
       setSaving(false);
     }
+  };
+
+  // Scroll the focused card into view once the list carrying it has rendered.
+  const focusRef = React.useRef<HTMLDivElement | null>(null);
+  const focusPresent = automations.some((a) => a.id === focusAutomation);
+  React.useEffect(() => {
+    if (focusPresent) focusRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [focusPresent]);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  // Persist a drop as a fractional position between the new neighbors,
+  // optimistically reordering the cache; the "automations" event reconciles.
+  const onDragEnd = (e: DragEndEvent) => {
+    const { active, over } = e;
+    if (!over || active.id === over.id) return;
+    const from = automations.findIndex((a) => a.id === active.id);
+    const to = automations.findIndex((a) => a.id === over.id);
+    if (from < 0 || to < 0) return;
+    const next = arrayMove(automations, from, to);
+    const position = midpoint(next[to - 1]?.position, next[to + 1]?.position);
+    queryClient.setQueryData<Automation[]>(
+      ["automations", "list"],
+      next.map((a) => (a.id === active.id ? { ...a, position } : a)),
+    );
+    api.updateAutomation(String(active.id), { position }).catch((err: unknown) => {
+      toast.error(err);
+      void queryClient.invalidateQueries({ queryKey: ["automations"] });
+    });
   };
 
   const openForEdit = (automation: Automation) => {
@@ -372,7 +429,7 @@ export function AutomationsPanel() {
             value={form.instruction}
             onChange={(e) => setForm({ ...form, instruction: e.target.value })}
             placeholder={t("automations.instructionPlaceholder")}
-            rows={3}
+            rows={8}
           />
         </FormField>
 
@@ -482,21 +539,32 @@ export function AutomationsPanel() {
           description={t("automations.emptyBody")}
         />
       ) : (
-        <div className="flex flex-col gap-3">
-          {automations.map((automation, i) => (
-            <div
-              key={automation.id}
-              className="animate-in-up"
-              style={{ animationDelay: `${i * 45}ms` }}
-            >
-              <AutomationCard
-                automation={automation}
-                onChanged={refreshAutomations}
-                onEdit={() => openForEdit(automation)}
-              />
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+          <SortableContext
+            items={automations.map((a) => a.id)}
+            strategy={verticalListSortingStrategy}
+          >
+            <div className="flex flex-col gap-3">
+              {automations.map((automation, i) => (
+                <div
+                  key={automation.id}
+                  ref={automation.id === focusAutomation ? focusRef : undefined}
+                  className="animate-in-up"
+                  style={{ animationDelay: `${i * 45}ms` }}
+                >
+                  <SortableAutomationRow id={automation.id}>
+                    <AutomationCard
+                      automation={automation}
+                      flash={automation.id === focusAutomation}
+                      onChanged={refreshAutomations}
+                      onEdit={() => openForEdit(automation)}
+                    />
+                  </SortableAutomationRow>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
+          </SortableContext>
+        </DndContext>
       )}
 
       <ConfirmDialog
@@ -508,6 +576,35 @@ export function AutomationsPanel() {
         busy={saving}
         onConfirm={() => void remove()}
       />
+    </div>
+  );
+}
+
+/** Sortable wrapper: gutter drag handle left of the card, as on Home's todos. */
+function SortableAutomationRow({ id, children }: { id: string; children: React.ReactNode }) {
+  const { t } = useTranslation();
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id,
+  });
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      className={cn("group/auto relative", isDragging && "opacity-50")}
+    >
+      <button
+        type="button"
+        className={cn(
+          "absolute -left-6 top-6 cursor-grab touch-none text-muted-foreground/50 hover:text-muted-foreground",
+          "opacity-0 transition-opacity focus-visible:opacity-100 group-hover/auto:opacity-100 max-sm:opacity-100",
+        )}
+        aria-label={t("automations.reorder")}
+        {...attributes}
+        {...listeners}
+      >
+        <Menu className="h-4 w-4" />
+      </button>
+      {children}
     </div>
   );
 }

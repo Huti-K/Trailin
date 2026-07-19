@@ -9,7 +9,7 @@ import { Chip } from "@/components/ui/chip";
 import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { isEmailAccount, useAccountColors } from "@/lib/accounts";
+import { useAccountColors } from "@/lib/accounts";
 import { api } from "@/lib/api";
 import { toast } from "@/lib/toast";
 
@@ -75,7 +75,6 @@ export function FileEditor({
 }) {
   const { t } = useTranslation();
   const { accounts, colors } = useAccountColors();
-  const emailAccounts = accounts.filter(isEmailAccount);
   const [saving, setSaving] = React.useState(false);
   const [createKind, setCreateKind] = React.useState<CreateKind>("note");
   const [name, setName] = React.useState("");
@@ -255,7 +254,7 @@ export function FileEditor({
             >
               {t("storage.editor.general")}
             </Chip>
-            {emailAccounts.map((account) => (
+            {accounts.map((account) => (
               <Chip
                 key={account.id}
                 active={scope !== null && scope.accountId === account.id}

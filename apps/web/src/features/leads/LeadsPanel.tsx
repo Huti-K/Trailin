@@ -1,16 +1,25 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Automation, Lead, LeadPriority, LeadStatus } from "@trailin/shared";
-import { CalendarClock, Phone, Plus, Trash2, Users } from "lucide-react";
+import {
+  CalendarClock,
+  Check,
+  ChevronRight,
+  Pencil,
+  Phone,
+  Plus,
+  Trash2,
+  Users,
+} from "lucide-react";
 import * as React from "react";
 import { useTranslation } from "react-i18next";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import { Chip } from "@/components/ui/chip";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Dialog } from "@/components/ui/dialog";
 import { EmptyState } from "@/components/ui/empty-state";
 import { FormField } from "@/components/ui/form-field";
+import { HoverActions } from "@/components/ui/hover-actions";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -18,13 +27,14 @@ import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/lib/api";
 import { relativeTime } from "@/lib/dates";
 import { toast } from "@/lib/toast";
-import { stagger } from "@/lib/utils";
+import { cn, stagger } from "@/lib/utils";
 
 /**
  * The leads directory: every prospect the agent (or the user) recorded, as a
- * flat list of raised rows — status filter chips on top, quick status editing
- * and deletion on each row. Rows appear and update live: intake runs and the
- * agent's lead tools emit the "leads" server event.
+ * flat list of raised rows — status/priority filter chips on top, and per-row
+ * edit-in-place (pencil; fields save on blur/change, no Save button). Rows
+ * appear and update live: intake runs and the agent's lead tools emit the
+ * "leads" server event.
  */
 
 const STATUSES: LeadStatus[] = ["new", "contacted", "engaged", "qualified", "won", "lost"];
@@ -49,6 +59,33 @@ const PRIORITY_TONE: Record<(typeof PRIORITIES)[number], "default" | "muted" | "
 };
 
 const EMPTY_FORM = { email: "", name: "", phone: "", interest: "", notes: "" };
+
+type LeadPatch = Parameters<typeof api.updateLead>[1];
+
+/**
+ * The one lead mutation: optimistic cache write, rollback + toast on error,
+ * and a settle-time invalidate the "leads" server event would also trigger.
+ */
+function useLeadPatch(): (id: string, patch: LeadPatch) => void {
+  const queryClient = useQueryClient();
+  const mutate = useMutation({
+    mutationFn: ({ id, patch }: { id: string; patch: LeadPatch }) => api.updateLead(id, patch),
+    onMutate: async ({ id, patch }) => {
+      await queryClient.cancelQueries({ queryKey: ["leads"] });
+      const prev = queryClient.getQueryData<Lead[]>(["leads"]);
+      queryClient.setQueryData<Lead[]>(["leads"], (old) =>
+        (old ?? []).map((lead) => (lead.id === id ? { ...lead, ...patch } : lead)),
+      );
+      return { prev };
+    },
+    onError: (err, _vars, ctx) => {
+      if (ctx?.prev) queryClient.setQueryData(["leads"], ctx.prev);
+      toast.error(err);
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["leads"] }),
+  });
+  return (id, patch) => mutate.mutate({ id, patch });
+}
 
 export function LeadsPanel() {
   const { t } = useTranslation();
@@ -75,6 +112,7 @@ export function LeadsPanel() {
   const [saving, setSaving] = React.useState(false);
   const [form, setForm] = React.useState(EMPTY_FORM);
   const [confirmDelete, setConfirmDelete] = React.useState<Lead | null>(null);
+  const onPatch = useLeadPatch();
 
   const load = () => queryClient.invalidateQueries({ queryKey: ["leads"] });
 
@@ -101,15 +139,6 @@ export function LeadsPanel() {
       toast.error(err);
     } finally {
       setSaving(false);
-    }
-  };
-
-  const setStatus = async (lead: Lead, status: LeadStatus) => {
-    try {
-      await api.updateLead(lead.id, { status });
-      await load();
-    } catch (err) {
-      toast.error(err);
     }
   };
 
@@ -215,17 +244,12 @@ export function LeadsPanel() {
       </Dialog>
 
       {loading ? (
-        <div className="flex flex-col gap-3">
-          {[0, 1].map((i) => (
-            <Card key={i} padding="lg">
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex flex-col gap-2">
-                  <Skeleton className="h-4 w-44" />
-                  <Skeleton className="h-3 w-64" />
-                </div>
-                <Skeleton className="h-8 w-24 rounded-md" />
-              </div>
-            </Card>
+        <div className="flex flex-col gap-2">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="surface flex items-center justify-between gap-3 rounded-lg p-3">
+              <Skeleton className="h-4 w-44" />
+              <Skeleton className="h-4 w-24" />
+            </div>
           ))}
         </div>
       ) : visible.length === 0 ? (
@@ -235,13 +259,13 @@ export function LeadsPanel() {
           description={filter ? t("leads.emptyFilteredBody") : t("leads.emptyBody")}
         />
       ) : (
-        <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-2">
           {visible.map((lead, i) => (
             <div key={lead.id} className="animate-in-up" style={stagger(i)}>
-              <LeadCard
+              <LeadRow
                 lead={lead}
                 automations={attachedTo(lead)}
-                onStatus={(status) => void setStatus(lead, status)}
+                onPatch={onPatch}
                 onDelete={() => setConfirmDelete(lead)}
               />
             </div>
@@ -263,18 +287,36 @@ export function LeadsPanel() {
   );
 }
 
-function LeadCard({
+/**
+ * One lead: name + status/priority badges, expand for the details, pencil to
+ * edit every field in place (saves on blur/change). Email is the lead's
+ * identity and stays read-only.
+ */
+function LeadRow({
   lead,
   automations,
-  onStatus,
+  onPatch,
   onDelete,
 }: {
   lead: Lead;
   automations: Automation[];
-  onStatus: (status: LeadStatus) => void;
+  onPatch: (id: string, patch: LeadPatch) => void;
   onDelete: () => void;
 }) {
   const { t, i18n } = useTranslation();
+  const [open, setOpen] = React.useState(false);
+  const [editing, setEditing] = React.useState(false);
+
+  const expandable =
+    !!(lead.interest || lead.notes || lead.phone || lead.persona) || automations.length > 0;
+
+  const saveField = (
+    field: "name" | "phone" | "interest" | "language" | "notes",
+    value: string,
+  ) => {
+    const trimmed = value.trim();
+    if (trimmed !== lead[field]) onPatch(lead.id, { [field]: trimmed });
+  };
 
   const meta = [
     lead.lastInboundAt
@@ -286,76 +328,178 @@ function LeadCard({
   ];
 
   return (
-    <Card padding="lg" className="flex flex-col gap-2.5">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex min-w-0 flex-col gap-0.5">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="truncate text-sm font-semibold tracking-tight">
-              {lead.name || lead.email}
-            </span>
-            <Badge variant={STATUS_TONE[lead.status]}>{t(`leads.status.${lead.status}`)}</Badge>
-            {lead.priority !== "" && (
-              <Badge variant={PRIORITY_TONE[lead.priority]} aria-label={t("leads.priorityLabel")}>
-                {t(`leads.priority.${lead.priority}`)}
-              </Badge>
-            )}
-          </div>
-          {lead.name && (
-            <span className="truncate font-mono text-2xs text-muted-foreground">{lead.email}</span>
+    <article className="surface surface-hover group flex flex-col gap-2 rounded-lg px-3 py-2.5 transition">
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          className={cn(
+            "flex min-w-0 flex-1 items-center gap-2 text-left",
+            expandable && !editing && "cursor-pointer",
           )}
-        </div>
-        <div className="flex shrink-0 items-center gap-1">
-          <div className="w-36">
+          onClick={() => expandable && !editing && setOpen((v) => !v)}
+        >
+          <span className="truncate text-sm font-medium tracking-tight">
+            {lead.name || lead.email}
+          </span>
+          <Badge variant={STATUS_TONE[lead.status]}>{t(`leads.status.${lead.status}`)}</Badge>
+          {lead.priority !== "" && (
+            <Badge variant={PRIORITY_TONE[lead.priority]} aria-label={t("leads.priorityLabel")}>
+              {lead.priority}
+            </Badge>
+          )}
+        </button>
+        <span className="shrink-0 font-mono text-2xs text-muted-foreground tabular-nums max-sm:hidden">
+          {lead.lastInboundAt ? relativeTime(lead.lastInboundAt, i18n.language) : meta[0]}
+        </span>
+        {editing ? (
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            title={t("leads.editDone")}
+            aria-label={t("leads.editDone")}
+            onClick={() => setEditing(false)}
+          >
+            <Check />
+          </Button>
+        ) : (
+          <HoverActions>
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              title={t("leads.edit")}
+              aria-label={t("leads.edit")}
+              onClick={() => {
+                setEditing(true);
+                setOpen(true);
+              }}
+            >
+              <Pencil />
+            </Button>
+            <Button
+              variant="ghost-danger"
+              size="icon-xs"
+              title={t("leads.delete")}
+              aria-label={t("leads.delete")}
+              onClick={onDelete}
+            >
+              <Trash2 />
+            </Button>
+          </HoverActions>
+        )}
+        {expandable && !editing && (
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-expanded={open}
+            title={t(open ? "common.collapse" : "common.expand")}
+            aria-label={t(open ? "common.collapse" : "common.expand")}
+            onClick={() => setOpen((v) => !v)}
+          >
+            <ChevronRight className={cn("transition-transform", open && "rotate-90")} />
+          </Button>
+        )}
+      </div>
+
+      {editing ? (
+        <div className="flex flex-col gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Select
               id={`lead-status-${lead.id}`}
               aria-label={t("leads.statusLabel")}
               value={lead.status}
-              onChange={(value) => onStatus(value as LeadStatus)}
+              onChange={(value) => onPatch(lead.id, { status: value as LeadStatus })}
+              className="w-auto"
               options={STATUSES.map((status) => ({
                 value: status,
                 label: t(`leads.status.${status}`),
               }))}
             />
+            <Select
+              id={`lead-priority-${lead.id}`}
+              aria-label={t("leads.priorityLabel")}
+              value={lead.priority}
+              onChange={(value) => onPatch(lead.id, { priority: value as LeadPriority })}
+              className="w-auto"
+              options={[
+                { value: "", label: t("leads.priorityNone") },
+                ...PRIORITIES.map((priority) => ({
+                  value: priority,
+                  label: t(`leads.priority.${priority}`),
+                })),
+              ]}
+            />
+            <span className="truncate font-mono text-2xs text-muted-foreground">{lead.email}</span>
           </div>
-          <Button
-            variant="ghost-danger"
-            size="icon-sm"
-            aria-label={t("leads.delete")}
-            onClick={onDelete}
-          >
-            <Trash2 />
-          </Button>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <Input
+              defaultValue={lead.name}
+              aria-label={t("leads.name")}
+              placeholder={t("leads.name")}
+              onBlur={(e) => saveField("name", e.target.value)}
+            />
+            <Input
+              defaultValue={lead.phone}
+              aria-label={t("leads.phone")}
+              placeholder={t("leads.phone")}
+              onBlur={(e) => saveField("phone", e.target.value)}
+            />
+            <Input
+              defaultValue={lead.interest}
+              aria-label={t("leads.interest")}
+              placeholder={t("leads.interestPlaceholder")}
+              onBlur={(e) => saveField("interest", e.target.value)}
+            />
+            <Input
+              defaultValue={lead.language}
+              aria-label={t("leads.language")}
+              placeholder={t("leads.languagePlaceholder")}
+              onBlur={(e) => saveField("language", e.target.value)}
+            />
+          </div>
+          <Textarea
+            defaultValue={lead.notes}
+            aria-label={t("leads.notes")}
+            placeholder={t("leads.notes")}
+            rows={Math.max(2, lead.notes.split("\n").length)}
+            className="resize-none text-sm"
+            onBlur={(e) => saveField("notes", e.target.value)}
+          />
         </div>
-      </div>
-
-      {lead.interest && <p className="text-sm">{lead.interest}</p>}
-      {lead.notes && <p className="text-xs text-muted-foreground">{lead.notes}</p>}
-
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-2xs text-muted-foreground tabular-nums">
-        {lead.persona && <span>{lead.persona}</span>}
-        {lead.language && (
-          <span>
-            {t("leads.language")}: {lead.language}
-          </span>
-        )}
-        {meta.map((line) => (
-          <span key={line}>{line}</span>
-        ))}
-        {lead.phone && (
-          <span className="flex items-center gap-1">
-            <Phone className="h-3 w-3" /> {lead.phone}
-          </span>
-        )}
-      </div>
-
-      {automations.length > 0 && (
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-2xs text-muted-foreground">
-          <CalendarClock className="h-3 w-3" />
-          {automations.map((automation) => (
-            <span key={automation.id}>{automation.name}</span>
-          ))}
-        </div>
+      ) : (
+        open && (
+          <div className="flex flex-col gap-1.5">
+            {lead.interest && <p className="text-sm">{lead.interest}</p>}
+            {lead.notes && (
+              <p className="whitespace-pre-wrap text-xs text-muted-foreground">{lead.notes}</p>
+            )}
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-2xs text-muted-foreground tabular-nums">
+              <span className="truncate">{lead.email}</span>
+              {lead.phone && (
+                <span className="flex items-center gap-1">
+                  <Phone className="h-3 w-3" /> {lead.phone}
+                </span>
+              )}
+              {lead.persona && <span>{lead.persona}</span>}
+              {lead.language && (
+                <span>
+                  {t("leads.language")}: {lead.language}
+                </span>
+              )}
+              {meta.map((line) => (
+                <span key={line}>{line}</span>
+              ))}
+            </div>
+            {automations.length > 0 && (
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-2xs text-muted-foreground">
+                <CalendarClock className="h-3 w-3" />
+                {automations.map((automation) => (
+                  <span key={automation.id}>{automation.name}</span>
+                ))}
+              </div>
+            )}
+          </div>
+        )
       )}
-    </Card>
+    </article>
   );
 }

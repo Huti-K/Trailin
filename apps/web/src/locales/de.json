@@ -342,7 +342,7 @@
       }
     },
     "noAccounts": "Noch keine E-Mail-Konten verbunden. Nutzen Sie die Schaltflächen oben, Sie können mehrere Konten pro Anbieter verbinden.",
-    "finishConnecting": "Schließen Sie die Verbindung in dem gerade geöffneten Fenster ab, es schließt sich von selbst, sobald Sie fertig sind.",
+    "finishConnecting": "Schließen Sie die Verbindung im gerade geöffneten Browser-Tab ab, das Konto erscheint hier automatisch, sobald es verknüpft ist.",
     "unhealthy": "Gestört",
     "disconnect": "Trennen",
     "disconnectConfirm": "Dieses Konto trennen?",
@@ -448,6 +448,7 @@
   },
   "automations": {
     "new": "Neue Automatisierung",
+    "reorder": "Verschieben",
     "save": "Speichern",
     "create": "Erstellen",
     "formTitle": "Neue Automatisierung",
@@ -542,7 +543,11 @@
       "C": "C (kalt)"
     },
     "priorityLabel": "Priorität",
+    "priorityNone": "Ohne Priorität",
+    "edit": "Bearbeiten",
+    "editDone": "Fertig",
     "language": "Sprache",
+    "languagePlaceholder": "de, en…",
     "lastInbound": "Antwort {{time}}",
     "noInbound": "Noch keine Antwort",
     "lastOutbound": "Kontaktiert {{time}}",
@@ -747,13 +752,13 @@
     "loginInputPlaceholder": "Code / Weiterleitungs-URL einfügen, falls der Vorgang nicht automatisch abschließt…",
     "fileAccess": {
       "title": "Dateizugriff",
-      "description": "Was der Assistent mit Dateien auf diesem Computer tun darf.",
+      "description": "Was der Assistent mit Dateien außerhalb seines eigenen Trailin-Ordners tun darf. Dieser Ordner (Memory, Skills, Ihre Dokumentbibliothek) ist für ihn immer zugänglich.",
       "chipOff": "Kein Zugriff",
       "read": {
         "title": "Dateien lesen",
         "badge": "Lesen",
         "on": "Darf auf Ihre Anweisung Ordner auflisten, Dateien finden, Inhalte durchsuchen (grep) und Dateien lesen.",
-        "off": "Kann keine Dateien lesen.",
+        "off": "Kann nur Dateien in seinem eigenen Trailin-Ordner lesen.",
         "confirmTitle": "Der KI das Lesen von Dateien erlauben?",
         "confirmBody": "Sobald aktiviert, kann der Assistent auf Ihre Anweisung überall auf diesem Computer Ordner auflisten, Dateien finden, Inhalte durchsuchen (grep) und Dateien lesen, Downloads, Dokumente und alles, was Ihr Konto sehen kann. In einer E-Mail versteckte Anweisungen könnten versuchen, ihn private Dateien lesen zu lassen, er ist angewiesen, Dateiinhalte nie ohne Ihre Zustimmung weiterzugeben. Sie können dies jederzeit wieder deaktivieren.",
         "confirmCta": "Lesen erlauben"
@@ -762,7 +767,7 @@
         "title": "Dateien schreiben",
         "badge": "Schreiben",
         "on": "Darf auf Ihre Anweisung neue Dateien anlegen (write) und bestehende bearbeiten (edit).",
-        "off": "Kann keine Dateien anlegen oder ändern.",
+        "off": "Kann nur Dateien in seinem eigenen Trailin-Ordner anlegen und ändern.",
         "confirmTitle": "Der KI das Schreiben von Dateien erlauben?",
         "confirmBody": "Sobald aktiviert, kann der Assistent auf Ihre Anweisung überall auf diesem Computer neue Dateien anlegen (write) und bestehende bearbeiten (edit). In einer E-Mail versteckte Anweisungen könnten ungewollte Änderungen anstoßen. Sie können dies jederzeit wieder deaktivieren.",
         "confirmCta": "Schreiben erlauben"

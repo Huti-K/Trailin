@@ -1,6 +1,6 @@
 import type { FastifyPluginAsyncTypebox } from "@fastify/type-provider-typebox";
 import { Type } from "@sinclair/typebox";
-import { and, desc, eq, isNull, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, ne, or, sql } from "drizzle-orm";
 import { parseStoredCards } from "../agent/cards.js";
 import { notFound, requireRow } from "../core/errors.js";
 import { decideSuggestion, listPendingSuggestions } from "../db/automationSuggestions.js";
@@ -48,6 +48,7 @@ const automationPatchBody = Type.Object({
   pinned: Type.Optional(Type.Boolean()),
   runOnNewMail: Type.Optional(Type.Boolean()),
   notifyOnCompletion: Type.Optional(Type.Boolean()),
+  position: Type.Optional(Type.Number()),
 });
 
 const runToAutomation = eq(schema.automations.id, schema.automationRuns.automationId);
@@ -81,7 +82,7 @@ export const automationRoutes: FastifyPluginAsyncTypebox = async (app) => {
     const rows = await db
       .select()
       .from(schema.automations)
-      .orderBy(desc(schema.automations.createdAt));
+      .orderBy(asc(schema.automations.position), desc(schema.automations.createdAt));
     return rows.map((row) => ({ ...row, nextRunAt: getNextRunAt(row.id) }));
   });
 

@@ -53,7 +53,7 @@ import { api } from "@/lib/api";
 import { dateTimeLabel, dayLabel, timeLabel } from "@/lib/dates";
 import type { View } from "@/lib/nav";
 import { openConversationInChat } from "@/lib/quickActions";
-import { cn, stagger } from "@/lib/utils";
+import { cn, midpoint, stagger } from "@/lib/utils";
 
 const AUTOMATION_HORIZON_DAYS = 14;
 const OVERDUE = "overdue";
@@ -76,13 +76,6 @@ type Group = {
 type RenderItem =
   | { kind: "todo"; at: number; todo: Todo }
   | { kind: "auto"; at: number; automation: Automation };
-
-function midpoint(a: number | undefined, b: number | undefined): number {
-  if (a === undefined && b === undefined) return Date.now();
-  if (a === undefined) return (b as number) - 1;
-  if (b === undefined) return a + 1;
-  return (a + b) / 2;
-}
 
 /**
  * "Zu erledigen" — the one agenda of everything on your plate: overdue todos,
@@ -521,7 +514,8 @@ function GroupBlock({ group, children }: { group: Group; children: React.ReactNo
 }
 
 /** A scheduled run in the agenda: a real (raised) row so it reads as an item,
- *  kept secondary through muted content — no checkbox, nothing to do yet. */
+ *  kept secondary through muted content. Clicking jumps to the Automations
+ *  page, which scrolls to and flashes this automation's card. */
 function AutomationRow({
   automation,
   at,
@@ -531,13 +525,18 @@ function AutomationRow({
   at: number;
   lang: string;
 }) {
+  const navigate = useNavigate();
   return (
-    <div className="surface surface-hover flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm text-muted-foreground">
+    <button
+      type="button"
+      onClick={() => navigate("/automations", { state: { focusAutomation: automation.id } })}
+      className="surface surface-hover flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm text-muted-foreground"
+    >
       <Clock className="h-3.5 w-3.5 shrink-0" />
       <span className="min-w-0 truncate text-foreground/80">{automation.name}</span>
       <span className="ml-auto shrink-0 text-xs tabular-nums">
         {timeLabel(new Date(at).toISOString(), lang)}
       </span>
-    </div>
+    </button>
   );
 }

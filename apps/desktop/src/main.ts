@@ -144,20 +144,14 @@ async function waitForServer(port: number): Promise<void> {
 }
 
 /**
- * Route new-window requests to the user's browser, not an Electron child
- * window. The one exception: a popup from the embedded Pipedream Connect
- * iframe (the provider's OAuth window) stays in-app, since the iframe
- * holds its handle to detect completion. Applied recursively so links inside
- * that OAuth window also leave for the browser.
+ * Route every new-window request to the user's browser, never an Electron
+ * child window: sign-in flows (Pipedream Connect, provider OAuth) need the
+ * browser's cookies, which an Electron window doesn't have.
  */
 function installLinkPolicy(contents: WebContents): void {
-  contents.setWindowOpenHandler(({ url, referrer }) => {
-    if (referrer.url.startsWith("https://pipedream.com/")) return { action: "allow" };
+  contents.setWindowOpenHandler(({ url }) => {
     if (/^https?:/i.test(url)) void shell.openExternal(url);
     return { action: "deny" };
-  });
-  contents.on("did-create-window", (child) => {
-    installLinkPolicy(child.webContents);
   });
 }
 

@@ -8,6 +8,7 @@ import { getTimezoneSetting } from "../../db/settings.js";
 import {
   type AutomationRunResult,
   executeAutomationRun,
+  type RunTrigger,
   sweepOrphanedRuns,
 } from "./runRecorder.js";
 
@@ -74,16 +75,22 @@ function isOneOffSchedule(expression: string): boolean {
   return dom !== "*" && month !== "*" && dow === "*";
 }
 
-// Automations asked to run again while a run was in flight. A Set, so any
-// number of mid-run requests yield exactly one coalesced follow-up.
-const pendingRuns = new Set<string>();
+// Follow-up triggers queued while a run was in flight, drained in order by
+// runAutomation. `null` is a triggerless request (a plain requestRun).
+const pendingRuns = new Map<string, (RunTrigger | null)[]>();
 
 async function runGuarded(
   automationId: string,
-  opts: { manual?: boolean; catchUpDueAt?: string },
+  opts: { manual?: boolean; trigger?: RunTrigger },
 ): Promise<void> {
   const result = await runJobs.join(automationId, () => executeAutomationRun(automationId, opts));
   await retireIfOneOff(automationId, result);
+}
+
+/** A completed todo may fire a paused automation: pausing stops the schedule,
+ *  not the user's explicit action — so todo triggers run as manual. */
+function optsFor(trigger: RunTrigger | null): { manual?: boolean; trigger?: RunTrigger } {
+  return { trigger: trigger ?? undefined, manual: trigger?.kind === "todo" };
 }
 
 /** Execute one automation now (scheduler and "Run now"). `manual` may run a
@@ -91,7 +98,7 @@ async function runGuarded(
  *  guard and one-off retirement; runRecorder.ts owns the run itself. */
 export async function runAutomation(
   automationId: string,
-  opts: { manual?: boolean; catchUpDueAt?: string } = {},
+  opts: { manual?: boolean; trigger?: RunTrigger } = {},
 ): Promise<void> {
   // A tick landing while the previous run works is dropped, not stacked.
   if (runJobs.isRunning(automationId)) {
@@ -102,13 +109,16 @@ export async function runAutomation(
     return;
   }
   await runGuarded(automationId, opts);
-  // Drain follow-ups requestRun queued during the run. Draining here, not in
-  // requestRun, lets any starter (cron tick or "Run now") absorb a mid-run
-  // burst as one catch-up pass. Iterative, not recursive: a request during a
-  // follow-up queues the next pass. Follow-ups run non-manual, standing in for
-  // requestRun, not for whatever triggered the run they queued behind.
-  while (pendingRuns.delete(automationId)) {
-    await runGuarded(automationId, {});
+  // Drain follow-ups requestRun queued during the run, each carrying the
+  // trigger that requested it. Iterative, not recursive: a request during a
+  // follow-up queues the next pass.
+  for (;;) {
+    const trigger = pendingRuns.get(automationId)?.shift();
+    if (trigger === undefined) {
+      pendingRuns.delete(automationId);
+      break;
+    }
+    await runGuarded(automationId, optsFor(trigger));
   }
 }
 
@@ -117,18 +127,25 @@ export function isRunInFlight(automationId: string): boolean {
 }
 
 /**
- * Run now, coalescing instead of dropping: a request during an in-flight run
- * queues exactly one follow-up, which runAutomation drains when the run ends.
- * The mail probe's entry point; cron ticks keep runAutomation's drop semantics.
- * The isRunning check and the call below share one event-loop turn (no await
- * between them), so a request can't slip past the guard.
+ * Run now, queueing instead of dropping: a request during an in-flight run
+ * queues a follow-up, which runAutomation drains when the run ends. Todo
+ * completions queue one follow-up EACH — every completion carries its own
+ * context — while other requests coalesce per kind, so a mail burst becomes
+ * one follow-up pass. Entry point for the mail probe and todo chains; cron
+ * ticks keep runAutomation's drop semantics. The isRunning check and the
+ * mutation below share one event-loop turn (no await between them), so a
+ * request can't slip past the guard.
  */
-export async function requestRun(automationId: string): Promise<void> {
+export async function requestRun(automationId: string, trigger?: RunTrigger): Promise<void> {
+  const queued = trigger ?? null;
   if (runJobs.isRunning(automationId)) {
-    pendingRuns.add(automationId);
+    const queue = pendingRuns.get(automationId) ?? [];
+    const sameKind = (t: RunTrigger | null) => (t?.kind ?? null) === (queued?.kind ?? null);
+    if (queued?.kind === "todo" || !queue.some(sameKind)) queue.push(queued);
+    pendingRuns.set(automationId, queue);
     return;
   }
-  await runAutomation(automationId);
+  await runAutomation(automationId, optsFor(queued));
 }
 
 /**
@@ -180,8 +197,8 @@ export async function runMissedAutomations(): Promise<MissedAutomation[]> {
   const missed = await findMissedAutomations();
   for (const item of missed) {
     log.info({ automationId: item.id, dueAt: item.dueAt }, "catching up missed automation run");
-    runAutomation(item.id, { catchUpDueAt: item.dueAt }).catch((error: unknown) =>
-      log.error({ err: error, automationId: item.id }, "catch-up run failed"),
+    runAutomation(item.id, { trigger: { kind: "catchUp", dueAt: item.dueAt } }).catch(
+      (error: unknown) => log.error({ err: error, automationId: item.id }, "catch-up run failed"),
     );
   }
   return missed;

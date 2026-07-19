@@ -26,10 +26,13 @@ import { cn, toggleRowProps } from "@/lib/utils";
  */
 export function AutomationCard({
   automation,
+  flash,
   onChanged,
   onEdit,
 }: {
   automation: Automation;
+  /** Play the one-shot arrival flash — set when another panel navigated here to this card. */
+  flash?: boolean;
   onChanged: () => Promise<void>;
   onEdit: () => void;
 }) {
@@ -101,7 +104,7 @@ export function AutomationCard({
   };
 
   return (
-    <Card padding="lg">
+    <Card padding="lg" className={cn(flash && "flash-accent")}>
       <div className="flex items-start justify-between gap-3">
         <button
           type="button"

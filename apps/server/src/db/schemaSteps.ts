@@ -536,4 +536,11 @@ export const SCHEMA_STEPS: readonly string[] = [
     WHERE EXISTS (SELECT 1 FROM todo_steps WHERE todo_steps.todo_id = todos.id);
     DROP TABLE todo_steps;
   `,
+  // 29: automations get a manual sort key. Seeded as the negated created_at
+  // epoch so ascending position reproduces the old newest-first order; new
+  // rows get -now and land on top.
+  `
+    ALTER TABLE automations ADD COLUMN position REAL NOT NULL DEFAULT 0;
+    UPDATE automations SET position = -CAST(strftime('%s', created_at) AS REAL) * 1000;
+  `,
 ];

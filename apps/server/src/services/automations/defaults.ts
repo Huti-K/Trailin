@@ -149,7 +149,8 @@ export async function seedDefaultAutomations(): Promise<void> {
         pinned: preset.pinned,
         runOnNewMail: preset.runOnNewMail,
         notifyOnCompletion: preset.notifyOnCompletion,
-        // Distinct descending timestamps so the first entry leads the createdAt-desc feed.
+        // Distinct keys so the first entry leads the position-asc list.
+        position: -(now - i * 1000),
         createdAt: new Date(now - i * 1000).toISOString(),
       });
       log.info({ automation: preset.name }, "seeded default automation");

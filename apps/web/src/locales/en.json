@@ -342,7 +342,7 @@
       }
     },
     "noAccounts": "No email accounts connected yet. Use the buttons above, you can connect several accounts per provider.",
-    "finishConnecting": "Complete the connection in the window that just opened, it closes by itself when you're done.",
+    "finishConnecting": "Complete the connection in the browser tab that just opened, the account appears here automatically once it's linked.",
     "unhealthy": "Unhealthy",
     "disconnect": "Disconnect",
     "disconnectConfirm": "Disconnect this account?",
@@ -448,6 +448,7 @@
   },
   "automations": {
     "new": "New automation",
+    "reorder": "Reorder",
     "save": "Save",
     "create": "Create",
     "formTitle": "New automation",
@@ -542,7 +543,11 @@
       "C": "C (cold)"
     },
     "priorityLabel": "Priority",
+    "priorityNone": "No priority",
+    "edit": "Edit",
+    "editDone": "Done",
     "language": "Language",
+    "languagePlaceholder": "de, en…",
     "lastInbound": "Heard from them {{time}}",
     "noInbound": "No reply yet",
     "lastOutbound": "Contacted {{time}}",
@@ -747,13 +752,13 @@
     "loginInputPlaceholder": "Paste the code / redirect URL if it doesn't finish…",
     "fileAccess": {
       "title": "File access",
-      "description": "What the assistant may do with files on this computer.",
+      "description": "What the assistant may do with files outside its own Trailin folder. That folder (memory, skills, your document library) is always available to it.",
       "chipOff": "No access",
       "read": {
         "title": "Read files",
         "badge": "Read",
         "on": "May list folders, find files, search their contents (grep), and read files when you ask it to.",
-        "off": "Cannot read any files.",
+        "off": "Can only read files in its own Trailin folder.",
         "confirmTitle": "Allow the AI to read files?",
         "confirmBody": "Once on, the assistant can list folders, find files, search their contents (grep), and read files anywhere on this computer when you ask it to, your Downloads, Documents, and everything else your account can see. Instructions hidden in an email could try to make it read private files, so it is told never to pass file contents on without your say-so. You can turn this off anytime.",
         "confirmCta": "Allow reading files"
@@ -762,7 +767,7 @@
         "title": "Write files",
         "badge": "Write",
         "on": "May create new files (write) and edit existing ones (edit) when you ask it to.",
-        "off": "Cannot create or change any files.",
+        "off": "Can only create and change files in its own Trailin folder.",
         "confirmTitle": "Allow the AI to write files?",
         "confirmBody": "Once on, the assistant can create new files (write) and edit existing ones (edit) anywhere on this computer when you ask it to. Instructions hidden in an email could try to trigger unwanted changes. You can turn this off anytime.",
         "confirmCta": "Allow writing files"

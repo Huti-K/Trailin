@@ -30,6 +30,7 @@ export interface AutomationPatch {
   pinned?: boolean;
   runOnNewMail?: boolean;
   notifyOnCompletion?: boolean;
+  position?: number;
 }
 
 /**
@@ -69,6 +70,7 @@ export async function createAutomation(input: AutomationInput): Promise<Automati
     runOnNewMail: input.runOnNewMail ?? false,
     notifyOnCompletion: input.notifyOnCompletion ?? false,
     leadId: input.leadId ?? null,
+    position: -Date.now(),
     createdAt: new Date().toISOString(),
   };
   await db.insert(schema.automations).values(automation);
@@ -104,6 +106,7 @@ export async function updateAutomation(id: string, patch: AutomationPatch): Prom
   if (patch.notifyOnCompletion !== undefined) {
     updates.notifyOnCompletion = patch.notifyOnCompletion;
   }
+  if (patch.position !== undefined) updates.position = patch.position;
   if (Object.keys(updates).length === 0) throw badRequest("nothing to update");
 
   // Must run before any mutation: a pinned:true update for a nonexistent id

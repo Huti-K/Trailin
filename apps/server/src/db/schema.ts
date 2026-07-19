@@ -89,6 +89,8 @@ export const automations = sqliteTable("automations", {
   leadId: text("lead_id"),
   runOnNewMail: integer("run_on_new_mail", { mode: "boolean" }).notNull().default(false),
   notifyOnCompletion: integer("notify_on_completion", { mode: "boolean" }).notNull().default(false),
+  /** Manual sort key, ascending; new automations get -now so they land on top. */
+  position: real("position").notNull().default(0),
   createdAt: text("created_at").notNull(),
 });
 

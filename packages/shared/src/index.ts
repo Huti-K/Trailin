@@ -123,10 +123,8 @@ export interface SearchResult {
 }
 
 export interface ConnectTokenResponse {
-  token: string;
   connectLinkUrl: string;
   expiresAt: string;
-  externalUserId: string;
 }
 
 export interface Conversation {
@@ -183,6 +181,8 @@ export interface Automation {
   leadId: string | null;
   runOnNewMail: boolean;
   notifyOnCompletion: boolean;
+  /** Manual sort key, ascending; new automations get -now so they land on top. */
+  position: number;
   createdAt: string;
   nextRunAt?: string | null;
 }

@@ -6,10 +6,6 @@ import { api } from "@/lib/api";
 /** Whether a Pipedream app slug is one of the supported mail providers. */
 export const isEmailApp = (app: string) => (EMAIL_APPS as readonly string[]).includes(app);
 
-/** Whether a connected account is a mailbox — judged by its provider, never by
- *  whether the display name happens to contain an "@". */
-export const isEmailAccount = (account: ConnectedAccount) => isEmailApp(account.app);
-
 /** An account's assigned dot color; undefined (→ `AccountDot`'s grey) when unassigned. */
 export const accountColor = (colors: AccountColor[] | undefined, accountId?: string | null) =>
   colors?.find((c) => c.accountId === accountId)?.hex;

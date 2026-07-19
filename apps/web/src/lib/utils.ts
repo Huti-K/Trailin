@@ -42,6 +42,14 @@ export function toggleRowProps(expanded: boolean, onToggle: () => void) {
   };
 }
 
+/** Sort key landing between two neighbors' keys; an open end steps past the one that exists. */
+export function midpoint(a: number | undefined, b: number | undefined): number {
+  if (a === undefined && b === undefined) return Date.now();
+  if (a === undefined) return (b as number) - 1;
+  if (b === undefined) return a + 1;
+  return (a + b) / 2;
+}
+
 /** List-entrance stagger, capped so a full page of rows doesn't take a second to finish arriving. */
 export const stagger = (i: number) => ({ animationDelay: `${Math.min(i, 8) * 45}ms` });
 

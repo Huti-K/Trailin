@@ -197,10 +197,8 @@ export async function createConnectToken(app: string): Promise<ConnectTokenRespo
   const url = new URL(res.connectLinkUrl);
   url.searchParams.set("app", app);
   return {
-    token: res.token,
     connectLinkUrl: url.toString(),
     expiresAt: res.expiresAt instanceof Date ? res.expiresAt.toISOString() : String(res.expiresAt),
-    externalUserId: config.externalUserId,
   };
 }
 
