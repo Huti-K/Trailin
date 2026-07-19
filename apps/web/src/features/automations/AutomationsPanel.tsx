@@ -1,3 +1,4 @@
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Automation, AutomationSuggestion } from "@trailin/shared";
 import { CalendarClock, Plus, Sparkles } from "lucide-react";
 import * as React from "react";
@@ -33,7 +34,6 @@ import {
 } from "@/features/automations/schedule";
 import { api } from "@/lib/api";
 import { desktopBridge } from "@/lib/desktop";
-import { useServerEvents } from "@/lib/serverEvents";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 
@@ -50,9 +50,26 @@ function looksLikeCron(expr: string): boolean {
 
 export function AutomationsPanel() {
   const { t, i18n } = useTranslation();
-  const [automations, setAutomations] = React.useState<Automation[]>([]);
-  const [suggestions, setSuggestions] = React.useState<AutomationSuggestion[]>([]);
-  const [loading, setLoading] = React.useState(true);
+  const queryClient = useQueryClient();
+  // Server-side changes (agent tools, scheduled runs, the suggestion sweep)
+  // land via "automations" topic invalidation; refetches keep previous data,
+  // so the cards never unmount and drop their state.
+  const automationsQuery = useQuery({
+    queryKey: ["automations", "list"],
+    queryFn: () => api.automations(),
+  });
+  const suggestionsQuery = useQuery({
+    queryKey: ["automations", "suggestions"],
+    queryFn: () => api.automationSuggestions(),
+  });
+  const automations = automationsQuery.data ?? [];
+  const suggestions = suggestionsQuery.data ?? [];
+  const loading = automationsQuery.isPending || suggestionsQuery.isPending;
+  const loadError = automationsQuery.error ?? suggestionsQuery.error;
+  React.useEffect(() => {
+    if (loadError) toast.error(loadError);
+  }, [loadError]);
+  const refreshAutomations = () => queryClient.invalidateQueries({ queryKey: ["automations"] });
   const [showForm, setShowForm] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
   const [form, setForm] = React.useState({
@@ -75,35 +92,6 @@ export function AutomationsPanel() {
   const scheduleValid = advanced
     ? cron.trim().length > 0
     : preset.frequency !== "custom" || preset.weekdays.length > 0;
-
-  const load = React.useCallback(async () => {
-    const [automationRows, suggestionRows] = await Promise.all([
-      api.automations(),
-      api.automationSuggestions(),
-    ]);
-    setAutomations(automationRows);
-    setSuggestions(suggestionRows);
-  }, []);
-
-  const refresh = React.useCallback(async () => {
-    setLoading(true);
-    try {
-      await load();
-    } catch (err) {
-      toast.error(err);
-    } finally {
-      setLoading(false);
-    }
-  }, [load]);
-
-  React.useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
-  // Server-side changes (agent tools, scheduled runs, the suggestion sweep):
-  // refetch without the loading gate — toggling it would unmount the cards
-  // and drop their state.
-  useServerEvents(["automations"], () => void load().catch(() => {}));
 
   const resetForm = () => {
     setForm({
@@ -156,7 +144,7 @@ export function AutomationsPanel() {
         await api.createAutomation({ ...form, schedule });
       }
       handleOpenChange(false);
-      await refresh();
+      await queryClient.invalidateQueries({ queryKey: ["automations"] });
     } catch (err) {
       toast.error(err);
     } finally {
@@ -171,7 +159,7 @@ export function AutomationsPanel() {
       await api.deleteAutomation(editingId);
       handleOpenChange(false);
       setConfirmDelete(false);
-      await refresh();
+      await queryClient.invalidateQueries({ queryKey: ["automations"] });
     } catch (err) {
       toast.error(err);
     } finally {
@@ -448,7 +436,7 @@ export function AutomationsPanel() {
               className="animate-in-up"
               style={{ animationDelay: `${i * 45}ms` }}
             >
-              <SuggestionCard suggestion={suggestion} onDecided={refresh} />
+              <SuggestionCard suggestion={suggestion} onDecided={refreshAutomations} />
             </div>
           ))}
         </div>
@@ -484,7 +472,7 @@ export function AutomationsPanel() {
             >
               <AutomationCard
                 automation={automation}
-                onChanged={refresh}
+                onChanged={refreshAutomations}
                 onEdit={() => openForEdit(automation)}
               />
             </div>
