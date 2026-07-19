@@ -12,6 +12,24 @@ export type ChangelogEntry = {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.3.1",
+    date: "2026-07-19",
+    notes: {
+      en: [
+        "Automations can be dragged into the order you want.",
+        "Runs now start knowing why they fired: a completed to-do, new mail, or a missed slot.",
+        "Connecting an account opens in your browser, where you are already signed in, and the app picks up the new account by itself.",
+        "The instruction box in the automation editor gives your text more room.",
+      ],
+      de: [
+        "Automationen lassen sich per Ziehen in die gewünschte Reihenfolge bringen.",
+        "Läufe wissen jetzt beim Start, warum sie ausgelöst wurden: ein erledigtes To-do, neue Mail oder ein verpasster Termin.",
+        "Die Kontoverbindung öffnet im Browser, wo die Anmeldung schon besteht, und die App übernimmt das neue Konto von selbst.",
+        "Das Anweisungsfeld im Automationen-Editor bietet dem Text mehr Platz.",
+      ],
+    },
+  },
+  {
     version: "0.3.0",
     date: "2026-07-19",
     notes: {
