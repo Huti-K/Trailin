@@ -480,4 +480,11 @@ export const SCHEMA_STEPS: readonly string[] = [
     );
     CREATE INDEX idx_wa_messages_chat_time ON wa_messages(chat_jid, timestamp);
   `,
+  // 21: compaction summaries persist as role='compaction' message rows; the
+  // cutoff column records the timestamp (ms) where the summary's
+  // kept-verbatim tail begins, so a rebuilt session replays the same
+  // compacted shape the live session ran with (agent/history.ts).
+  `
+    ALTER TABLE messages ADD COLUMN compaction_cutoff INTEGER;
+  `,
 ];

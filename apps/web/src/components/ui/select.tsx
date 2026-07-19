@@ -3,7 +3,7 @@ import * as React from "react";
 import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 
-const LIST_MAX_HEIGHT = 240; // matches the old max-h-60 cap
+const LIST_MAX_HEIGHT = 240; // Tailwind's max-h-60
 const LIST_MIN_HEIGHT = 128; // never squeeze below ~4 rows, even on short windows
 const LIST_VIEWPORT_MARGIN = 12; // field↔list gap plus breathing room at the viewport edge
 const LIST_ROW_HEIGHT = 34; // pre-render estimate of one option row incl. gap

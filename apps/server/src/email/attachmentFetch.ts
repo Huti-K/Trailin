@@ -12,7 +12,7 @@ import {
  * filename) — the handle the `attachments` card carries. Shared by the file
  * routes (routes/mail.ts): the viewer streams the bytes, the "save to library"
  * action re-uses the same fetch. Nothing is cached; each call hits the
- * provider, so the mirror never has to store attachment blobs.
+ * provider, so attachment blobs are never stored locally.
  *
  * Throws the errors.ts AppError helpers so the central handler renders them:
  * a bad account/app or a missing attachment is a 4xx, not a 500.

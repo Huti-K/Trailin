@@ -189,8 +189,8 @@ function attachmentPartLines(attachment: DraftAttachment): string[] {
  * must pass back every header it wants to survive — see PRESERVED_HEADERS.
  *
  * With attachments the message becomes multipart/mixed: the text body part
- * first, then one part per attachment. Without them the output is the same
- * single-part message as ever.
+ * first, then one part per attachment. Without them the output is a plain
+ * single-part message.
  */
 function buildRawMessage(input: {
   to: string;

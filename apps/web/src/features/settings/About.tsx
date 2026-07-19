@@ -203,7 +203,7 @@ function CheckOutcome({
   }
 }
 
-/** The GitHub mark — lucide dropped brand icons, so the path is inlined. */
+/** The GitHub mark — lucide ships no brand icons, so the path is inlined. */
 function GithubMark(props: React.SVGProps<SVGSVGElement>) {
   return (
     <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" {...props}>

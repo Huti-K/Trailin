@@ -84,7 +84,7 @@ type Tunings = Record<ThemeName, Tuning>;
 const NO_OVERRIDES: Overrides = { light: {}, dark: {} };
 const NO_TUNING: Tunings = { light: IDENTITY, dark: IDENTITY };
 
-/** Ready-made looks that counter the "dark and depressed" feedback. */
+/** Ready-made looks — brighter, warmer, more vivid, or greyscale takes on the palette. */
 const PRESETS: { name: string; overrides?: Overrides; tuning?: Tunings }[] = [
   {
     // Light's canvas is already near white, so brightness has nowhere to go —

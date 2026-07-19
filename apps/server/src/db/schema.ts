@@ -22,12 +22,14 @@ export const conversations = sqliteTable("conversations", {
 export const messages = sqliteTable("messages", {
   id: text("id").primaryKey(),
   conversationId: text("conversation_id").notNull(),
-  role: text("role", { enum: ["user", "assistant"] }).notNull(),
+  role: text("role", { enum: ["user", "assistant", "compaction"] }).notNull(),
   content: text("content").notNull(),
   /** JSON-encoded MessageCard[] — the cards an assistant turn produced; null for none. */
   cards: text("cards"),
-  /** JSON-encoded ChatToolCall[] for restoring tool activity in history. */
+  /** JSON-encoded ChatToolCall[] — an assistant turn's tool activity, for the UI and the model-history rebuild. */
   toolCalls: text("tool_calls"),
+  /** ms timestamp where a compaction row's kept-verbatim tail begins; compaction rows only. */
+  compactionCutoff: integer("compaction_cutoff"),
   /** Turn-level agent/provider error, if the response ended unsuccessfully. */
   error: text("error"),
   /** JSON-encoded EmailRef[] — emails the user pinned to this message; null for none. */

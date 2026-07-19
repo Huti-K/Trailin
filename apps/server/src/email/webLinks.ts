@@ -77,9 +77,9 @@ export function withOutlookLoginHint(url: string, accountName: string): string {
 
 const THREAD_LINKS: Record<string, ThreadLinkBuilder> = {
   gmail: (account, threadId) => gmailThreadUrl(account.name, threadId),
-  // Graph's per-message webLink isn't mirrored, and Outlook's web UI has no
-  // stable thread-by-conversationId URL — land on the mailbox (pinned to the
-  // right account) rather than risk a broken deep link.
+  // Graph's per-message webLink isn't available here, and Outlook's web UI
+  // has no stable thread-by-conversationId URL — land on the mailbox (pinned
+  // to the right account) rather than risk a broken deep link.
   microsoft_outlook: (account) => withOutlookLoginHint(outlookWebRoot(account.name), account.name),
 };
 

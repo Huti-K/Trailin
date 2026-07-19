@@ -176,7 +176,7 @@ export async function searchDrafts(query: string): Promise<SearchResult[]> {
   return results;
 }
 
-/** Library documents: content matches via the existing FTS5 chunk search, then title-only matches. */
+/** Library documents: content matches via the library's FTS5 chunk search, then title-only matches. */
 export async function searchDocuments(query: string): Promise<SearchResult[]> {
   const results: SearchResult[] = [];
   const seen = new Set<string>();

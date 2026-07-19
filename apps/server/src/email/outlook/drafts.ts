@@ -286,7 +286,7 @@ async function updateOutlookDraft(
  * Dispatch an existing draft via Graph's message send. Graph answers an empty
  * 202 with no message id — the sent copy gets a new id in Sent Items — so the
  * result carries no sentMessageId and the learning loop matches this send
- * from the mirror instead.
+ * from the provider's sent mail later instead.
  */
 async function sendOutlookDraft(
   account: ConnectedAccount,

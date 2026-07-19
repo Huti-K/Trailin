@@ -59,9 +59,8 @@ export function useChatRuns({
   const pendingFocusRef = React.useRef(pendingFocusAccountId);
   pendingFocusRef.current = pendingFocusAccountId;
   // Mirrors `state` synchronously so a handler can read the freshest value
-  // even before React has re-rendered — the same guarantee the refs this
-  // hook replaces used to give (e.g. newConversation() immediately followed
-  // by a send() in the same tick, as trailin:send-chat does).
+  // even before React has re-rendered (e.g. newConversation() immediately
+  // followed by a send() in the same tick, as trailin:send-chat does).
   const stateRef = React.useRef(createInitialRunState());
   const [state, setState] = React.useState(stateRef.current);
 

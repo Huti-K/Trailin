@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { AgentCard, EmailRef, MessageCard } from "@trailin/shared";
+import type { AgentCard, ChatToolCall, EmailRef, MessageCard } from "@trailin/shared";
 import { type EnsureConversationInput, ensureConversation } from "../db/conversationStore.js";
 import { linkDraftConversation } from "../db/draftStore.js";
 import { db, schema, sqlite } from "../db/index.js";
@@ -29,18 +29,24 @@ import { type AgentSession, createEphemeralSession, getOrCreateSession } from ".
 const log = moduleLogger("turnRecorder");
 
 /**
- * Collects the cards one agent turn emits so the caller can persist them with
- * the assistant message, and links every draft the turn creates back to this
- * conversation on its agent_drafts snapshot — that link is what lets the
- * Drafts list reopen the exact conversation a draft came from. Used by both
- * the chat route and the automation runner (a run id doubles as its
- * conversation id).
+ * Collects what one agent turn produces — its cards and its tool activity —
+ * so the caller can persist both with the assistant message, and links every
+ * draft the turn creates back to this conversation on its agent_drafts
+ * snapshot (that link is what lets the Drafts list reopen the exact
+ * conversation a draft came from). The tool-call record serves the UI's
+ * activity view and the model-history rebuild alike (agent/history.ts).
+ * `wrap` layers the collection onto the caller's own streaming handlers —
+ * both run on every event. Used by the chat route and the automation runner
+ * (a run id doubles as its conversation id).
  */
-function collectTurnCards(conversationId: string): {
+function collectTurnActivity(conversationId: string): {
   cards: MessageCard[];
-  onCard: (toolCallId: string, card: AgentCard) => void;
+  toolCalls: ChatToolCall[];
+  wrap: (caller?: RunHandlers) => RunHandlers;
 } {
   const cards: MessageCard[] = [];
+  const toolCalls: ChatToolCall[] = [];
+  let textLength = 0;
 
   const onCard = (toolCallId: string, card: AgentCard) => {
     // A retried tool call replaces its earlier card, same as the live chat UI.
@@ -70,7 +76,44 @@ function collectTurnCards(conversationId: string): {
     }
   };
 
-  return { cards, onCard };
+  const wrap = (caller: RunHandlers = {}): RunHandlers => ({
+    ...caller,
+    onTextDelta: (delta) => {
+      textLength += delta.length;
+      caller.onTextDelta?.(delta);
+    },
+    onToolStart: (toolCallId, toolName, toolLabel, parameters) => {
+      const call: ChatToolCall = {
+        id: toolCallId,
+        name: toolName,
+        label: toolLabel,
+        isError: false,
+        done: false,
+        parameters,
+        contentOffset: textLength,
+      };
+      // A retried tool call replaces its earlier record, same as its card.
+      const existing = toolCalls.findIndex((c) => c.id === toolCallId);
+      if (existing >= 0) toolCalls[existing] = call;
+      else toolCalls.push(call);
+      caller.onToolStart?.(toolCallId, toolName, toolLabel, parameters);
+    },
+    onToolEnd: (toolCallId, toolName, isError, result) => {
+      const call = toolCalls.find((c) => c.id === toolCallId);
+      if (call) {
+        call.done = true;
+        call.isError = isError;
+        call.result = result;
+      }
+      caller.onToolEnd?.(toolCallId, toolName, isError, result);
+    },
+    onCard: (toolCallId, card) => {
+      onCard(toolCallId, card);
+      caller.onCard?.(toolCallId, card);
+    },
+  });
+
+  return { cards, toolCalls, wrap };
 }
 
 /** Serializes a turn's cards for the messages.cards column; null when there were none. */
@@ -104,8 +147,8 @@ export class TurnInFlightError extends Error {
 export interface TurnSessions {
   /** One long-lived session per conversation, rebuilt from its prior turns. */
   pooled(conversationId: string): Promise<AgentSession>;
-  /** A throwaway session for one automation run. */
-  ephemeral(): Promise<AgentSession>;
+  /** A throwaway session for one automation run; the run id is its conversation id. */
+  ephemeral(conversationId: string): Promise<AgentSession>;
 }
 
 const realSessions: TurnSessions = {
@@ -192,7 +235,7 @@ export function beginTurn(conversationId: string): Turn {
         session =
           opts.session === "pooled"
             ? await sessions.pooled(conversationId)
-            : await sessions.ephemeral();
+            : await sessions.ephemeral(conversationId);
       } catch (error) {
         // Never acquired a session, so there's nothing to close and no user
         // row was written — just give the guard back.
@@ -244,19 +287,12 @@ export function beginTurn(conversationId: string): Turn {
           });
         }
 
-        // Collects this turn's cards for the outcome row below (and links
-        // any created draft back to this conversation — collectTurnCards'
-        // own job). The caller's onCard (chat's SSE "card" event) must see
-        // every card too, so wrap rather than pick one: both run on every card.
-        const collector = collectTurnCards(conversationId);
-        const callerOnCard = opts.handlers?.onCard;
-        const handlers: RunHandlers = {
-          ...opts.handlers,
-          onCard: (toolCallId, card) => {
-            collector.onCard(toolCallId, card);
-            callerOnCard?.(toolCallId, card);
-          },
-        };
+        // Collects this turn's cards and tool activity for the outcome row
+        // below (and links any created draft back to this conversation —
+        // collectTurnActivity's own job), layered over the caller's streaming
+        // handlers so both see every event.
+        const collector = collectTurnActivity(conversationId);
+        const handlers = collector.wrap(opts.handlers);
 
         const recordOutcome = async (content: string): Promise<void> => {
           await db.insert(schema.messages).values({
@@ -265,6 +301,7 @@ export function beginTurn(conversationId: string): Turn {
             role: "assistant",
             content,
             cards: serializeTurnCards(collector.cards),
+            toolCalls: collector.toolCalls.length > 0 ? JSON.stringify(collector.toolCalls) : null,
             createdAt: new Date().toISOString(),
           });
           emitServerEvent("conversations");
@@ -343,11 +380,12 @@ const RECOVERY_MARKER =
  * recovery in automations/scheduler.ts.
  */
 export async function recoverInterruptedTurns(): Promise<void> {
-  // Each chat conversation whose newest message row is from the user. Scoped
+  // Each chat conversation whose newest turn row is from the user. Scoped
   // to type='chat': a crashed or timed-out automation run records its own
   // error on the run row (scheduler.ts), and "send your message again" is
-  // meaningless there. The rowid tie-break makes "newest" total even if two
-  // rows share a millisecond.
+  // meaningless there. Compaction rows don't count — one can land between a
+  // user row and the crash, and it is not a reply. The rowid tie-break makes
+  // "newest" total even if two rows share a millisecond.
   const stranded = sqlite
     .prepare(
       `SELECT m.conversation_id AS conversationId
@@ -357,6 +395,7 @@ export async function recoverInterruptedTurns(): Promise<void> {
           AND NOT EXISTS (
             SELECT 1 FROM messages n
              WHERE n.conversation_id = m.conversation_id
+               AND n.role IN ('user', 'assistant')
                AND (n.created_at > m.created_at
                     OR (n.created_at = m.created_at AND n.rowid > m.rowid))
           )`,

@@ -2,9 +2,9 @@ import type { Agent } from "@earendil-works/pi-agent-core";
 import { moduleLogger, type TurnLogger } from "../logger.js";
 import { buildAgent } from "./assembly.js";
 import { sessionCapabilities } from "./capabilities.js";
-import { maybeCompact } from "./compaction.js";
+import { compactedMessages } from "./compaction.js";
 import { type EmailToolset, loadEmailTools } from "./emailToolset.js";
-import { loadHistory } from "./history.js";
+import { loadHistory, recordCompactionMarker } from "./history.js";
 import { buildSystemPrompt } from "./prompt.js";
 import { type RunHandlers, runPrompt } from "./run.js";
 
@@ -42,21 +42,42 @@ export interface AgentSession {
   ): Promise<string>;
 }
 
-/** Wraps a fresh agent/toolset pair with the busy-tracking runTurn every cached session shares. */
-function createAgentSession(agent: Agent, toolset: EmailToolset): AgentSession {
+/**
+ * Wraps a fresh agent/toolset pair with the busy-tracking runTurn every
+ * session shares. The compact hook trims the transcript in place and, since
+ * every session belongs to a durable conversation, persists the compaction
+ * marker so a rebuilt session starts from the same compacted shape
+ * (agent/history.ts) — fail-open, a marker write must never sink the turn.
+ */
+function createAgentSession(
+  agent: Agent,
+  toolset: EmailToolset,
+  conversationId: string,
+): AgentSession {
   const session: AgentSession = {
     agent,
     toolset,
     inFlight: 0,
     lastUsed: Date.now(),
-    async runTurn(prompt, handlers, signal, log) {
+    async runTurn(prompt, handlers, signal, turnLog) {
       session.inFlight++;
       try {
         return await runPrompt(session, prompt, {
           handlers,
           signal,
-          log,
-          compact: (options) => maybeCompact(session.agent, log, options),
+          log: turnLog,
+          compact: async (options) => {
+            const next = await compactedMessages(session.agent.state, turnLog, options);
+            if (!next) return false;
+            session.agent.state.messages = next;
+            await recordCompactionMarker(conversationId, next).catch((err: unknown) => {
+              (turnLog ?? log).warn(
+                { err, conversationId },
+                "persisting the compaction marker failed",
+              );
+            });
+            return true;
+          },
         });
       } finally {
         session.inFlight--;
@@ -136,6 +157,7 @@ export async function getOrCreateSession(conversationId: string): Promise<AgentS
       const session = createAgentSession(
         await buildAgent(toolset, history, caps, conversationId),
         toolset,
+        conversationId,
       );
       sessions.set(conversationId, session);
       if (sessions.size > SESSION_MAX_COUNT) sweepSessions();
@@ -181,16 +203,20 @@ export async function disposeSession(conversationId: string): Promise<void> {
 }
 
 /**
- * Create a throwaway session (used by scheduled automations). No human
- * reviews a scheduled run's actions before they happen, so the unattended
- * profile withholds every provider write tool while leaving draft tools
- * untouched (providerWrites, see loadEmailTools).
+ * Create a throwaway session for one automation run (the run id is its
+ * conversation id). No human reviews a scheduled run's actions before they
+ * happen, so the unattended profile withholds every provider write tool
+ * while leaving draft tools untouched (providerWrites, see loadEmailTools).
  */
-export async function createEphemeralSession(): Promise<AgentSession> {
+export async function createEphemeralSession(conversationId: string): Promise<AgentSession> {
   const caps = await sessionCapabilities(false);
   const toolset = await loadEmailTools({ providerWrites: caps.providerWrites });
   try {
-    return createAgentSession(await buildAgent(toolset, [], caps), toolset);
+    return createAgentSession(
+      await buildAgent(toolset, [], caps, conversationId),
+      toolset,
+      conversationId,
+    );
   } catch (error) {
     // buildAgent failing (bad model config, a settings read failing) must not
     // leak the MCP connections loadEmailTools already opened — this runs on

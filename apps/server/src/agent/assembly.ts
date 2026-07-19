@@ -39,9 +39,10 @@ export async function buildAgent(
   history: Message[],
   caps: SessionCapabilities,
   /**
+   * The session's conversation id (a run id for automation sessions).
    * Forwarded to providers that support session-scoped caching or affinity
-   * headers (see pi-ai's SimpleStreamOptions.sessionId). The conversation id
-   * for pooled sessions; unset for throwaway automation sessions.
+   * headers (see pi-ai's SimpleStreamOptions.sessionId), and the address the
+   * between-turns compaction hook persists its marker under.
    */
   sessionId?: string,
 ): Promise<Agent> {

@@ -73,10 +73,10 @@ export function previousCronRun(
  *  alone this would recur annually — the caller disables the automation
  *  after this first *successful* run so it behaves as a one-time schedule.
  *  Nothing in the automation row or the API distinguishes this from a
- *  hand-written annual cron like "0 9 15 3 *" (checked apps/web/src and the
- *  automations schema/routes — no oneOff/type flag exists anywhere), so an
- *  annual cron that happens to match this shape is retired after its first
- *  run too. Accepted as the closest guess available without a schema change. */
+ *  hand-written annual cron like "0 9 15 3 *" (no oneOff/type flag exists
+ *  anywhere), so an annual cron that happens to match this shape is retired
+ *  after its first run too. Accepted as the closest guess available without
+ *  a schema change. */
 function isOneOffSchedule(expression: string): boolean {
   const parts = expression.trim().split(/\s+/);
   if (parts.length !== 5) return false;

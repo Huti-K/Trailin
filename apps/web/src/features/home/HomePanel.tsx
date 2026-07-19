@@ -193,11 +193,10 @@ export function HomePanel({
 
   // The flagship output: the pinned automation's latest successful run, when
   // one is pinned. Otherwise fall back to the most recent successful run that
-  // carries a structured briefing card, so installs with nothing pinned yet
-  // behave exactly as before pinning existed. Sorted explicitly rather than
+  // carries a structured briefing card. Sorted explicitly rather than
   // trusting feed order, since that's a server-side detail this component
-  // shouldn't depend on. A run predating compose_briefing has no card and is
-  // never picked as the hero — it still shows up in the plain activity feed.
+  // shouldn't depend on. A run without a briefing card is never picked as
+  // the hero — it still shows up in the plain activity feed.
   const heroRun = React.useMemo(() => {
     if (pinned?.run) return pinned.run;
     if (!runs) return null;
@@ -471,9 +470,8 @@ function ActivitySection({
 
   const todayRuns = (runs ?? []).filter((r) => isToday(r.startedAt));
   const earlierRuns = (runs ?? []).filter((r) => !isToday(r.startedAt));
-  // `runs` arrives newest-first from the feed, so its head is the one card
-  // that was expanded by default before today/earlier existed as separate
-  // groups — preserve that regardless of which group it lands in.
+  // `runs` arrives newest-first from the feed, so its head is the newest run
+  // — the one card expanded by default, whichever day group it lands in.
   const firstRunId = runs?.[0]?.id;
 
   const hasAutomations = (automations?.length ?? 0) > 0;

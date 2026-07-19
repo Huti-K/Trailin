@@ -37,7 +37,7 @@ export function EmailDraftCard({ card, color }: { card: EmailDraftData; color?: 
   const webUrl = draft.webUrl;
   const accountId = account?.accountId;
   // Without a known account there's nowhere to send/discard against — the
-  // card falls back to a read-only preview, same as before this feature.
+  // card falls back to a read-only preview.
   const canAct = Boolean(accountId);
   const keepKey = keepStorageKey(draft.draftId);
 

@@ -13,7 +13,7 @@ const buttonVariants = cva(
         default: "bg-accent text-accent-foreground hover:bg-accent/90",
         /* The confirm CTA in destructive dialogs (ConfirmDialog's default). */
         destructive: "bg-destructive text-destructive-foreground hover:bg-destructive/90",
-        // Formerly "outline" — now a quiet tonal fill (no border).
+        // "outline" in name only — a quiet tonal fill, no border.
         outline: "bg-surface-2 text-foreground hover:bg-secondary",
         secondary: "bg-secondary text-secondary-foreground hover:bg-secondary/70",
         ghost: "text-muted-foreground hover:bg-secondary hover:text-foreground",

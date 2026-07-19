@@ -12,8 +12,8 @@ import type { SearchResult } from "@trailin/shared";
  *
  * Stashing the same payload here lets the panel's mount effect pick it up
  * (read-and-clear, see the take* functions) even when the live listener
- * missed it. The CustomEvent path is unchanged and still handles the case
- * where the panel is already mounted.
+ * missed it. The CustomEvent path handles the case where the panel is
+ * already mounted.
  */
 
 interface DraftFocus {

@@ -135,8 +135,8 @@ page underneath should stay readable through it, never frost over. Everything el
 about floating panels still follows the rules above:
 
 - **Zones inside a floating panel separate by tone, never by line.** The palette's
-  preview pane and footer are recessed fills (`surface-2/50`) on the panel surface —
-  the borderless equivalent of a divider.
+  footer is a recessed fill (`surface-2/50`) on the panel surface — the borderless
+  equivalent of a divider.
 - **Loading is an accent sweep, not a spinner swap.** While a query is in flight the
   previous results stay on screen and a thin accent bar sweeps; the strip is invisible
   at rest.
