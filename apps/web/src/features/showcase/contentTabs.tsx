@@ -4,8 +4,9 @@
  * fixtures that feed them. Safe to delete with the folder.
  */
 
-import type { AccountColor, AccountDrafts, Automation, RunFeedItem } from "@trailin/shared";
+import type { AccountColor } from "@trailin/shared";
 import { Wrench } from "lucide-react";
+import * as React from "react";
 import { useTranslation } from "react-i18next";
 import { AgentCardView } from "@/components/cards";
 import { SHOWCASE_TURNS, type ShowcaseTurn } from "@/components/cards/samples";
@@ -14,7 +15,7 @@ import { Card } from "@/components/ui/card";
 import { Markdown } from "@/components/ui/markdown";
 import { Section } from "@/components/ui/section-header";
 import { Spinner } from "@/components/ui/spinner";
-import { GlanceStrip } from "@/features/home/GlanceStrip";
+import { StorageBrowser, type StorageNode } from "@/features/storage/StorageBrowser";
 import { cn } from "@/lib/utils";
 import {
   DisclosureDemo,
@@ -29,68 +30,11 @@ import {
 
 /* ── Fixtures for the feature components ─────────────────────────────────── */
 
-const hoursAgo = (n: number) => new Date(Date.now() - n * 3_600_000).toISOString();
-
 /** Account ids match `samples.ts`, so the chat cards pick these dots up. */
 const DEMO_COLORS: AccountColor[] = [
   { accountId: "demo-work", hex: "#4f46e5" },
   { accountId: "demo-personal", hex: "#0d9488" },
 ];
-
-const DEMO_DRAFTS: AccountDrafts[] = [
-  {
-    account: "selin@nordwind-studio.de",
-    accountId: "demo-work",
-    drafts: [
-      {
-        id: "draft-acme-2291-reply",
-        messageId: "msg-acme-2291-2",
-        threadId: "thread-acme-2291",
-        subject: "Re: Rechnung #A-2291 – Zahlungserinnerung",
-        to: "t.brandt@acme-gmbh.de",
-        date: hoursAgo(3),
-        webUrl: "#",
-        snippet: "Anbei nochmal Rechnung #A-2291 als PDF. Unser Zahlungsziel war der 30. Juni.",
-      },
-    ],
-  },
-];
-
-const DEMO_AUTOMATIONS: Automation[] = [
-  {
-    id: "auto-briefing",
-    name: "Morgenbriefing",
-    instruction: "Fasse zusammen, was in beiden Postfächern meine Aufmerksamkeit braucht.",
-    schedule: "0 8 * * 1-5",
-    enabled: true,
-    showInActivity: true,
-    pinned: true,
-    leadId: null,
-    runOnNewMail: false,
-    notifyOnCompletion: false,
-    createdAt: hoursAgo(720),
-    nextRunAt: new Date(Date.now() + 5 * 3_600_000).toISOString(),
-  },
-];
-
-/** The briefing fixture from the chat samples, wrapped as a finished run so
- *  GlanceStrip's urgent figure has a hero run to count from. */
-const DEMO_BRIEFING = SHOWCASE_TURNS.flatMap((turn) => turn.cards ?? []).find(
-  (card) => card.kind === "briefing",
-);
-
-const DEMO_HERO_RUN: RunFeedItem | null = DEMO_BRIEFING
-  ? {
-      id: "run-demo-briefing",
-      automationId: "auto-briefing",
-      automationName: "Morgenbriefing",
-      status: "success",
-      result: "",
-      startedAt: hoursAgo(2),
-      finishedAt: hoursAgo(2),
-      cards: [{ toolCallId: "tool-demo-briefing", card: DEMO_BRIEFING }],
-    }
-  : null;
 
 const MARKDOWN_DEMO = `### What the assistant's replies render as
 
@@ -107,6 +51,76 @@ const MARKDOWN_DEMO = `### What the assistant's replies render as
 | Personal | 2 | 1 |
 
 More context lives at [nordwind-studio.de](https://nordwind-studio.de).`;
+
+function demoFolder(
+  id: string,
+  parentId: string | null,
+  name: string,
+  updatedAt: string,
+): StorageNode {
+  return {
+    id,
+    parentId,
+    kind: "folder",
+    name,
+    ext: null,
+    sizeBytes: null,
+    updatedAt,
+  };
+}
+
+function demoFile(
+  id: string,
+  parentId: string | null,
+  name: string,
+  sizeBytes: number,
+  updatedAt: string,
+): StorageNode {
+  const ext = name.slice(name.lastIndexOf(".") + 1).toLowerCase();
+  return {
+    id,
+    parentId,
+    kind: "file",
+    name,
+    ext,
+    sizeBytes,
+    updatedAt,
+  };
+}
+
+const STORAGE_NODES: StorageNode[] = [
+  demoFolder("st-docs", null, "Dokumente", "2026-07-10T09:00:00Z"),
+  demoFolder("st-contracts", "st-docs", "Verträge", "2026-07-08T14:20:00Z"),
+  demoFolder("st-photos", null, "Bilder", "2026-06-30T11:00:00Z"),
+  demoFile("st-expose", "st-docs", "Exposé Elbchaussee 12.pdf", 2_450_000, "2026-07-16T10:12:00Z"),
+  demoFile("st-desc", "st-docs", "Objektbeschreibung.md", 8_200, "2026-07-15T16:40:00Z"),
+  demoFile(
+    "st-makler",
+    "st-contracts",
+    "Maklervertrag Muster.pdf",
+    240_000,
+    "2026-07-02T09:30:00Z",
+  ),
+  demoFile(
+    "st-miete",
+    "st-contracts",
+    "Mietvertrag Elbchaussee 12.pdf",
+    480_000,
+    "2026-07-12T13:05:00Z",
+  ),
+  demoFile(
+    "st-fassade",
+    "st-photos",
+    "Fassade Elbchaussee 12.jpg",
+    3_100_000,
+    "2026-06-28T08:45:00Z",
+  ),
+  demoFile("st-eg", "st-photos", "Grundriss EG.png", 1_200_000, "2026-06-29T09:10:00Z"),
+  demoFile("st-og", "st-photos", "Grundriss OG.png", 1_150_000, "2026-06-29T09:12:00Z"),
+  demoFile("st-leads", null, "Leads Juli.xlsx", 96_000, "2026-07-17T18:00:00Z"),
+  demoFile("st-provision", null, "Provisionen 2026.xlsx", 64_000, "2026-07-05T12:00:00Z"),
+  demoFile("st-notes", null, "Notizen Besichtigung.md", 4_100, "2026-07-18T07:55:00Z"),
+];
 
 /** Paged lists, disclosure, run/thread plumbing, and the interaction systems. */
 export function SystemsTab() {
@@ -160,14 +174,27 @@ export function ContentTab() {
           <Markdown content={MARKDOWN_DEMO} />
         </Card>
       </Section>
-
-      <Section
-        title="Home widgets"
-        description="The at-a-glance strip with all three figures lit: drafts, the hero run's urgent count, and the next scheduled run. Fed static fixtures here — the real one reads the server."
-      >
-        <GlanceStrip drafts={DEMO_DRAFTS} heroRun={DEMO_HERO_RUN} automations={DEMO_AUTOMATIONS} />
-      </Section>
     </>
+  );
+}
+
+/** The file-browser surface, running entirely on local demo data. */
+export function StorageTab() {
+  const [nodes, setNodes] = React.useState(STORAGE_NODES);
+  const [query, setQuery] = React.useState("");
+  return (
+    <Section
+      title="Storage browser"
+      description="Saved views and folder tree in the rail, breadcrumb toolbar with search, sort and layout controls, list or tile listings with hover actions. Runs on local demo data; deleting removes the row locally. The Knowledge page mounts this over the real knowledge folder."
+    >
+      <StorageBrowser
+        nodes={nodes}
+        query={query}
+        onQueryChange={setQuery}
+        onDelete={(node) => setNodes((prev) => prev.filter((n) => n.id !== node.id))}
+        className="h-[560px]"
+      />
+    </Section>
   );
 }
 

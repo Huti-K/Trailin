@@ -1,5 +1,5 @@
 import type { Agent } from "@earendil-works/pi-agent-core";
-import { moduleLogger, type TurnLogger } from "../logger.js";
+import { moduleLogger, type TurnLogger } from "../core/logger.js";
 import { buildAgent } from "./assembly.js";
 import { sessionCapabilities } from "./capabilities.js";
 import { compactedMessages } from "./compaction.js";
@@ -8,31 +8,22 @@ import { loadHistory, recordCompactionMarker } from "./history.js";
 import { buildSystemPrompt } from "./prompt.js";
 import { type RunHandlers, runPrompt } from "./run.js";
 
-/**
- * The agent sessions themselves: one pooled pi Agent per conversation (idle
- * TTL + LRU capped, swept on a timer) plus throwaway ephemeral sessions for
- * automation runs. Owns every session's lifecycle — creation, the busy
- * tracking that keeps the sweeper from closing a toolset mid-turn, and
- * disposal of the MCP connections a toolset holds.
- */
-
 const log = moduleLogger("sessionCache");
 
 export interface AgentSession {
   agent: Agent;
   toolset: EmailToolset;
   /**
-   * Turns currently running against this session. sweepSessions (below) must
-   * never close a session's toolset while this is above zero — go through
-   * runTurn (not the bare runPrompt) so a turn can't forget to mark itself.
+   * Turns running against this session. sweepSessions never closes a
+   * session's toolset while this is above zero; go through runTurn (not the
+   * bare runPrompt) so a turn can't forget to mark itself.
    */
   inFlight: number;
-  /** Idle/LRU eviction clock: refreshed on creation, on lookup, and when a turn ends. */
+  /** Idle/LRU eviction clock; refreshed on creation, lookup, and turn end. */
   lastUsed: number;
   /**
-   * Runs one prompt through this session, exactly like the standalone
-   * runPrompt, but also marks the session busy for the turn's duration and
-   * refreshes lastUsed when it ends — see sweepSessions.
+   * Like the standalone runPrompt, but also marks the session busy for the
+   * turn's duration and refreshes lastUsed when it ends (see sweepSessions).
    */
   runTurn(
     prompt: string,
@@ -43,11 +34,10 @@ export interface AgentSession {
 }
 
 /**
- * Wraps a fresh agent/toolset pair with the busy-tracking runTurn every
- * session shares. The compact hook trims the transcript in place and, since
- * every session belongs to a durable conversation, persists the compaction
- * marker so a rebuilt session starts from the same compacted shape
- * (agent/history.ts) — fail-open, a marker write must never sink the turn.
+ * Wraps a fresh agent/toolset pair with the busy-tracking runTurn. The compact
+ * hook trims the transcript in place and persists the compaction marker so a
+ * rebuilt session starts from the same compacted shape (history.ts); fail-open,
+ * a marker write never sinks the turn.
  */
 function createAgentSession(
   agent: Agent,
@@ -88,19 +78,18 @@ function createAgentSession(
   return session;
 }
 
-// Idle sessions keep their MCP connections open for nothing; cap both how
-// long one can sit unused and how many can exist at once.
+// Idle sessions keep their MCP connections open for nothing; cap how long one
+// can sit unused and how many can exist at once.
 const SESSION_IDLE_TTL_MS = 30 * 60 * 1000;
 const SESSION_MAX_COUNT = 20;
 const SESSION_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 
 const sessions = new Map<string, AgentSession>();
-// In-flight session creations, keyed by conversationId — lets two concurrent
-// requests for a brand-new conversation share one creation instead of each
-// opening (and one of them leaking) its own MCP session.
+// In-flight session creations, keyed by conversationId: lets two concurrent
+// requests for a new conversation share one creation instead of each opening
+// (and one leaking) its own MCP session.
 const pendingSessions = new Map<string, Promise<AgentSession>>();
 
-/** Same disposal path resetSessions()/disposeSession() use, for idle/LRU eviction too. */
 function evictSession(conversationId: string, session: AgentSession): void {
   sessions.delete(conversationId);
   void session.toolset.close().catch((err: unknown) => {
@@ -129,23 +118,22 @@ function sweepSessions(): void {
 const sweepTimer = setInterval(sweepSessions, SESSION_SWEEP_INTERVAL_MS);
 sweepTimer.unref();
 
-/** One pi Agent per conversation; context lives in process memory. */
 export async function getOrCreateSession(conversationId: string): Promise<AgentSession> {
   const existing = sessions.get(conversationId);
   if (existing) {
     existing.lastUsed = Date.now();
-    // Memory/library/settings context can go stale on a long-lived session —
+    // Memory/library/settings context can go stale on a long-lived session, so
     // recompute the system prompt before every prompt. The rebuild is
-    // byte-identical unless those inputs actually changed (buildSystemPrompt
-    // holds no clock or per-request values), so the provider's cached prefix
-    // survives every turn where nothing moved.
+    // byte-identical unless those inputs changed (buildSystemPrompt holds no
+    // clock or per-request values), so the provider's cached prefix survives
+    // every turn where nothing moved.
     existing.agent.state.systemPrompt = await buildSystemPrompt();
     return existing;
   }
 
-  // Two concurrent requests for the same new conversationId must share one
-  // creation — otherwise both pass the check above and each opens its own
-  // MCP session, leaking whichever one loses the race to `sessions.set`.
+  // Two concurrent requests for the same new conversationId share one
+  // creation; otherwise both pass the check above and each opens its own MCP
+  // session, leaking whichever loses the race to `sessions.set`.
   const inFlight = pendingSessions.get(conversationId);
   if (inFlight) return inFlight;
 
@@ -164,8 +152,8 @@ export async function getOrCreateSession(conversationId: string): Promise<AgentS
       return session;
     } catch (error) {
       // toolsetPromise may have resolved (live MCP connections open) even
-      // though loadHistory or buildAgent failed — close it instead of
-      // leaking those connections on every retry of a failing conversation.
+      // though loadHistory or buildAgent failed; close it instead of leaking
+      // those connections on every retry of a failing conversation.
       await toolsetPromise
         .then((t) => t.close())
         .catch((err: unknown) => {
@@ -182,7 +170,6 @@ export async function getOrCreateSession(conversationId: string): Promise<AgentS
   }
 }
 
-/** Drop all in-memory agent sessions (e.g. after auth or model changes). */
 export async function resetSessions(): Promise<void> {
   const all = [...sessions.values()];
   sessions.clear();
@@ -204,9 +191,9 @@ export async function disposeSession(conversationId: string): Promise<void> {
 
 /**
  * Create a throwaway session for one automation run (the run id is its
- * conversation id). No human reviews a scheduled run's actions before they
- * happen, so the unattended profile withholds every provider write tool
- * while leaving draft tools untouched (providerWrites, see loadEmailTools).
+ * conversation id). No human reviews a scheduled run's actions, so the
+ * unattended profile withholds every provider write tool while leaving draft
+ * tools untouched (providerWrites, see loadEmailTools).
  */
 export async function createEphemeralSession(conversationId: string): Promise<AgentSession> {
   const caps = await sessionCapabilities(false);
@@ -218,8 +205,8 @@ export async function createEphemeralSession(conversationId: string): Promise<Ag
       conversationId,
     );
   } catch (error) {
-    // buildAgent failing (bad model config, a settings read failing) must not
-    // leak the MCP connections loadEmailTools already opened — this runs on
+    // buildAgent failing (bad model config, a settings read failing) doesn't
+    // leak the MCP connections loadEmailTools already opened; this runs on
     // every scheduled automation tick.
     await toolset.close().catch((err: unknown) => {
       log.warn({ err }, "closing the ephemeral session's MCP sessions failed");

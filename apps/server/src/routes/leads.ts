@@ -3,17 +3,10 @@ import { Type } from "@sinclair/typebox";
 import type { Automation, Lead } from "@trailin/shared";
 import { desc, eq } from "drizzle-orm";
 import { getNextRunAt } from "../automations/scheduler.js";
+import { notFound } from "../core/errors.js";
 import { db, schema } from "../db/index.js";
 import { getLead, type LeadPatch, listLeads, updateLead } from "../db/leads.js";
-import { notFound } from "../errors.js";
 import { recordLead, removeLead } from "../leads/manage.js";
-
-/**
- * The leads directory API. POST is the intake upsert (leads/manage.ts): one
- * row per normalized address, so re-recording a known correspondent merges
- * instead of duplicating. PATCH is the explicit editor; DELETE cascades over
- * the lead's automations.
- */
 
 const idParams = Type.Object({ id: Type.String() });
 
@@ -28,10 +21,10 @@ const statusValue = Type.Union([
 
 const listQuery = Type.Object({ status: Type.Optional(statusValue) });
 
-const scoreValue = Type.Union([
-  Type.Literal("high"),
-  Type.Literal("medium"),
-  Type.Literal("low"),
+const priorityValue = Type.Union([
+  Type.Literal("A"),
+  Type.Literal("B"),
+  Type.Literal("C"),
   Type.Literal(""),
 ]);
 
@@ -46,7 +39,8 @@ const recordBody = Type.Object({
   onofficeAddressId: Type.Optional(Type.String()),
   interest: Type.Optional(Type.String()),
   persona: Type.Optional(Type.String()),
-  score: Type.Optional(scoreValue),
+  priority: Type.Optional(priorityValue),
+  language: Type.Optional(Type.String()),
   notes: Type.Optional(Type.String()),
 });
 
@@ -58,7 +52,8 @@ const patchBody = Type.Object({
   status: Type.Optional(statusValue),
   interest: Type.Optional(Type.String()),
   persona: Type.Optional(Type.String()),
-  score: Type.Optional(scoreValue),
+  priority: Type.Optional(priorityValue),
+  language: Type.Optional(Type.String()),
   notes: Type.Optional(Type.String()),
   lastInboundAt: Type.Optional(Type.String()),
   lastOutboundAt: Type.Optional(Type.String()),
@@ -93,7 +88,6 @@ export const leadsRoutes: FastifyPluginAsyncTypebox = async (app) => {
     return { ok: true };
   });
 
-  /** The automations attached to one lead, for the lead's detail view. */
   app.get(
     "/api/leads/:id/automations",
     { schema: { params: idParams } },

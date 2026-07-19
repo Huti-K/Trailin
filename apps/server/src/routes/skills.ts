@@ -1,8 +1,8 @@
 import type { FastifyPluginAsyncTypebox } from "@fastify/type-provider-typebox";
 import { Type } from "@sinclair/typebox";
-import { badRequest, notFound } from "../errors.js";
-import { deleteSkill, listSkills, readSkill, writeSkill } from "../skills/store.js";
-import { errorMessage } from "../utils/util.js";
+import { badRequest, notFound } from "../core/errors.js";
+import { errorMessage } from "../core/utils/util.js";
+import { deleteSkill, listSkills, readSkill, writeSkill } from "../storage/skills/store.js";
 
 const skillBody = Type.Object({
   description: Type.String(),
@@ -11,13 +11,8 @@ const skillBody = Type.Object({
 
 const nameParams = Type.Object({ name: Type.String() });
 
-/**
- * The user's skills, managed on the Knowledge page. The store is the skills
- * folder itself (skills/store.ts), and the agent's prompt index is rebuilt
- * from it on every turn — an edit here reaches the next message on its own.
- * PUT is create-or-overwrite by name, matching the store's file-per-skill
- * model; there is no separate create endpoint.
- */
+// The agent's prompt index is rebuilt from the skills folder every turn, so an
+// edit reaches the next message with no session reset.
 export const skillRoutes: FastifyPluginAsyncTypebox = async (app) => {
   app.get("/api/skills", async () => listSkills());
 
@@ -28,8 +23,6 @@ export const skillRoutes: FastifyPluginAsyncTypebox = async (app) => {
   });
 
   app.put("/api/skills/:name", { schema: { params: nameParams, body: skillBody } }, async (req) => {
-    // writeSkill validates the name and both fields (empty / too long);
-    // surface those as 400s.
     try {
       return await writeSkill(req.params.name, req.body.description, req.body.instructions);
     } catch (error) {

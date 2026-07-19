@@ -1,14 +1,7 @@
 import addrs from "email-addresses";
 import { type HtmlToTextOptions, htmlToText } from "html-to-text";
 
-/**
- * Provider-neutral text helpers shared by the mail provider drivers. Kept out
- * of any one provider file so gmail/outlook don't each carry a drifting copy.
- */
-
-/** Email bodies are for reading, not navigating: keep link text but drop
- * hrefs and images, and keep headings as written (html-to-text uppercases
- * them by default). */
+/** Keep link text but drop hrefs and images; keep heading case (html-to-text uppercases headings by default). */
 const STRIP_HTML_OPTIONS: HtmlToTextOptions = {
   wordwrap: false,
   selectors: [
@@ -21,15 +14,12 @@ const STRIP_HTML_OPTIONS: HtmlToTextOptions = {
   ],
 };
 
-/** Render an HTML body/preview as display text: tags gone, style/script
- * contents dropped, entities decoded. */
 export function stripHtml(html: string): string {
   return htmlToText(html, STRIP_HTML_OPTIONS).trim();
 }
 
 const SNIPPET_MAX_LENGTH = 140;
 
-/** One-line preview for list rows: collapse whitespace, cap length. */
 export function snippetFrom(text: string, maxLength = SNIPPET_MAX_LENGTH): string {
   const collapsed = text.replace(/\s+/g, " ").trim();
   if (collapsed.length <= maxLength) return collapsed;
@@ -37,12 +27,9 @@ export function snippetFrom(text: string, maxLength = SNIPPET_MAX_LENGTH): strin
 }
 
 /**
- * Split a To/Cc-style header value ("a@x.com, B <b@y.com>") into its entries.
- * RFC 5322-aware: a quoted display name may itself contain commas
- * ('"Kaya, Ayşe" <a@x.com>'), so the value is parsed rather than split, and
- * address groups are flattened to their members. A value that doesn't parse
- * as an address list at all falls back to a plain comma split rather than
- * returning nothing.
+ * Split a To/Cc header value into entries. RFC 5322-aware: a quoted display
+ * name may itself contain commas, so the value is parsed rather than split, and
+ * groups are flattened; a value that doesn't parse falls back to a comma split.
  */
 export function splitAddressList(value: string): string[] {
   const trimmed = value.trim();

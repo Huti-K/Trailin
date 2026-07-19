@@ -7,13 +7,16 @@ import {
   seedDefaultAutomations,
 } from "../automations/defaults.js";
 import { rescheduleAll } from "../automations/scheduler.js";
+import { badRequest } from "../core/errors.js";
+import { errorMessage } from "../core/utils/util.js";
 import { setOnOfficeAutomationCreates, setOnOfficeWriteAccess } from "../db/settings.js";
-import { badRequest } from "../errors.js";
-import { clearOnOfficeConfig, getOnOfficeStatus, saveOnOfficeConfig } from "../onoffice/config.js";
-import { errorMessage } from "../utils/util.js";
+import {
+  clearOnOfficeConfig,
+  getOnOfficeStatus,
+  saveOnOfficeConfig,
+} from "../integrations/onoffice/config.js";
 
-// Either field may be omitted to keep the saved one (the secret is never
-// returned to the browser, so an edit re-sends only what changed).
+// The secret is never returned to the browser, so an edit may omit either field to keep the saved one.
 const onOfficeConfigBody = Type.Object({
   token: Type.Optional(Type.String()),
   secret: Type.Optional(Type.String()),
@@ -30,9 +33,8 @@ export const onOfficeRoutes: FastifyPluginAsyncTypebox = async (app) => {
     }
     // Live agents hold an onOffice client built from the old credentials.
     await resetSessions();
-    // The lead workflow exists only alongside the CRM: connecting it seeds the
-    // requiresOnOffice defaults (first time) or resumes ones a disconnect
-    // paused, then rebuilds the cron tasks so freshly seeded rows run.
+    // Seed the requiresOnOffice defaults (or resume ones a disconnect paused),
+    // then reschedule so freshly seeded rows run.
     await seedDefaultAutomations();
     await resumeOnOfficeDefaults();
     await rescheduleAll();
@@ -42,17 +44,13 @@ export const onOfficeRoutes: FastifyPluginAsyncTypebox = async (app) => {
   app.delete("/api/onoffice", async () => {
     await clearOnOfficeConfig();
     await resetSessions();
-    // Their runs would fire without the lead/onOffice tools they're written
-    // around — pause them until credentials return.
+    // Without credentials these runs would fire without their lead/onOffice tools; pause until they return.
     await pauseOnOfficeDefaults();
     return getOnOfficeStatus();
   });
 
-  /**
-   * Arm/disarm the create tools for unattended automation runs (Settings →
-   * Permissions). Each automation run builds a fresh agent, so the change
-   * takes effect on the next run without a session reset.
-   */
+  // Each automation run builds a fresh agent, so this takes effect next run
+  // without a session reset (unlike write-access below).
   app.put(
     "/api/onoffice/automation-creates",
     { schema: { body: Type.Object({ enabled: Type.Boolean() }) } },
@@ -62,12 +60,8 @@ export const onOfficeRoutes: FastifyPluginAsyncTypebox = async (app) => {
     },
   );
 
-  /**
-   * Arm/disarm the CRM modify/delete/send tools for chat sessions (Settings →
-   * Permissions) — the onOffice counterpart of per-account email write
-   * access. Live agents hold the tool list built under the old setting, so
-   * flipping it resets sessions, unlike the per-run automation toggle above.
-   */
+  // Live agents hold the tool list built under the old setting, so flipping it
+  // resets sessions (unlike the per-run automation toggle above).
   app.put(
     "/api/onoffice/write-access",
     { schema: { body: Type.Object({ enabled: Type.Boolean() }) } },

@@ -1,43 +1,34 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "@sinclair/typebox";
-import { formatFileSize, type MemoryEntry } from "@trailin/shared";
+import { formatFileSize, MEMORY_MAX_COUNT, type MemoryEntry } from "@trailin/shared";
+import { groupBy } from "../core/utils/util.js";
+import { getLibraryDir, SUPPORTED_FORMATS } from "../storage/library/ingest.js";
+import {
+  getDocument,
+  listDocuments,
+  readDocumentChunks,
+  searchChunks,
+} from "../storage/library/store.js";
 import {
   createMemory,
   deleteMemory,
   listMemories,
   recordMemoryUse,
   updateMemory,
-} from "../db/memories.js";
-import { getLibraryDir, SUPPORTED_FORMATS, saveNote } from "../library/ingest.js";
-import { getDocument, listDocuments, readDocumentChunks, searchChunks } from "../library/store.js";
-import { groupBy } from "../utils/util.js";
+} from "../storage/memories/store.js";
 import { fetchAccountNameMap, resolveAccountParam } from "./accounts.js";
 import { clampLimit, textResult, tool } from "./toolkit.js";
 
-/**
- * The agent's local knowledge tools: long-term memory plus the document
- * library (the drop folder). Everything is served from SQLite — no network,
- * no extra processes.
- */
-
-/** Chunks per library_read part; ≈ 15k characters. Search hits cite these parts. */
+/** Chunks per library_read part, ≈ 15k characters. */
 const PART_CHUNKS = 8;
 
-/** A resolved memory scope: which axis (if any) the entry is pinned to, plus its display label. */
 interface MemoryScope {
   accountId: string | null;
   contactId: string | null;
   label: string;
 }
 
-/**
- * Parses a tool's `scope` parameter: "general" clears both scope axes,
- * "account:<address-or-id>" resolves against the connected accounts, and
- * "contact:<address>" pins the entry to one correspondent (lowercased,
- * matching how memories.contactId is normalized). Anything else — including
- * an account that doesn't resolve — comes back as error text for the tool to
- * return verbatim.
- */
+/** contact:<address> is lowercased to match how memories.contactId is normalized. */
 async function resolveMemoryScope(raw: string): Promise<MemoryScope | { error: string }> {
   const trimmed = raw.trim();
   if (trimmed.toLowerCase() === "general") {
@@ -72,10 +63,11 @@ const memorySave: AgentTool = tool({
     `(people, sign-offs, recurring context). Saved entries appear in your system prompt in ` +
     `every future conversation, so keep them terse. Do not save one-off task details, whole ` +
     `emails, or things already in memory. Anything longer-form or document-shaped — ` +
-    `correspondent background, a thread summary, research findings — belongs in the library ` +
-    `instead: use library_write. The user can review and edit memory on the Knowledge page. ` +
-    `When you file longer content as a library note that should be remembered proactively, ` +
-    `also save a one-sentence memory naming that note.`,
+    `correspondent background, a thread summary, research findings — belongs in your knowledge ` +
+    `folder instead: write it as a markdown note under knowledge/notes/ with file_write, and it ` +
+    `gets indexed for library_search. The user can review and edit memory on the Knowledge ` +
+    `page. When you file a longer note that should be remembered proactively, also save a ` +
+    `one-sentence memory naming it.`,
   params: {
     content: Type.String({
       description: "The fact to remember, as one short self-contained sentence.",
@@ -281,32 +273,6 @@ const libraryRead: AgentTool = tool({
   },
 });
 
-const libraryWrite: AgentTool = tool({
-  name: "library_write",
-  label: "Write library note",
-  description:
-    `Save longer-form knowledge as a markdown note in the user's library — background on a ` +
-    `correspondent, a thread summary, research findings, anything too long or document-shaped ` +
-    `for memory. Writing the same title again overwrites the note, so use that to update it. ` +
-    `Notes are indexed like any library document: find them later with library_search or read ` +
-    `them with library_read. The user sees the note on the Knowledge page and can edit or ` +
-    `delete it there. Not for one-sentence standing facts — use memory_save for those.`,
-  params: {
-    title: Type.String({
-      description:
-        "A short note title — becomes the file name (reuse an existing note's title to overwrite it).",
-    }),
-    content: Type.String({ description: "The note body, as markdown." }),
-  },
-  catchToText: true,
-  execute: async ({ title, content }) => {
-    const path = await saveNote(title, content);
-    return textResult(
-      `Saved note to the library at ${path} — it's now searchable with library_search.`,
-    );
-  },
-});
-
 export function buildKnowledgeTools(): AgentTool[] {
   return [
     memorySave,
@@ -316,37 +282,30 @@ export function buildKnowledgeTools(): AgentTool[] {
     libraryList,
     librarySearch,
     libraryRead,
-    libraryWrite,
   ];
 }
 
 /**
- * Read-only subset of the knowledge tools — no memory or library content
- * writes — given to background delegate workers and unattended runs.
- * memory_used is included even though it mutates a row: it only bumps a usage
- * counter on an existing entry, so it can't inject attacker-controlled content
- * into a later session's prompt the way memory_save could, and background
- * drafting is a real consumer of memories whose use should still be counted.
+ * Read-only subset for background workers and unattended runs. memory_used is
+ * included though it mutates: it only bumps a usage counter, so it can't
+ * inject attacker-controlled content into a later prompt the way memory_save
+ * could.
  */
 export function buildKnowledgeReadTools(): AgentTool[] {
   return [memoryUsed, libraryList, librarySearch, libraryRead];
 }
 
-/** Library titles listed in the system prompt are capped so it can't grow unbounded. */
+/** Caps library titles in the system prompt so it can't grow unbounded. */
 const LIBRARY_TOC_LIMIT = 100;
 
-/**
- * The dynamic context sections shared by the main agent's and the background
- * workers' system prompts: saved memories plus the library table of contents.
- * Returns "" when there is nothing to show.
- */
 export async function buildKnowledgeContext(): Promise<string> {
   let context = "";
 
-  const memories = await listMemories();
+  // The cap bounds the prompt even when the user hand-drops more files into
+  // memory/ than createMemory would ever allow.
+  const memories = (await listMemories()).slice(0, MEMORY_MAX_COUNT);
   if (memories.length > 0) {
-    const format = (list: MemoryEntry[]) =>
-      list.map((m) => `- [${m.id.slice(0, 8)}] ${m.content}`).join("\n");
+    const format = (list: MemoryEntry[]) => list.map((m) => `- [${m.id}] ${m.content}`).join("\n");
 
     const global = memories.filter((m) => m.accountId === null && m.contactId === null);
     const accountScoped = memories.filter((m) => m.accountId !== null);

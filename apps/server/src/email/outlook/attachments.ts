@@ -1,19 +1,11 @@
 import type { ConnectedAccount } from "@trailin/shared";
-import { proxyRequest } from "../../pipedream/connect.js";
+import { proxyRequest } from "../../integrations/pipedream/connect.js";
 import type { AttachmentProvider, EmailAttachment } from "../attachmentProviders.js";
 import { GRAPH_API } from "./message.js";
 
 /**
- * Outlook AttachmentProvider: lists a message's attachments and downloads
- * their bytes through the Connect proxy (Microsoft Graph, same pattern as
- * ./drafts.ts). Attachment selection, extension validation and library
- * ingest live in the provider-neutral ../../agent/attachmentTool.ts;
- * this file only speaks Graph's wire format. Registered by
- * ../registerAttachmentProviders.ts.
- *
- * Only fileAttachments are surfaced — Graph's other kinds (itemAttachment:
- * an attached email, referenceAttachment: a OneDrive link) carry no file
- * bytes to save.
+ * Only fileAttachments are surfaced: Graph's other kinds (itemAttachment, an
+ * attached email; referenceAttachment, a OneDrive link) carry no file bytes.
  */
 
 const FILE_ATTACHMENT_TYPE = "#microsoft.graph.fileAttachment";
@@ -24,7 +16,7 @@ interface GraphAttachment {
   name?: string;
   contentType?: string;
   size?: number;
-  /** Base64 file content; present only when a single attachment is fetched by id. */
+  /** Base64 content; present only when a single attachment is fetched by id. */
   contentBytes?: string;
 }
 
@@ -34,9 +26,7 @@ interface AttachmentsListResponse {
 
 export const outlookAttachmentProvider: AttachmentProvider = {
   async listAttachments(account: ConnectedAccount, messageId: string): Promise<EmailAttachment[]> {
-    // Metadata only — without $select Graph inlines every attachment's
-    // base64 contentBytes into the list; bytes are fetched per attachment
-    // in downloadAttachment instead.
+    // Without $select Graph inlines every attachment's base64 contentBytes into the list; fetch bytes per attachment instead.
     const list = (await proxyRequest(
       account.id,
       "get",
@@ -52,8 +42,7 @@ export const outlookAttachmentProvider: AttachmentProvider = {
           filename: attachment.name,
           ...(attachment.contentType ? { mimeType: attachment.contentType } : {}),
           ...(attachment.size !== undefined ? { size: attachment.size } : {}),
-          // Graph never inlines bytes in the $select'ed list, so every entry
-          // downloads by ref (the attachment id).
+          // The $select'ed list never inlines bytes, so every entry downloads by ref.
           ref: attachment.id,
         },
       ];

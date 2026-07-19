@@ -1,18 +1,10 @@
 import { randomUUID } from "node:crypto";
 import type { AutomationSuggestion } from "@trailin/shared";
 import { desc, eq, inArray, ne } from "drizzle-orm";
-import { emitServerEvent } from "../events.js";
+import { emitServerEvent } from "../core/events.js";
 import { db, schema } from "./index.js";
 
-/**
- * Store for the suggestion sweep's proposals (automations/suggestService.ts).
- * Pending rows are the user-facing queue on the Automations page; decided
- * rows (accepted/dismissed) are kept — pruned to a recent window — purely as
- * dedup context so a later sweep doesn't re-suggest something the user
- * already answered.
- */
-
-/** Decided rows kept as dedup context; the oldest beyond this are pruned on insert. */
+/** Decided rows kept as dedup context; older ones pruned on insert. */
 const KEEP_DECIDED = 50;
 
 export async function listPendingSuggestions(): Promise<AutomationSuggestion[]> {
@@ -24,7 +16,6 @@ export async function listPendingSuggestions(): Promise<AutomationSuggestion[]> 
   return rows as AutomationSuggestion[];
 }
 
-/** Every stored suggestion, newest first — the sweep's dedup context. */
 export async function listAllSuggestions(): Promise<AutomationSuggestion[]> {
   const rows = await db
     .select()
@@ -68,9 +59,9 @@ export async function createSuggestion(input: {
 }
 
 /**
- * Stamp a pending suggestion accepted or dismissed. Returns the updated row,
- * or null when no pending suggestion has this id (unknown, or already
- * decided — deciding is one-way).
+ * Stamp a pending suggestion accepted or dismissed. Returns null when no
+ * pending suggestion has this id (unknown or already decided; deciding is
+ * one-way).
  */
 export async function decideSuggestion(
   id: string,

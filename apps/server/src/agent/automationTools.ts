@@ -9,12 +9,11 @@ import { collapseWhitespace } from "../search/snippets.js";
 import { clampLimit, textResult, tool } from "./toolkit.js";
 
 /**
- * The agent's automation tools, in two bundles. automationManageTools (list,
- * create, update, delete) exist in interactive sessions only — an unattended
- * run reads attacker-controllable mail, and an automation's instruction is a
- * standing prompt executed on every future tick, so mail content must never
- * be able to plant or alter one. automationReadTools (run history and full
- * run results) are inert reads and available in every session.
+ * Two bundles. automationManageTools (list, create, update, delete) are
+ * interactive-only: an automation's instruction is a standing prompt run on
+ * every future tick, so attacker-controllable mail in an unattended run can't
+ * plant or alter one. automationReadTools are inert reads, available in
+ * every session.
  */
 
 const INSTRUCTION_PREVIEW_CHARS = 200;
@@ -40,7 +39,6 @@ function instructionPreview(instruction: string): string {
   return `${collapsed.slice(0, INSTRUCTION_PREVIEW_CHARS)}…`;
 }
 
-/** The `— schedule …, next run …/paused` tail shared by the create and update confirmations. */
 function scheduleSummary(automation: { id: string; schedule: string; enabled: boolean }): string {
   if (!automation.schedule) {
     return `manual-only, runs via its "Run now" button${automation.enabled ? "" : ", paused"}`;

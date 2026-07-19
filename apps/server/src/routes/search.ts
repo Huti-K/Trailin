@@ -11,14 +11,6 @@ import {
   searchRuns,
 } from "../search/sources.js";
 
-/**
- * Global search across chats, automation runs (digests), drafts, library
- * documents, and memories — powers the web app's command palette (Cmd+K).
- * Everything is read-only and best-effort: a failure in one source (e.g. a
- * Pipedream outage while fetching live drafts) never breaks the others (see
- * search/sources.ts's safeSource).
- */
-
 const searchQuery = Type.Object({ q: Type.Optional(Type.String()) });
 
 export const searchRoutes: FastifyPluginAsyncTypebox = async (app) => {
@@ -35,7 +27,6 @@ export const searchRoutes: FastifyPluginAsyncTypebox = async (app) => {
       safeSource("memories", searchMemories(query)),
     ]);
 
-    // Grouped by type in a fixed order: run, chat, draft, document, memory.
     const results: SearchResult[] = [...runs, ...chats, ...drafts, ...documents, ...memories];
     return { results };
   });

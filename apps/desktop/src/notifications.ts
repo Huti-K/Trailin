@@ -2,18 +2,13 @@ import http from "node:http";
 import { BrowserWindow, Notification } from "electron";
 
 /**
- * Native desktop notifications for finished automation runs: a long-lived
- * subscription to the local server's SSE feed (GET /api/events) that shows a
- * system Notification for every "notification" event. Lives in the main
- * process so runs finishing with every window closed (macOS keeps the server
- * alive) still notify; a focused window is skipped — its in-app activity feed
- * already shows the run land live. Clicking a notification asks the shell to
- * focus or recreate the window.
+ * Native notifications for finished automation runs, over a reconnecting
+ * subscription to the server's SSE feed. In the main process so runs finishing
+ * with every window closed (macOS) still notify.
  */
 
 const RECONNECT_MS = 3_000;
 
-/** The slice of a ServerEvent frame this module reads (see @trailin/shared's RunNotification). */
 interface NotificationEvent {
   topic?: string;
   notification?: { automationName?: string; summary?: string };
@@ -60,9 +55,8 @@ function connect(port: number, onOpenRequest: () => void): void {
     },
     (response) => {
       response.setEncoding("utf8");
-      // Line-buffered SSE parsing: `data:` lines accumulate until the blank
-      // line that ends a frame. The server's named "ping" frames carry `{}`
-      // as data and fall out on the topic check in showNotification.
+      // Line-buffered SSE parsing: `data:` lines accumulate until the blank line
+      // that ends a frame. Ping frames carry `{}` and fall out on the topic check.
       let buffer = "";
       let data: string[] = [];
       response.on("data", (chunk: string) => {
@@ -78,8 +72,7 @@ function connect(port: number, onOpenRequest: () => void): void {
           }
         }
       });
-      // Covers both the server closing the stream and the response erroring
-      // mid-flight ("close" fires after either).
+      // "close" fires after both a clean stream end and a mid-flight error.
       response.on("close", () => scheduleReconnect(port, onOpenRequest));
     },
   );
@@ -87,14 +80,12 @@ function connect(port: number, onOpenRequest: () => void): void {
   request = req;
 }
 
-/** Subscribe to the server's event stream and notify on finished runs; reconnects until stopped. */
 export function startNotifications(port: number, opts: { onOpenRequest: () => void }): void {
   if (!stopped) return;
   stopped = false;
   connect(port, opts.onOpenRequest);
 }
 
-/** Tear the stream down and stop reconnecting; startNotifications re-arms. */
 export function stopNotifications(): void {
   stopped = true;
   if (reconnectTimer) {

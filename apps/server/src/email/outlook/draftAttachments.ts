@@ -1,24 +1,21 @@
 import type { ConnectedAccount } from "@trailin/shared";
-import { proxyRequest } from "../../pipedream/connect.js";
-import { errorMessage } from "../../utils/util.js";
+import { errorMessage } from "../../core/utils/util.js";
+import { proxyRequest } from "../../integrations/pipedream/connect.js";
 import type { DraftAttachment } from "../providers.js";
 import { GRAPH_API } from "./message.js";
 
 /**
- * Attach files to an existing Outlook draft message via Microsoft Graph.
- * Graph has no way to create a message with attachments in one call, so
- * ./drafts.ts creates the draft first and then calls addOutlookAttachments —
- * small files as a single fileAttachment POST, large ones through Graph's
- * upload-session protocol.
+ * Graph can't create a message with attachments in one call, so the draft is
+ * created first and its files are added here: small ones as a single
+ * fileAttachment POST, large ones via Graph's upload-session protocol.
  */
 
-/** Graph's limit for a single fileAttachment POST; larger files need an upload session. */
+/** Graph's ceiling for a single fileAttachment POST; larger files need an upload session. */
 const SMALL_ATTACHMENT_MAX = 3 * 1024 * 1024;
 
 /**
- * Upload-session chunk size. Graph requires every non-final chunk to be a
- * multiple of 320 KiB; this is 10 of them (~3.1 MB), comfortably under
- * Graph's 4 MB per-request ceiling.
+ * Graph requires every non-final upload chunk to be a multiple of 320 KiB;
+ * this is 10 of them (~3.1 MB), comfortably under Graph's 4 MB request ceiling.
  */
 const UPLOAD_CHUNK_SIZE = 3_276_800;
 
@@ -38,10 +35,9 @@ async function attachSmall(
 }
 
 /**
- * Large-file path: create an upload session through the Connect proxy, then
- * PUT the raw bytes in chunks straight to the session's uploadUrl with
- * `fetch` — the URL is pre-authenticated by Graph, so it must NOT go through
- * the proxy (which would add credentials Graph rejects on that endpoint).
+ * PUT the bytes in chunks straight to the session's uploadUrl with `fetch`:
+ * the URL is pre-authenticated, so it bypasses the proxy, which
+ * would add credentials Graph rejects on that endpoint.
  */
 async function attachViaUploadSession(
   account: ConnectedAccount,
@@ -86,12 +82,7 @@ async function attachViaUploadSession(
   }
 }
 
-/**
- * Attach every file to the draft, in order. On a failure the already-attached
- * files stay on the draft and the error names the draft and what is still
- * missing, so the caller can surface a recoverable state — the draft is never
- * deleted here.
- */
+/** Attach every file in order. On failure the already-attached files stay and the error names what's missing; the draft is never deleted here. */
 export async function addOutlookAttachments(
   account: ConnectedAccount,
   messageId: string,

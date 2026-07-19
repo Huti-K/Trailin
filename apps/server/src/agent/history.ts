@@ -4,18 +4,8 @@ import type { Api, Message, Model } from "@earendil-works/pi-ai";
 import type { ChatToolCall } from "@trailin/shared";
 import { eq } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
-import { resolveActiveModel } from "../llm/registry.js";
 import { decoratePrompt, parseStoredRefs } from "./emailRefs.js";
-
-/**
- * The durable model transcript. A turn's rows carry everything the model saw:
- * the user prompt (decorated at load, same as when it ran), the assistant
- * text, and the turn's tool calls with their results (messages.tool_calls —
- * one column serving both the UI's activity view and this rebuild). When a
- * live session compacts, recordCompactionMarker persists the summary as a
- * role='compaction' row so a rebuilt session starts from the same compacted
- * shape rather than the full raw history.
- */
+import { resolveActiveModel } from "./llm/registry.js";
 
 type MessageRow = typeof schema.messages.$inferSelect;
 
@@ -34,8 +24,8 @@ const zeroUsage = () => ({
 });
 
 /**
- * Text of a persisted tool result. Results were captured from pi's untyped
- * tool-result events, so the shape is checked rather than assumed.
+ * Text of a persisted tool result. Captured from pi's untyped tool-result
+ * events, so the shape is checked rather than assumed.
  */
 function resultText(result: unknown): string {
   const content = (result as { content?: unknown } | null | undefined)?.content;
@@ -50,11 +40,10 @@ function resultText(result: unknown): string {
 }
 
 /**
- * One assistant row back into model messages: an assistant message carrying
- * the turn's tool calls, each call's toolResult, then the reply text. A
- * multi-batch turn flattens into one call batch — every result still follows
- * an assistant message containing its call, which is the shape providers
- * require.
+ * One assistant row back into model messages: an assistant message with the
+ * turn's tool calls, each call's toolResult, then the reply text. A multi-batch
+ * turn flattens into one batch, but every result still follows an assistant
+ * message containing its call, the shape providers require.
  */
 function expandAssistantRow(row: MessageRow, model: Model<Api>, timestamp: number): Message[] {
   const text = row.content.trim();
@@ -105,9 +94,9 @@ function expandAssistantRow(row: MessageRow, model: Model<Api>, timestamp: numbe
 /**
  * Rebuild a conversation's model history from the message log, so continuing
  * an older conversation (after a restart or session reset) keeps the agent's
- * memory. A compaction row replays exactly as the live session experienced
- * it: everything before the summary is dropped except the rows from its
- * kept-verbatim tail (compaction_cutoff), which stay in full.
+ * memory. A compaction row replays as the live session experienced it:
+ * everything before the summary drops except its kept-verbatim tail
+ * (compaction_cutoff), which stays in full.
  */
 export async function loadHistory(conversationId: string): Promise<Message[]> {
   const rows = await db
@@ -120,9 +109,9 @@ export async function loadHistory(conversationId: string): Promise<Message[]> {
   const model = await resolveActiveModel();
 
   // Row-level accumulation, so a compaction row can drop the rows its summary
-  // covers while keeping the tail rows (ms >= cutoff) verbatim. A cut that
-  // lands inside one row's expansion keeps the whole row — slightly more
-  // context than the live session held, trimmed again by the next compaction.
+  // covers while keeping the tail rows (ms >= cutoff) verbatim. A cut inside
+  // one row's expansion keeps the whole row: slightly more context than the
+  // live session held, trimmed again by the next compaction.
   const expanded: { ms: number; messages: Message[] }[] = [];
   for (const row of rows) {
     const ms = Date.parse(row.createdAt) || Date.now();
@@ -141,7 +130,7 @@ export async function loadHistory(conversationId: string): Promise<Message[]> {
       if (!content) continue;
       // The persisted row keeps `content` raw, but the model saw it with its
       // attached-email notes appended (turnRecorder.ts), so a rebuilt session
-      // must see the same thing. The turn-time and focus notes are not
+      // sees the same thing. The turn-time and focus notes are not
       // reconstructed: they described the moment the turn ran, and the next
       // live turn carries fresh ones.
       expanded.push({
@@ -163,9 +152,8 @@ export async function loadHistory(conversationId: string): Promise<Message[]> {
 }
 
 /**
- * Persist one compaction: the summary message that now stands in for the
- * session's older turns, plus the timestamp where its kept-verbatim tail
- * begins. Written by the session owner when a live compaction lands — the one
+ * Persist one compaction: the summary standing in for the session's older
+ * turns, plus the timestamp where its kept-verbatim tail begins. The one
  * message row that is not part of a turn; the messages API excludes it.
  */
 export async function recordCompactionMarker(
@@ -173,8 +161,7 @@ export async function recordCompactionMarker(
   compacted: AgentMessage[],
 ): Promise<void> {
   // The summary is the user message compactedMessages prepends; pi's wider
-  // AgentMessage union (custom roles) doesn't guarantee `content`, so check
-  // structurally instead of assuming.
+  // AgentMessage union doesn't guarantee `content`, so check structurally.
   const summary = compacted[0] as { content?: unknown } | undefined;
   const content = typeof summary?.content === "string" ? summary.content : "";
   if (!content) return;

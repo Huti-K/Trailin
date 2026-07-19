@@ -1,22 +1,19 @@
 import type { FastifyPluginAsyncTypebox } from "@fastify/type-provider-typebox";
 import type { ServerEvent } from "@trailin/shared";
-import { onServerEvent } from "../events.js";
+import { onServerEvent } from "../core/events.js";
 import { openSse } from "./sse.js";
 
 /**
- * Named "ping" events keep proxies from dropping the idle stream AND give the
- * client a liveness signal it can watch: a proxy may swallow the upstream's
- * end without closing the browser-side socket, so a stream that stops pinging
- * is the client's only way to detect it is dead (see web lib/serverEvents.ts).
- * Comment frames can't serve that role — EventSource never surfaces them.
+ * Named "ping" events (not comment frames, which EventSource never surfaces)
+ * give the client a liveness signal: a proxy can swallow the upstream's end
+ * without closing the browser socket, so a stalled ping is the only way the
+ * client detects a dead stream (web lib/serverEvents.ts).
  */
 const HEARTBEAT_MS = 15_000;
 
-/** Live "data changed" notifications for the web UI, as one SSE stream. */
 export const eventRoutes: FastifyPluginAsyncTypebox = async (app) => {
-  // Hijacked replies are invisible to Fastify's own request draining, so
-  // close() must tear down the open streams itself — bus subscription and
-  // heartbeat included — rather than wait on every connected browser tab.
+  // Hijacked replies are invisible to Fastify's request draining, so onClose
+  // tears down the open streams itself rather than wait on connected tabs.
   const teardowns = new Set<() => void>();
   app.addHook("onClose", async () => {
     for (const teardown of teardowns) teardown();
@@ -28,9 +25,8 @@ export const eventRoutes: FastifyPluginAsyncTypebox = async (app) => {
     const heartbeat = setInterval(() => {
       reply.raw.write("event: ping\ndata: {}\n\n");
     }, HEARTBEAT_MS);
-    // One teardown for both ways a stream dies — client disconnect (openSse's
-    // close callback) and server shutdown (the onClose hook above). The
-    // heartbeat stops before end(), so nothing writes to an ended response.
+    // One teardown for both disconnect and shutdown; clearInterval precedes
+    // end() so nothing writes to an ended response.
     const teardown = () => {
       teardowns.delete(teardown);
       unsubscribe();

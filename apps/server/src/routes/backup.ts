@@ -4,21 +4,17 @@ import { unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { FastifyPluginAsyncTypebox } from "@fastify/type-provider-typebox";
+import { moduleLogger } from "../core/logger.js";
 import { sqlite } from "../db/index.js";
-import { moduleLogger } from "../logger.js";
 
 const log = moduleLogger("backup");
 
 /**
- * Download a consistent snapshot of the SQLite database. better-sqlite3's
- * online `.backup()` is WAL-safe — copying the `.db` file directly while the
- * server runs is not, because recent writes may still live only in the `-wal`
- * side file. The snapshot holds everything in the DB (conversations, memories,
- * automations, draft links, the library index, the mailbox mirror, settings)
- * but NOT `data/auth.json` (LLM provider credentials) or
- * `data/pipedream-secret.json` (the custom Pipedream OAuth client secret —
- * see pipedream/secretFile.ts), both of which live outside the DB and must be
- * backed up separately.
+ * better-sqlite3's online `.backup()` is WAL-safe; copying the `.db` file while
+ * the server runs is not, since recent writes may live only in the `-wal` side
+ * file. Excludes `data/auth.json` (LLM credentials), `data/pipedream-secret.json`,
+ * and the agent home folder (memories, skills, knowledge documents) — those
+ * live outside the DB and are backed up like any files.
  */
 export const backupRoutes: FastifyPluginAsyncTypebox = async (app) => {
   app.get("/api/backup", async (_req, reply) => {
@@ -30,7 +26,7 @@ export const backupRoutes: FastifyPluginAsyncTypebox = async (app) => {
     reply.header("Content-Disposition", `attachment; filename="trailin-backup-${stamp}.db"`);
 
     const stream = createReadStream(tmpPath);
-    // Drop the temp snapshot once the response finishes or the transfer aborts.
+    // Drop the temp snapshot when the response finishes or aborts.
     stream.on("close", () => {
       void unlink(tmpPath).catch((err: unknown) =>
         log.warn({ err, tmpPath }, "removing backup temp file failed"),

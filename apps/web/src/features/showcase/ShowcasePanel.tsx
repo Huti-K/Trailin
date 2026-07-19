@@ -14,6 +14,7 @@
  */
 
 import {
+  HardDrive,
   Layers,
   LayoutList,
   ListTree,
@@ -28,7 +29,7 @@ import {
 import * as React from "react";
 import { cn } from "@/lib/utils";
 import { ComponentsTab } from "./componentsTab";
-import { ContentTab, SystemsTab } from "./contentTabs";
+import { ContentTab, StorageTab, SystemsTab } from "./contentTabs";
 import { ButtonsTab, FeedbackTab, FormsTab, MarksTab, SurfacesTab } from "./controlTabs";
 import { ThemeLab } from "./ThemeLab";
 
@@ -77,6 +78,7 @@ const TAB_GROUPS: { label: string; tabs: Tab[] }[] = [
         icon: MessagesSquare,
         render: () => <ContentTab />,
       },
+      { id: "storage", label: "Storage", icon: HardDrive, render: () => <StorageTab /> },
     ],
   },
   {

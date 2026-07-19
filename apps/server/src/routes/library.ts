@@ -3,31 +3,40 @@ import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { FastifyPluginAsyncTypebox } from "@fastify/type-provider-typebox";
 import { Type } from "@sinclair/typebox";
-import type { LibrarySearchHit, LibraryStatus } from "@trailin/shared";
-import { badRequest, notFound } from "../errors.js";
-import { deleteDocument, getLibraryDir, saveUpload, setLibraryFolder } from "../library/ingest.js";
-import { pickFolder } from "../library/pickFolder.js";
-import { getDocument, listDocuments, type SearchHit, searchChunks } from "../library/store.js";
+import type { LibraryDocumentContent, LibrarySearchHit, LibraryStatus } from "@trailin/shared";
+import { badRequest, notFound } from "../core/errors.js";
+import { contentDisposition, inlineForMime, mimeForExt } from "../core/utils/fileResponse.js";
+import { errorMessage } from "../core/utils/util.js";
 import { trimSnippet } from "../search/snippets.js";
-import { contentDisposition, inlineForMime, mimeForExt } from "../utils/fileResponse.js";
-import { errorMessage } from "../utils/util.js";
+import {
+  createFolder,
+  deleteDocument,
+  deleteFolder,
+  getLibraryDir,
+  listFolders,
+  readDocumentText,
+  saveUpload,
+  writeDocumentText,
+} from "../storage/library/ingest.js";
+import {
+  getDocument,
+  listDocuments,
+  type SearchHit,
+  searchChunks,
+} from "../storage/library/store.js";
 
 const UPLOAD_LIMIT = 64 * 1024 * 1024;
 
-// Over-fetch chunk-level hits so collapsing them to one entry per document
-// still leaves close to SEARCH_DOC_LIMIT distinct documents.
+// Over-fetch chunks so collapsing to one hit per document still yields ~SEARCH_DOC_LIMIT documents.
 const SEARCH_DOC_LIMIT = 20;
 const SEARCH_CHUNK_LIMIT = 80;
 
-/** BM25 chunk search collapsed to one best-ranked hit per document. */
 function searchDocuments(q: string): LibrarySearchHit[] {
   let hits: SearchHit[];
   try {
     hits = searchChunks(q, SEARCH_CHUNK_LIMIT);
   } catch {
-    // buildMatch() already quotes extracted terms, but guard here too in
-    // case the FTS5 engine still rejects the input — retry sanitized rather
-    // than letting the request 500.
+    // FTS5 can still reject input despite buildMatch quoting; retry sanitized rather than 500.
     try {
       hits = searchChunks(q.replace(/[^\p{L}\p{N}\s]/gu, " "), SEARCH_CHUNK_LIMIT);
     } catch {
@@ -53,14 +62,17 @@ function searchDocuments(q: string): LibrarySearchHit[] {
 }
 
 const librarySearchQuery = Type.Object({ q: Type.Optional(Type.String()) });
-const libraryFolderBody = Type.Object({ folder: Type.Optional(Type.String()) });
-const libraryFilesQuery = Type.Object({ name: Type.Optional(Type.String()) });
+const libraryFilesQuery = Type.Object({
+  name: Type.Optional(Type.String()),
+  dir: Type.Optional(Type.String()),
+});
 const documentIdParams = Type.Object({ id: Type.String() });
+const documentContentBody = Type.Object({ content: Type.String() });
+const folderBody = Type.Object({ path: Type.String() });
+const folderQuery = Type.Object({ path: Type.String() });
 
-/** The document library: list, upload into the drop folder, rescan, delete. */
 export const libraryRoutes: FastifyPluginAsyncTypebox = async (app) => {
-  // Uploads arrive as the raw file body (application/octet-stream), the name
-  // in the query string — no multipart dependency needed for one file.
+  // Uploads arrive as the raw octet-stream body with the name in the query; no multipart needed for one file.
   app.addContentTypeParser(
     "application/octet-stream",
     { parseAs: "buffer", bodyLimit: UPLOAD_LIMIT },
@@ -69,38 +81,36 @@ export const libraryRoutes: FastifyPluginAsyncTypebox = async (app) => {
 
   const status = async (): Promise<LibraryStatus> => ({
     folder: getLibraryDir(),
+    folders: await listFolders(),
     documents: await listDocuments(),
   });
 
   app.get("/api/library", async () => status());
 
+  app.post(
+    "/api/library/folders",
+    { schema: { body: folderBody } },
+    async (req): Promise<LibraryStatus> => {
+      const path = req.body.path.trim();
+      if (!path) throw badRequest("folder name is empty");
+      if (!(await createFolder(path))) throw badRequest("invalid folder path");
+      return status();
+    },
+  );
+
+  app.delete(
+    "/api/library/folders",
+    { schema: { querystring: folderQuery } },
+    async (req): Promise<LibraryStatus> => {
+      if (!(await deleteFolder(req.query.path))) throw notFound("folder not found");
+      return status();
+    },
+  );
+
   app.get("/api/library/search", { schema: { querystring: librarySearchQuery } }, async (req) => {
     const q = (req.query.q ?? "").trim();
     if (!q) return { results: [] };
     return { results: searchDocuments(q) };
-  });
-
-  app.put("/api/library/folder", { schema: { body: libraryFolderBody } }, async (req) => {
-    try {
-      await setLibraryFolder(req.body.folder ?? "");
-    } catch (error) {
-      throw badRequest(errorMessage(error));
-    }
-    return status();
-  });
-
-  // Opens the OS's native folder-picker dialog on the server's machine and,
-  // unless the user cancels, applies the chosen folder — same validation as
-  // the manual PUT above, since setLibraryFolder does the actual switching.
-  app.post("/api/library/folder/pick", async () => {
-    try {
-      const picked = await pickFolder();
-      if ("canceled" in picked) return { canceled: true };
-      await setLibraryFolder(picked.path);
-    } catch (error) {
-      throw badRequest(errorMessage(error));
-    }
-    return status();
   });
 
   app.post(
@@ -111,7 +121,7 @@ export const libraryRoutes: FastifyPluginAsyncTypebox = async (app) => {
         throw badRequest("send the file as application/octet-stream");
       }
       try {
-        await saveUpload(req.query.name ?? "", req.body);
+        await saveUpload(req.query.name ?? "", req.body, req.query.dir?.trim() || "");
       } catch (error) {
         throw badRequest(errorMessage(error));
       }
@@ -119,7 +129,29 @@ export const libraryRoutes: FastifyPluginAsyncTypebox = async (app) => {
     },
   );
 
-  // Stream the original file so the browser can view/download it.
+  app.get(
+    "/api/library/documents/:id/content",
+    { schema: { params: documentIdParams } },
+    async (req): Promise<LibraryDocumentContent> => {
+      const content = await readDocumentText(req.params.id);
+      if (content === null) throw notFound("document is not an editable text file");
+      return { content };
+    },
+  );
+
+  app.put(
+    "/api/library/documents/:id/content",
+    { schema: { params: documentIdParams, body: documentContentBody } },
+    async (req): Promise<LibraryStatus> => {
+      const content = req.body.content.trim();
+      if (!content) throw badRequest("content must not be empty");
+      if (!(await writeDocumentText(req.params.id, `${content}\n`))) {
+        throw notFound("document is not an editable text file");
+      }
+      return status();
+    },
+  );
+
   app.get(
     "/api/library/documents/:id/open",
     { schema: { params: documentIdParams } },
@@ -135,8 +167,8 @@ export const libraryRoutes: FastifyPluginAsyncTypebox = async (app) => {
       }
 
       const mime = mimeForExt(doc.ext);
-      // PDFs, plain text (html/htm mapped to text/plain so they render as inert
-      // source) and images open in-browser; everything else downloads.
+      // html/htm are mapped to text/plain so they render as inert source, not
+      // executed; PDFs/text/images open inline, everything else downloads.
       const disposition = contentDisposition(
         inlineForMime(mime) ? "inline" : "attachment",
         `${doc.title}.${doc.ext}`,

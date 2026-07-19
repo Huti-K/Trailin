@@ -2,16 +2,13 @@ import { Type } from "@sinclair/typebox";
 import { textResult, tool } from "./toolkit.js";
 import { fetchPage } from "./websearch/fetchPage.js";
 
-/** Page text returned per call; longer pages are paged via `offset`. */
 const MAX_TEXT_CHARS = 20_000;
 
 /**
- * Read-only URL fetch over websearch/fetchPage.ts — web_search's companion:
- * search finds pages, this one reads them. Available in every session —
- * interactive, unattended and delegate workers — since it can look things up
- * but never act; fetchPage refuses private/internal addresses so mail
- * content can't steer it at localhost or the LAN. Failures come back as
- * result text so the model can route around them.
+ * Read-only URL fetch over websearch/fetchPage.ts. Available in every session
+ * (interactive, unattended, delegate) since it reads but never acts; fetchPage
+ * refuses private/internal addresses so mail content can't steer it at
+ * localhost or the LAN.
  */
 export const webFetchTool = tool({
   name: "web_fetch",

@@ -26,11 +26,13 @@ so one process gives you both the API and the SPA:
 ```sh
 pnpm --filter @trailin/web build          # ~1s; refresh dist after UI changes
 cd apps/server
-DATABASE_PATH=/tmp/<scratch>/verify.db PORT=3111 pnpm exec tsx src/index.ts
+DATABASE_PATH=/tmp/<scratch>/verify.db AGENT_HOME_PATH=/tmp/<scratch>/home PORT=3111 pnpm exec tsx src/index.ts
 ```
 
 - `DATABASE_PATH` isolates SQLite state (tables are auto-created). The user's
   real data is `apps/server/data/` — never point tests there.
+- `AGENT_HOME_PATH` isolates the agent home (memory/skills/knowledge folders);
+  without it the server uses the user's real `~/Trailin`.
 - Config env vars (`PIPEDREAM_*`, `ANTHROPIC_API_KEY`, …) can be set per
   instance to simulate .env fallback states. App-saved settings live in the
   `settings` table of the SQLite DB and win over env.

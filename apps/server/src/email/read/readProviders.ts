@@ -1,21 +1,13 @@
 import type { ConnectedAccount, EmailThreadMessage } from "@trailin/shared";
 import { createProviderRegistry } from "../registry.js";
 
-/**
- * Live mail-read drivers, one per app slug. The learning subsystem
- * (email/learn/, agent/voiceLearn.ts) reads the user's sent mail
- * straight from the provider through these, and the thread-history viewer
- * (routes/mail.ts) reads whole threads the same way — mail is never stored
- * locally. Apps without a driver simply skip the features built on it, the
- * same way apps without a DraftProvider get no draft tools.
- */
+/** Live mail-read drivers, one per app slug; mail is read straight from the provider and never stored locally. */
 
-/** One sent message as the learn loops consume it. */
 export interface SentMessage {
   providerMessageId: string;
   providerThreadId: string;
   subject: string;
-  /** Recipients in `"Name <addr>"` form (learn/addressSubject.ts normalizes them). */
+  /** Recipients in `"Name <addr>"` form. */
   to: string[];
   /** ISO timestamp, orderable. */
   date: string;
@@ -23,7 +15,7 @@ export interface SentMessage {
   bodyText: string;
 }
 
-/** One thread's conversation for display: subject plus its messages, oldest first. */
+/** A thread for display: subject plus messages, oldest first. */
 export interface ThreadDetail {
   subject: string;
   messages: EmailThreadMessage[];
@@ -31,21 +23,19 @@ export interface ThreadDetail {
 
 export interface MailReadProvider {
   /**
-   * The account's newest inbox message as `{ id, date }` (ISO date), or null
-   * for an empty inbox. When the newest id equals `opts.knownId`, a provider
-   * may answer `{ id, date: null }` without fetching the message — the caller
-   * already holds that message's date next to the id it passed in. The mail
-   * probe (automations/mailProbe.ts) polls this to detect new inbound mail.
+   * The account's newest inbox message as `{ id, date }` (ISO), or null for an
+   * empty inbox. When the newest id equals `opts.knownId`, a provider may
+   * answer `{ id, date: null }` without a second fetch, since the caller
+   * already holds that message's date.
    */
   newestInbound(
     account: ConnectedAccount,
     opts?: { knownId?: string; signal?: AbortSignal },
   ): Promise<{ id: string; date: string | null } | null>;
   /**
-   * The account's own sent mail after `sinceIso`, returned oldest first.
-   * When more than `limit` messages exist in the range, the cap keeps the
-   * NEWEST `limit` of them — recent sends are never crowded out by an old
-   * anchor, at the cost of the oldest part of the range.
+   * The account's sent mail after `sinceIso`, oldest first. When more than
+   * `limit` exist in the range, the cap keeps the NEWEST `limit`, so recent
+   * sends are never crowded out by an old anchor.
    */
   listSentSince(
     account: ConnectedAccount,
@@ -59,12 +49,10 @@ export interface MailReadProvider {
     signal?: AbortSignal,
   ): Promise<string | null>;
   /**
-   * Optional capability: one thread's sent/received messages, oldest first,
-   * drafts excluded — a reply draft sits in the same provider thread it
-   * answers, and the viewer shows the conversation, not the unsent reply.
-   * Null when the thread no longer exists (404) or has no non-draft message.
-   * Absent means "not supported for this account" — the route replies 400,
-   * provider-neutral.
+   * Optional: one thread's messages, oldest first, drafts excluded (a reply
+   * draft sits in the thread it answers). Null when the thread is gone (404) or
+   * has no non-draft message. Absent means "not supported for this account" and
+   * the route replies 400, provider-neutral.
    */
   getThread?(
     account: ConnectedAccount,

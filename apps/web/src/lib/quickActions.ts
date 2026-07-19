@@ -39,6 +39,11 @@ export function useQuickActionMode() {
  * no mount race to bridge.
  */
 export function openRunInChat(runId: string, goToChat: () => void): void {
+  openConversationInChat(runId, goToChat);
+}
+
+/** Navigate to Chat and open a conversation by id (a run id is one) — used by todo provenance links. */
+export function openConversationInChat(conversationId: string, goToChat: () => void): void {
   goToChat();
-  sendChatCommand({ kind: "open", conversationId: runId });
+  sendChatCommand({ kind: "open", conversationId });
 }

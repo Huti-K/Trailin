@@ -1,32 +1,25 @@
 import type { FastifyReply } from "fastify";
 
-/** The three headers every SSE response needs to stay open through proxies and browsers. */
 const SSE_HEADERS = {
   "Content-Type": "text/event-stream",
   "Cache-Control": "no-cache",
   Connection: "keep-alive",
 } as const;
 
-/** A hijacked reply opened as an SSE stream — see openSse. */
 export interface SseStream<T> {
-  /** Write one `data:` frame. A no-op once the stream has ended. */
+  /** Write one `data:` frame; a no-op once the stream has ended. */
   send(payload: T): void;
-  /** Detach the close listener and end the underlying response. Safe to call more than once. */
+  /** End the underlying response; safe to call more than once. */
   end(): void;
 }
 
 /**
- * Hijacks `reply` — tells Fastify the response is ours now, since we stream
- * on the raw socket — writes the SSE headers, and listens for the raw
- * response's own "close" event to detect the client disconnecting mid-stream.
- * Response close, not request close, is what signals a real disconnect: the
- * request's own "close" fires as soon as its body is consumed (Node ≥ 16),
- * long before the client actually goes away.
- *
- * `onClose` runs at most once, only for a genuine disconnect: `end()`
- * detaches the listener before it ends the response itself, so a route's own
- * graceful shutdown can never re-trigger cleanup meant for an unexpected
- * disconnect.
+ * Hijacks `reply` (we stream on the raw socket), writes SSE headers, and listens
+ * for the raw response's "close" to detect a client disconnect. Response close,
+ * not request close, signals a real disconnect: request "close" fires as soon as
+ * the body is consumed (Node ≥ 16), long before the client goes away. `end()`
+ * detaches the listener before ending, so a graceful shutdown can't re-trigger
+ * the disconnect cleanup.
  */
 export function openSse<T>(reply: FastifyReply, onClose: () => void): SseStream<T> {
   reply.hijack();

@@ -2,9 +2,8 @@ import { contextBridge, ipcRenderer } from "electron";
 import type { UpdateCheckStatus } from "./updater";
 
 /**
- * window.trailinDesktop — the web app's only view of the shell, deliberately
- * kept to the update flow (everything else the app needs comes over its own
- * HTTP API). Mirrored by the DesktopBridge type in apps/web/src/lib/desktop.ts.
+ * window.trailinDesktop — the web app's only view of the shell, kept to the
+ * update flow. Mirrored by the DesktopBridge type in apps/web/src/lib/desktop.ts.
  */
 contextBridge.exposeInMainWorld("trailinDesktop", {
   getAppInfo: (): Promise<{ version: string; platform: string; arch: string }> =>

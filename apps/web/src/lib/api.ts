@@ -18,7 +18,7 @@ import type {
   Language,
   Lead,
   LeadStatus,
-  LearnStatus,
+  LibraryDocumentContent,
   LibrarySearchHit,
   LibraryStatus,
   LlmProviderInfo,
@@ -34,6 +34,8 @@ import type {
   RunFeedItem,
   SearchResult,
   Skill,
+  Todo,
+  TodoStatus,
   VoiceLearnRun,
   WhatsAppStatus,
 } from "@trailin/shared";
@@ -210,6 +212,17 @@ export const api = {
   setWhatsAppSendAccess: (enabled: boolean) =>
     http<WhatsAppStatus>("PUT", "/api/whatsapp/send-access", { enabled }),
 
+  // Outbound message drafts (WhatsApp and future channels). Send is
+  // human-initiated only, like email's sendDraft.
+  sendOutbound: (id: string) =>
+    http<{ ok: boolean }>("POST", `/api/outbound/${encodeURIComponent(id)}/send`),
+  discardOutbound: (id: string) =>
+    http<{ ok: boolean }>("DELETE", `/api/outbound/${encodeURIComponent(id)}`),
+  outboundStatus: (id: string) =>
+    get<{ status: "open" | "sent" | "discarded"; sentRef?: string }>(
+      `/api/outbound/${encodeURIComponent(id)}/status`,
+    ),
+
   /** Global search across chats, digests, drafts, documents and memories (command palette). */
   search: (q: string) => get<{ results: SearchResult[] }>(`/api/search?q=${encodeURIComponent(q)}`),
 
@@ -328,18 +341,34 @@ export const api = {
   leadAutomations: (id: string) =>
     get<Automation[]>(`/api/leads/${encodeURIComponent(id)}/automations`),
 
+  // The agent files and maintains todos; the web only lists them and toggles
+  // steps/status. updateTodo is the one maintenance verb (see routes/todos.ts).
+  todos: (status?: TodoStatus) =>
+    get<Todo[]>(`/api/todos${status ? `?status=${encodeURIComponent(status)}` : ""}`),
+  updateTodo: (
+    id: string,
+    patch: {
+      title?: string;
+      body?: string;
+      status?: TodoStatus;
+      dueAt?: string | null;
+      addSteps?: string[];
+      completeSteps?: string[];
+      reopenSteps?: string[];
+    },
+  ) => http<Todo>("PATCH", `/api/todos/${encodeURIComponent(id)}`, patch),
+
+  // Memory/skill entries surface as files in the Knowledge browser: listed,
+  // deleted, and edited there (the browser's md editor); created by the agent.
   memories: () => get<MemoryEntry[]>("/api/memories"),
-  // accountId/contactId are only sent when the caller passes them explicitly —
-  // an omitted axis stays out of the JSON body, so on updates the server keeps
-  // that axis (or clears it when the other axis is being set — a memory
-  // carries at most one of the two; see db/memories.ts). Creates default both
-  // to global.
-  addMemory: (content: string, accountId?: string | null, contactId?: string | null) =>
+  addMemory: (content: string, accountId?: string | null) =>
     http<MemoryEntry>("POST", "/api/memories", {
       content,
       ...(accountId !== undefined ? { accountId } : {}),
-      ...(contactId !== undefined ? { contactId } : {}),
     }),
+  // accountId/contactId are only sent when passed explicitly — an omitted axis
+  // stays out of the body, so the server keeps it (or clears it when the other
+  // axis is being set; a memory carries at most one of the two).
   updateMemory: (
     id: string,
     content: string,
@@ -360,30 +389,37 @@ export const api = {
     http<Skill>("PUT", `/api/skills/${encodeURIComponent(name)}`, { description, instructions }),
   deleteSkill: (name: string) =>
     http<{ ok: boolean }>("DELETE", `/api/skills/${encodeURIComponent(name)}`),
-  // Recent draft-vs-sent learning sweeps and when the next nightly one fires.
-  learnStatus: () => get<LearnStatus>("/api/learn/status"),
 
   library: () => get<LibraryStatus>("/api/library"),
-  setLibraryFolder: (folder: string) =>
-    http<LibraryStatus>("PUT", "/api/library/folder", { folder }),
-  // Opens the OS's native folder dialog on the server's machine; the request
-  // stays open until the user picks (fresh status) or dismisses the dialog.
-  pickLibraryFolder: () =>
-    http<LibraryStatus | { canceled: true }>("POST", "/api/library/folder/pick"),
+  documentContent: (id: string) =>
+    get<LibraryDocumentContent>(`/api/library/documents/${encodeURIComponent(id)}/content`),
+  saveDocumentContent: (id: string, content: string) =>
+    http<LibraryStatus>("PUT", `/api/library/documents/${encodeURIComponent(id)}/content`, {
+      content,
+    }),
   deleteLibraryDocument: (id: string) =>
     http<LibraryStatus>("DELETE", `/api/library/documents/${encodeURIComponent(id)}`),
   searchLibrary: (q: string) =>
     get<{ results: LibrarySearchHit[] }>(`/api/library/search?q=${encodeURIComponent(q)}`),
   // Raw file body (not JSON), so this bypasses the `http` helper.
-  uploadLibraryFile: async (file: File): Promise<LibraryStatus> => {
-    const res = await guardedFetch(`/api/library/files?name=${encodeURIComponent(file.name)}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/octet-stream" },
-      body: file,
-    });
+  /** Uploads into the knowledge folder, or a subfolder of it when `dir` is set. */
+  uploadLibraryFile: async (file: File, dir?: string): Promise<LibraryStatus> => {
+    const target = dir ? `&dir=${encodeURIComponent(dir)}` : "";
+    const res = await guardedFetch(
+      `/api/library/files?name=${encodeURIComponent(file.name)}${target}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/octet-stream" },
+        body: file,
+      },
+    );
     await throwOnError(res);
     return res.json() as Promise<LibraryStatus>;
   },
+  createLibraryFolder: (path: string) =>
+    http<LibraryStatus>("POST", "/api/library/folders", { path }),
+  deleteLibraryFolder: (path: string) =>
+    http<LibraryStatus>("DELETE", `/api/library/folders?path=${encodeURIComponent(path)}`),
   /** Open a library document in a new browser tab (or trigger a download). */
   openLibraryDocument: (id: string): void => {
     openExternal(`/api/library/documents/${encodeURIComponent(id)}/open`);

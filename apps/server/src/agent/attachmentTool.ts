@@ -2,38 +2,22 @@ import { extname } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "@sinclair/typebox";
 import { type AttachmentItem, type ConnectedAccount, formatFileSize } from "@trailin/shared";
+import { inlineForMime, mimeForExt } from "../core/utils/fileResponse.js";
+import { errorMessage } from "../core/utils/util.js";
 import {
   type AttachmentProvider,
   type EmailAttachment,
   findAttachmentByFilename,
   resolveAttachmentBytes,
 } from "../email/attachmentProviders.js";
-import { LIBRARY_EXTENSIONS, SUPPORTED_FORMATS, saveUpload } from "../library/ingest.js";
-import { inlineForMime, mimeForExt } from "../utils/fileResponse.js";
-import { errorMessage } from "../utils/util.js";
+import { LIBRARY_EXTENSIONS, SUPPORTED_FORMATS, saveUpload } from "../storage/library/ingest.js";
 import { buildAttachmentsCard, toCardAccount } from "./cards.js";
 import { textResult, tool } from "./toolkit.js";
-
-/**
- * "Save attachment to library" agent tool, generic over any app with an
- * AttachmentProvider — the provider fetches attachment listings and bytes in
- * its own wire format; everything here (attachment selection, extension
- * validation, library ingest, result text) is provider-neutral. The caller
- * (agent/emailToolset.ts) wires this once per live account whose app has a
- * provider, alongside the MCP-bridged tools — copy the shape of
- * buildDraftTool there.
- */
 
 function hasSupportedExt(filename: string): boolean {
   return LIBRARY_EXTENSIONS.has(extname(filename).toLowerCase());
 }
 
-/**
- * One card row per attachment, carrying the exact handle its actions need
- * (accountId + messageId + filename) plus the server-decided flags: `viewable`
- * comes from the filename-derived MIME (the browser renders PDFs, images and
- * text inline), `saveable` from the library's accepted formats.
- */
 function toAttachmentItem(
   account: ConnectedAccount,
   messageId: string,
@@ -118,8 +102,7 @@ export function buildSaveAttachmentTool(
       ),
     },
     execute: async ({ messageId, filename }) => {
-      // Hard failure on a bad messageId or a provider error — thrown as-is;
-      // pi turns it into an error tool result.
+      // A bad messageId or provider error throws as-is, surfacing as an error tool result.
       const attachments = await provider.listAttachments(account, messageId);
       if (attachments.length === 0) return textResult("This message has no attachments.");
 

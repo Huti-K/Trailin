@@ -14,10 +14,6 @@ export const isEmailAccount = (account: ConnectedAccount) => isEmailApp(account.
 export const accountColor = (colors: AccountColor[] | undefined, accountId?: string | null) =>
   colors?.find((c) => c.accountId === accountId)?.hex;
 
-/** An account's display name, falling back to the raw id so there's always a label. */
-export const accountName = (accounts: ConnectedAccount[] | undefined, accountId?: string | null) =>
-  accounts?.find((a) => a.id === accountId)?.name ?? accountId ?? "";
-
 /**
  * Connected accounts plus their color assignments — the pair every account
  * dot, chip, and scope picker resolves from. One shared query per list, so

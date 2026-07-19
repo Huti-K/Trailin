@@ -1,55 +1,34 @@
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
+import { env } from "../core/env.js";
+import { emitRunNotification, emitServerEvent } from "../core/events.js";
+import { moduleLogger } from "../core/logger.js";
+import { errorMessage } from "../core/utils/util.js";
 import { db, schema } from "../db/index.js";
-import { env } from "../env.js";
-import { emitRunNotification, emitServerEvent } from "../events.js";
-import { moduleLogger } from "../logger.js";
-import { errorMessage } from "../utils/util.js";
 import { getTurnRunner } from "./turnRunner.js";
 
 const log = moduleLogger("runRecorder");
 
-/** Sanitized run deadline: a bad AUTOMATION_RUN_TIMEOUT_MS must not abort every run instantly. */
+/** A bad AUTOMATION_RUN_TIMEOUT_MS falls back to the default instead of aborting every run instantly. */
 const DEFAULT_TIMEOUT_MS =
   Number.isFinite(env.automationRunTimeoutMs) && env.automationRunTimeoutMs > 0
     ? env.automationRunTimeoutMs
     : 300_000;
 
-/** Cap on the notification body: enough for a one-line result, short enough for the OS banner. */
 const NOTIFICATION_SUMMARY_CHARS = 140;
 
-/** First line of a run's result text, truncated to the notification-body cap. */
 function notificationSummary(result: string): string {
   const firstLine = result.split("\n", 1)[0] ?? "";
   return firstLine.slice(0, NOTIFICATION_SUMMARY_CHARS);
 }
 
 export interface AutomationRunResult {
-  /**
-   * False when the automation row is missing, or disabled and this wasn't a
-   * manual "Run now" — no automation_runs row was created and no
-   * Conversation was touched.
-   */
   started: boolean;
   succeeded: boolean;
-  /**
-   * The automation's schedule string, echoed back so a caller can decide
-   * one-off retirement (automations/scheduler.ts's isOneOffSchedule)
-   * without a second lookup. Present whenever `started` is true.
-   */
+  /** Echoed so scheduler.ts can retire a one-off run without re-querying. Set when started is true. */
   schedule?: string;
 }
 
-/**
- * Run one automation now: inserts the automation_runs row, mirrors the run
- * into its own Conversation (id = the run id, via the registered turn runner
- * and db/conversationStore.ts), and writes the terminal status — success, error,
- * or a timeout — back onto the run row. The structural twin of
- * turnRecorder.ts's beginTurn for Runs instead of Turns: this is the only
- * place an automation_runs row is written, and automations/scheduler.ts is
- * its only caller, supplying the cron/manual transport and the overlap
- * guard around it.
- */
 export async function executeAutomationRun(
   automationId: string,
   opts: { manual?: boolean; timeoutMs?: number } = {},
@@ -58,11 +37,10 @@ export async function executeAutomationRun(
     .select()
     .from(schema.automations)
     .where(eq(schema.automations.id, automationId));
-  // A ghost task — one leaked by a lost schedule/unschedule race, or one that
-  // fired between the automation being disabled and unschedule() running —
-  // must not still execute. Re-check the current row rather than trusting
-  // whatever state was true when the task was registered. A manual "Run now"
-  // is exempt from the enabled gate: pausing stops the schedule, not the user.
+  // A ghost task (leaked by a schedule/unschedule race, or fired between
+  // disabling and unschedule()) does not run: re-checking the row rather than
+  // trusting the state when the task was registered. Manual "Run now" bypasses
+  // the enabled gate; pausing stops the schedule, not the user.
   if (!automation || (!automation.enabled && !opts.manual)) {
     log.warn(
       { automationId, found: Boolean(automation) },
@@ -72,8 +50,6 @@ export async function executeAutomationRun(
   }
 
   const runId = randomUUID();
-  // Nobody is watching a 06:00 briefing. Every line this run produces carries
-  // the run id, so a failure can be traced back through the log afterwards.
   const runLog = log.child({ runId, automationId, automation: automation.name });
   const startedAt = Date.now();
   runLog.info("automation run started");
@@ -89,26 +65,20 @@ export async function executeAutomationRun(
 
   const timeoutMs =
     opts.timeoutMs !== undefined && opts.timeoutMs > 0 ? opts.timeoutMs : DEFAULT_TIMEOUT_MS;
-  // Bound the whole agent turn: a stuck model or MCP call otherwise keeps the
-  // run (and its MCP sessions) alive forever, and on a repeating schedule the
-  // overlap guard in scheduler.ts would then wedge the automation permanently.
+  // Bound the whole turn: a stuck model or MCP call would otherwise keep the
+  // run alive forever, and on a repeating schedule scheduler.ts's overlap guard
+  // would then wedge the automation permanently.
   const signal = AbortSignal.timeout(timeoutMs);
 
-  // Gates the one-off retirement scheduler.ts drives off this result: a
-  // one-time schedule whose only run errored or timed out must not be
-  // silently disabled with zero successful executions — the user would have
-  // no way to know it never ran.
+  // Gates scheduler.ts's one-off retirement: a one-time schedule whose only run
+  // errored is not silently disabled with zero successful executions.
   let succeeded = false;
   try {
     const instructionMessage = `Scheduled automation "${automation.name}". Execute this instruction now and report the outcome:\n\n${automation.instruction}`;
 
-    // The run id is the conversation id, so drafts created by this run link
-    // back to the run's transcript and its cards render when it's reopened.
-    // The turn runner (agent/turnRecorder.ts behind turnRunner.ts's registry)
-    // ensures the parent Conversation row and writes the turn's
-    // user/assistant rows itself — including its own transcript-capping row
-    // on failure or cancellation — so this run row only tracks the run's own
-    // status, timing and, on success, its result.
+    // The run id is the conversation id, so drafts created by this run link back
+    // to its transcript. The turn runner writes the conversation and message
+    // rows; this run row tracks only status, timing, and result.
     const { text, cardsJson } = await getTurnRunner()({
       runId,
       prompt: instructionMessage,
@@ -139,8 +109,7 @@ export async function executeAutomationRun(
     runLog.info({ durationMs: Date.now() - startedAt }, "automation run finished");
     succeeded = true;
   } catch (error) {
-    // The run's row records the message for the UI; the log keeps the stack,
-    // which is the only place it survives for an unattended run.
+    // The log keeps the stack, the only place it survives for an unattended run.
     const timedOut = signal.aborted;
     const message = timedOut
       ? `Run stopped after exceeding the ${Math.round(timeoutMs / 1000)}s time limit.`
@@ -173,11 +142,8 @@ export async function executeAutomationRun(
 }
 
 /**
- * Called once on boot, before any cron task is (re)registered: runs only
- * live inside this process, so an automation_runs row still "running" at
- * boot belongs to a process that died mid-run and would spin in the UI
- * forever. Mirrors turnRecorder.ts's recoverInterruptedTurns for the Run
- * side of the same crash.
+ * Called once on boot: a run still "running" belongs to a process that died
+ * mid-run (runs live only in this process) and would spin in the UI forever.
  */
 export async function sweepOrphanedRuns(): Promise<void> {
   const orphaned = await db

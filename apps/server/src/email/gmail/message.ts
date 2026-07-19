@@ -2,15 +2,8 @@ import { decodeHTML } from "entities";
 import libmime from "libmime";
 import { stripHtml } from "../textUtils.js";
 
-/**
- * Gmail message-payload helpers shared by every file that reads the Gmail
- * REST API (drafts.ts, read.ts, attachments.ts) — one provider's wire format
- * in one place.
- */
-
 export const GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me";
 
-/** One Gmail MIME part — the superset of what drafts, read and attachments each read. */
 export interface MessagePart {
   filename?: string;
   mimeType?: string;
@@ -20,7 +13,6 @@ export interface MessagePart {
 
 type MessageHeaders = { headers?: { name: string; value: string }[] };
 
-/** One message of a GET /threads/:id?format=full response — the fields the thread readers use. */
 export interface ThreadGetMessage {
   id?: string;
   internalDate?: string;
@@ -28,19 +20,17 @@ export interface ThreadGetMessage {
   payload?: MessagePart & { headers?: { name: string; value: string }[] };
 }
 
-/** Response shape of GET /threads/:id?format=full. */
 export interface ThreadGetResponse {
   messages?: ThreadGetMessage[];
 }
 
-/** Case-insensitive header lookup, the way Gmail's `payload.headers` needs to be read. */
+/** Case-insensitive header lookup over Gmail's `payload.headers`. */
 export function headerLookup(payload: MessageHeaders | undefined) {
   const headers = payload?.headers ?? [];
   return (name: string) =>
     headers.find((h) => h.name.toLowerCase() === name.toLowerCase())?.value ?? "";
 }
 
-/** Depth-first search for the first part of the wanted MIME type. */
 function findPart(part: MessagePart | undefined, mimeType: string): MessagePart | undefined {
   if (!part) return undefined;
   if (part.mimeType === mimeType && part.body?.data) return part;
@@ -51,12 +41,7 @@ function findPart(part: MessagePart | undefined, mimeType: string): MessagePart 
   return undefined;
 }
 
-/**
- * Depth-first visit of every part with a non-empty filename — Gmail's own
- * definition of "this part is an attachment". Same recursion as findPart,
- * visiting every hit instead of stopping at the first; the one attachment
- * walker for drafts.ts and attachments.ts alike.
- */
+/** Visits every part with a non-empty filename, Gmail's definition of "this part is an attachment". */
 export function forEachAttachmentPart(
   part: MessagePart | undefined,
   visit: (part: MessagePart, filename: string) => void,
@@ -70,11 +55,6 @@ function decodeBody(data: string): string {
   return Buffer.from(data, "base64url").toString("utf8");
 }
 
-/**
- * Plain-text body of one message payload: text/plain if present, else
- * text/html with tags stripped (crude but serviceable for display). The one
- * MIME walker for every Gmail reader.
- */
 export function plainTextBody(payload: MessagePart | undefined): string {
   const plain = findPart(payload, "text/plain");
   if (plain?.body?.data) return decodeBody(plain.body.data);
@@ -83,20 +63,16 @@ export function plainTextBody(payload: MessagePart | undefined): string {
   return stripHtml(decodeBody(html.body.data));
 }
 
-/** Decode the HTML entities Gmail escapes in `message.snippet` — named and
- * numeric alike; non-breaking spaces come back as plain spaces. */
+/** Decode the HTML entities Gmail escapes in `message.snippet`; non-breaking spaces become plain spaces. */
 export function decodeHtmlEntities(text: string): string {
   return decodeHTML(text).replace(/\u00a0/g, " ");
 }
 
 /**
- * Decode RFC 2047 encoded-words (`=?UTF-8?B?…?=`). Gmail's API returns
- * header values verbatim from the RFC 822 source, so a non-ASCII display
- * name or subject arrives encoded and would otherwise be mirrored as
- * gibberish. Values without an encoded-word marker pass through untouched;
- * a malformed encoding falls back to the raw value rather than failing the
- * message it rode in on. Display-path only — code that reuses headers to
- * rebuild raw MIME (drafts.ts) must keep them verbatim.
+ * Decode RFC 2047 encoded-words (`=?UTF-8?B?…?=`): Gmail returns header values
+ * verbatim from the RFC 822 source, so non-ASCII names/subjects arrive encoded.
+ * A malformed encoding falls back to the raw value. Display-path only: code
+ * that reuses headers to rebuild raw MIME (drafts.ts) keeps them verbatim.
  */
 export function decodeHeaderText(value: string): string {
   if (!value.includes("=?")) return value;

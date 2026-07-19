@@ -1,22 +1,22 @@
 import type { ConnectedAccount } from "@trailin/shared";
 import { fetchAccountNameMap } from "../../agent/accounts.js";
+import { resolveCheapModel } from "../../agent/llm/registry.js";
+import { moduleLogger } from "../../core/logger.js";
+import { errorMessage } from "../../core/utils/util.js";
 import {
   getLatestAgentDraftBody,
   listUnlearnedSentDrafts,
   markDraftLearned,
 } from "../../db/draftStore.js";
-import { createMemory } from "../../db/memories.js";
-import { resolveCheapModel } from "../../llm/registry.js";
-import { moduleLogger } from "../../logger.js";
-import { listAccounts } from "../../pipedream/connect.js";
+import { listAccounts } from "../../integrations/pipedream/connect.js";
 import { collapseWhitespace } from "../../search/snippets.js";
-import { errorMessage } from "../../utils/util.js";
+import { createMemory } from "../../storage/memories/store.js";
 import { getMailReadProvider, type MailReadProvider } from "../read/readProviders.js";
 import { extractLessons } from "./extractLLM.js";
 
 const log = moduleLogger("learn-extract");
 
-/** One account's LLM call covers at most this many pending pairs a night; any excess waits for the next sweep. */
+/** Pairs per account per LLM call; any excess waits for the next sweep. */
 const MAX_PAIRS_PER_CALL = 10;
 
 interface PendingPair {
@@ -30,7 +30,6 @@ export type ExtractFn = (input: {
   accountName: string;
 }) => Promise<string[]>;
 
-/** Real extraction: resolves a cheap model and asks it for style lessons over one account's pairs. */
 async function defaultExtract(input: {
   pairs: Array<{ draftBody: string; sentBody: string }>;
   accountName: string;
@@ -39,7 +38,6 @@ async function defaultExtract(input: {
   return extractLessons(input.pairs, input.accountName, model);
 }
 
-/** Injectable seams: the lesson-extraction model call and the live account/read lookups. */
 export interface ExtractSweepDeps {
   extract?: ExtractFn;
   listAccounts?: () => Promise<ConnectedAccount[]>;
@@ -49,7 +47,7 @@ export interface ExtractSweepDeps {
 export interface ExtractSweepResult {
   /** Sent-but-unlearned drafts pending when the sweep started. */
   pending: number;
-  /** Pairs stamped learned without a lesson — the draft was sent unchanged. */
+  /** Pairs stamped learned without a lesson: the draft was sent unchanged. */
   identical: number;
   /** Edited pairs consumed by extraction this sweep. */
   learned: number;
@@ -58,16 +56,12 @@ export interface ExtractSweepResult {
 }
 
 /**
- * One sweep's worth of the nightly extraction pass: every sent-but-unlearned
- * agent_drafts snapshot whose sent message the provider can still serve is
- * diffed against its own latest agent-authored version, both sides
- * whitespace-normalized. The sent body comes live from the account's
- * MailReadProvider. A pair identical after normalizing needed no lesson and
- * is stamped learned_at directly; every other pair is batched per account (at
- * most MAX_PAIRS_PER_CALL) into one LLM call whose reported directives
- * become account-scoped memories. Unresolvable pairs (account disconnected,
- * no read driver, fetch failed) and any account whose LLM call fails are
- * left unstamped for a later night — dropping a lesson is fine, learning
+ * The nightly extraction pass: each sent-but-unlearned snapshot is diffed
+ * (whitespace-normalized) against its own latest agent-authored version. An
+ * identical pair needed no lesson and is stamped directly; the rest are batched
+ * per account (at most MAX_PAIRS_PER_CALL) into one LLM call whose directives
+ * become account memories. Unresolvable pairs and any account whose LLM call
+ * fails stay unstamped for a later night: dropping a lesson is fine, learning
  * the wrong one is not.
  */
 export async function runExtractionSweep(deps: ExtractSweepDeps = {}): Promise<ExtractSweepResult> {
@@ -137,8 +131,7 @@ export async function runExtractionSweep(deps: ExtractSweepDeps = {}): Promise<E
           await createMemory(directive, "agent", accountId);
           lessons++;
         } catch (error) {
-          // Over-length or otherwise rejected by memory's own limits (including
-          // "memory is full") — skip this one directive, not the whole batch.
+          // Rejected by memory's own limits (over-length, "memory is full"); skip this directive, not the batch.
           log.warn(
             { err: errorMessage(error), accountId },
             "style directive rejected by memory store",

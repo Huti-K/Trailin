@@ -1,9 +1,9 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "@sinclair/typebox";
 import type { BriefingItem, BriefingRollup, CardAccount, ConnectedAccount } from "@trailin/shared";
+import { errorMessage, isNonEmptyString, isRecord } from "../core/utils/util.js";
 import { threadWebUrl } from "../email/webLinks.js";
-import { listAccounts } from "../pipedream/connect.js";
-import { errorMessage, isNonEmptyString, isRecord } from "../utils/util.js";
+import { listAccounts } from "../integrations/pipedream/connect.js";
 import { findAccount } from "./accounts.js";
 import {
   buildBriefingCard,
@@ -13,24 +13,6 @@ import {
   toCardAccount,
 } from "./cards.js";
 import { textResult, tool } from "./toolkit.js";
-
-/**
- * Agent tool that publishes the structured "briefing" AgentCard — a triaged,
- * cross-account inbox digest grouped by how urgently each message needs the
- * user, with per-thread actions (see BriefingItem/BriefingRollup in
- * @trailin/shared for the card contract). The model only knows accounts by
- * email address, not our internal Pipedream account ids, so this tool
- * resolves `account` strings itself and drops what it can't resolve rather
- * than failing the call. Nothing here throws — a malformed argument yields a
- * text error result instead of an unhandled rejection.
- *
- * Every items/rollups field is schema-typed as optional and unknown-valued:
- * coerceBriefingItem/coerceBriefingRollup are the real validators (they drop
- * an entry missing its required fields or holding the wrong type), so the
- * param schema only has to describe the shape to the model, not enforce it —
- * enforcing it here would reject the whole call over one malformed entry
- * instead of leaving that entry for the coercion pass to drop.
- */
 
 const BRIEFING_CARD_NOTE = cardNote(
   "this briefing",
@@ -45,11 +27,11 @@ const PRIORITY_DESCRIPTION =
   "knowing and needs nothing.";
 
 /**
- * One message's shape, shared by the tier `items` and each rollup group's
- * `items` — both render as the same clickable row, so both need the same
- * per-thread fields. Every field is optional and unknown-valued on purpose:
- * coerceBriefingItem is the real validator (it drops an entry missing its
- * required fields), so this schema only describes the shape to the model.
+ * Shared by the tier `items` and each rollup group's `items`. Every field is
+ * optional and unknown-valued on purpose: coerceBriefingItem is the real
+ * validator (dropping entries missing required fields), so the schema only
+ * describes the shape to the model rather than rejecting the whole call over
+ * one bad entry.
  */
 const briefingItemParam = Type.Object({
   threadId: Type.Optional(
@@ -163,11 +145,8 @@ export const composeBriefingTool: AgentTool = tool({
         return findAccount(accounts, value);
       };
 
-      // Resolve one raw message into a BriefingItem, or undefined when it's
-      // missing a required field. The account and webmail deep link are always
-      // server-resolved (never a model-supplied URL) via the same helper the
-      // search sources use; "" (an app with no known web UI) normalizes to
-      // undefined. Shared by the tier items and each rollup group's items.
+      // The account and webmail deep link are server-resolved, never a
+      // model-supplied URL.
       const resolveItem = (raw: unknown): BriefingItem | undefined => {
         if (!isRecord(raw)) return undefined;
         const account = resolveAccount(raw.account);
@@ -178,9 +157,6 @@ export const composeBriefingTool: AgentTool = tool({
         return coerceBriefingItem(raw, account?.id, webUrl);
       };
 
-      // Drop anything the coercion rejects (missing required fields) rather than
-      // failing the whole call over one bad entry — the counts below tell the
-      // model what it lost.
       const items: BriefingItem[] = [];
       for (const raw of rawItems) {
         const item = resolveItem(raw);
@@ -199,10 +175,6 @@ export const composeBriefingTool: AgentTool = tool({
         if (rollup) rollups.push(rollup);
       }
 
-      // The card's `accounts` list credits every connected account that
-      // actually appears in the (resolved) items — tier items and rolled-up
-      // ones alike, since both render account-dotted rows — not every account
-      // checked.
       const accountLookup = new Map<string, ConnectedAccount>(accounts.map((a) => [a.id, a]));
       const allItems = [...items, ...rollups.flatMap((r) => r.items)];
       const seenAccountIds = new Set(allItems.flatMap((i) => (i.accountId ? [i.accountId] : [])));
@@ -248,9 +220,7 @@ export const composeBriefingTool: AgentTool = tool({
       if (draftedCount > 0)
         summaryParts.push(`${draftedCount} draft${draftedCount === 1 ? "" : "s"} linked`);
 
-      // Items are dropped silently above so one bad entry can't sink the call,
-      // but the model still needs to know it sent something unusable — most
-      // often a missing threadId, which is exactly what breaks the row actions.
+      // Tell the model what got dropped: a missing threadId is what breaks the row actions.
       const dropped = rawItems.length - items.length;
       if (dropped > 0) {
         summaryParts.push(

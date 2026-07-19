@@ -1,11 +1,5 @@
 import type { Freshness, WebSearchResult } from "./search.js";
 
-/**
- * Brave Web Search API client — the keyed provider behind the agent's
- * web_search tool, used when BRAVE_SEARCH_API_KEY is set. Auth is a
- * subscription token header; results come back as `web.results` rows.
- */
-
 export const BRAVE_SEARCH_URL = "https://api.search.brave.com/res/v1/web/search";
 
 const FRESHNESS_CODES: Record<Freshness, string> = {
@@ -15,13 +9,12 @@ const FRESHNESS_CODES: Record<Freshness, string> = {
   year: "py",
 };
 
-/** A numeric character reference's code point rendered as text, or undefined when it's outside the Unicode range. */
 function decodeCodePoint(code: number): string | undefined {
   if (!Number.isInteger(code) || code < 0 || code > 0x10ffff) return undefined;
   return String.fromCodePoint(code);
 }
 
-/** Snippets arrive with highlight markup (<strong>) and entities; the model wants plain text. */
+/** Brave snippets carry highlight markup (<strong>) and entities; strip to plain text. */
 function stripHtml(value: string): string {
   return value
     .replace(/<[^>]+>/g, "")
@@ -55,8 +48,7 @@ export async function braveWebSearch(opts: {
     signal: opts.signal ?? null,
   });
   if (!response.ok) {
-    // 401/403 = bad key, 422 = bad params, 429 = plan quota — all worth
-    // surfacing to the model verbatim so it can tell the user what's wrong.
+    // 401/403 bad key, 422 bad params, 429 quota: surface verbatim so the model can tell the user what's wrong.
     throw new Error(`Brave Search request failed: ${response.status} ${response.statusText}`);
   }
 

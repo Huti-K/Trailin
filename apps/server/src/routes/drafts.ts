@@ -1,6 +1,8 @@
 import type { FastifyPluginAsyncTypebox } from "@fastify/type-provider-typebox";
 import { Type } from "@sinclair/typebox";
 import type { AccountDrafts, ConnectedAccount, EmailDraft } from "@trailin/shared";
+import { badRequest, notFound, toProviderError, upstreamError } from "../core/errors.js";
+import { errorMessage } from "../core/utils/util.js";
 import {
   appendDraftVersion,
   getDraftConversationLinks,
@@ -9,11 +11,8 @@ import {
 } from "../db/draftStore.js";
 import { listDraftsCached } from "../email/draftsCache.js";
 import { type DraftProvider, getDraftProvider } from "../email/providers.js";
-import { badRequest, notFound, toProviderError, upstreamError } from "../errors.js";
-import { listAccounts, pipedreamConfigured } from "../pipedream/connect.js";
-import { errorMessage } from "../utils/util.js";
+import { listAccounts, pipedreamConfigured } from "../integrations/pipedream/connect.js";
 
-/** Resolve a connected account (any app with a draft provider) by its Pipedream account id. */
 async function findDraftAccount(
   accountId: string,
 ): Promise<{ account: ConnectedAccount; provider: DraftProvider } | null> {
@@ -24,10 +23,6 @@ async function findDraftAccount(
   return provider ? { account, provider } : null;
 }
 
-/**
- * Attach the conversation that created each draft (from its agent_drafts
- * snapshot), so the UI's refine action can reopen that exact chat.
- */
 async function attachConversationLinks(byAccount: AccountDrafts[]): Promise<AccountDrafts[]> {
   const draftIds = byAccount.flatMap((a) => a.drafts.map((d) => d.id));
   if (draftIds.length === 0) return byAccount;
@@ -51,7 +46,6 @@ const draftPatchBody = Type.Object({
   subject: Type.Optional(Type.String()),
 });
 export const draftRoutes: FastifyPluginAsyncTypebox = async (app) => {
-  /** Live drafts per connected account that has a DraftProvider (Gmail, Outlook, ...). */
   app.get(
     "/api/drafts",
     { schema: { querystring: draftsQuery } },
@@ -62,9 +56,8 @@ export const draftRoutes: FastifyPluginAsyncTypebox = async (app) => {
       try {
         accounts = (await listAccounts()).filter((a) => getDraftProvider(a.app) !== null);
       } catch (error) {
-        // Listing accounts is the one genuinely-upstream (Pipedream) step
-        // here; attachConversationLinks below is a local DB join and must
-        // not be misreported the same way if it fails.
+        // Only listAccounts is genuinely upstream; a failure in the local DB
+        // join below is not misreported as an upstream error.
         throw upstreamError(errorMessage(error), error);
       }
       const byAccount = await Promise.all(
@@ -89,7 +82,6 @@ export const draftRoutes: FastifyPluginAsyncTypebox = async (app) => {
     },
   );
 
-  /** Full draft content for the in-app viewer. */
   app.get("/api/drafts/:accountId/:draftId", { schema: { params: draftParams } }, async (req) => {
     try {
       const found = await findDraftAccount(req.params.accountId);
@@ -100,7 +92,6 @@ export const draftRoutes: FastifyPluginAsyncTypebox = async (app) => {
     }
   });
 
-  /** Discard a draft (user-initiated from the UI; the agent has no such tool). */
   app.delete(
     "/api/drafts/:accountId/:draftId",
     { schema: { params: draftParams } },
@@ -109,9 +100,8 @@ export const draftRoutes: FastifyPluginAsyncTypebox = async (app) => {
         const found = await findDraftAccount(req.params.accountId);
         if (!found) throw notFound("account not found");
         await found.provider.deleteDraft(found.account, req.params.draftId);
-        // Snapshot bookkeeping is best-effort: the provider delete succeeded,
-        // so the request must report success even if the local mark fails. A
-        // discarded draft is a learning signal in its own right.
+        // Best-effort: the provider delete already succeeded, so report success
+        // even if the local snapshot mark fails.
         await markDraftStatus(req.params.accountId, req.params.draftId, "discarded").catch(
           (error: unknown) =>
             req.log.warn({ err: error }, "marking draft snapshot discarded failed"),
@@ -124,11 +114,9 @@ export const draftRoutes: FastifyPluginAsyncTypebox = async (app) => {
   );
 
   /**
-   * Send an existing draft as-is. Human-initiated only (the in-app Send
-   * button); per-account write arming is deliberately not consulted — the
-   * explicit click is the authorization, and the agent has no tool over this
-   * route. `sendDraft` is an optional provider capability, same contract as
-   * `updateDraft` below.
+   * Human-initiated only (the in-app Send button): per-account write arming is
+   * deliberately not consulted. The explicit click is the authorization, and
+   * the agent has no tool over this route.
    */
   app.post(
     "/api/drafts/:accountId/:draftId/send",
@@ -141,8 +129,8 @@ export const draftRoutes: FastifyPluginAsyncTypebox = async (app) => {
           throw badRequest("sending a draft is not supported for this account");
         }
         const result = await found.provider.sendDraft(found.account, req.params.draftId);
-        // In-app sends record the sent message id exactly, so the learning
-        // loop never has to match them. Best-effort, as with discard above.
+        // Best-effort, as with discard; recording the exact sent message id
+        // spares the learning loop a match.
         await markDraftStatus(
           req.params.accountId,
           req.params.draftId,
@@ -158,12 +146,6 @@ export const draftRoutes: FastifyPluginAsyncTypebox = async (app) => {
     },
   );
 
-  /**
-   * The draft's recorded fate from its snapshot — what persisted chat cards
-   * re-hydrate from, so a card whose draft was already sent or discarded
-   * renders that terminal state instead of live buttons. 404 = no snapshot
-   * (the draft wasn't agent-written); callers treat that as unknown.
-   */
   app.get(
     "/api/drafts/:accountId/:draftId/status",
     { schema: { params: draftParams } },
@@ -174,13 +156,7 @@ export const draftRoutes: FastifyPluginAsyncTypebox = async (app) => {
     },
   );
 
-  /**
-   * Save body/subject edits to an existing draft, exactly as typed — no
-   * humanizer (that only runs in the agent's create-draft
-   * tool). `updateDraft` is an optional DraftProvider capability — a provider
-   * without one (no driver written yet) reports 400 rather than assuming
-   * every provider supports it.
-   */
+  // Saved exactly as typed; the humanizer runs only in the agent's create-draft tool.
   app.patch(
     "/api/drafts/:accountId/:draftId",
     { schema: { params: draftParams, body: draftPatchBody } },
@@ -193,9 +169,8 @@ export const draftRoutes: FastifyPluginAsyncTypebox = async (app) => {
         }
         const { body, subject } = req.body;
         await found.provider.updateDraft(found.account, req.params.draftId, { body, subject });
-        // A manual edit is a user-authored version in the draft's snapshot
-        // history — the learning loop's strongest signal. Best-effort: the
-        // provider save succeeded, so the request reports success regardless.
+        // Best-effort: the provider save succeeded, so report success even if
+        // appending the user-authored snapshot version fails.
         await appendDraftVersion(req.params.accountId, req.params.draftId, "user", {
           body,
           subject,

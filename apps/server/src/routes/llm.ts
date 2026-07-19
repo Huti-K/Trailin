@@ -1,22 +1,22 @@
 import type { FastifyPluginAsyncTypebox } from "@fastify/type-provider-typebox";
 import { Type } from "@sinclair/typebox";
-import { resetSessions } from "../agent/sessionCache.js";
-import { badRequest, conflict } from "../errors.js";
 import {
   cancelLogin,
   getLoginStatus,
   provideLoginInput,
   provideLoginSelection,
   startLogin,
-} from "../llm/loginFlow.js";
+} from "../agent/llm/loginFlow.js";
 import {
   clearCredential,
   getModelSettings,
   listProviders,
   saveApiKey,
   setActiveModelIds,
-} from "../llm/registry.js";
-import { errorMessage } from "../utils/util.js";
+} from "../agent/llm/registry.js";
+import { resetSessions } from "../agent/sessionCache.js";
+import { badRequest, conflict } from "../core/errors.js";
+import { errorMessage } from "../core/utils/util.js";
 
 const modelBody = Type.Object({ provider: Type.String(), model: Type.String() });
 
@@ -39,7 +39,7 @@ export const llmRoutes: FastifyPluginAsyncTypebox = async (app) => {
     } catch (error) {
       throw badRequest(errorMessage(error));
     }
-    // New conversations pick up the new model; existing in-memory agents are dropped.
+    // New conversations pick up the new model; drop existing in-memory agents.
     await resetSessions();
     return getModelSettings();
   });
@@ -87,9 +87,8 @@ export const llmRoutes: FastifyPluginAsyncTypebox = async (app) => {
     if (!apiKey) {
       throw badRequest("providerId and apiKey are required");
     }
-    // Only saveApiKey's own validation belongs to this catch — resetSessions
-    // below is a separate failure mode and must not be reported as a bad
-    // request too.
+    // Only saveApiKey's validation belongs in this catch; a resetSessions
+    // failure below is not reported as a 400 too.
     try {
       await saveApiKey(req.body.providerId, apiKey);
     } catch (error) {

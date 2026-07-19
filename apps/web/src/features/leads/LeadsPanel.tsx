@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import type { Automation, Lead, LeadScore, LeadStatus } from "@trailin/shared";
+import type { Automation, Lead, LeadPriority, LeadStatus } from "@trailin/shared";
 import { CalendarClock, Phone, Plus, Trash2, Users } from "lucide-react";
 import * as React from "react";
 import { useTranslation } from "react-i18next";
@@ -40,12 +40,12 @@ const STATUS_TONE: Record<LeadStatus, "default" | "muted" | "success" | "warning
     lost: "muted",
   };
 
-/** Assessed purchase likelihood, brightest on "high" so the hot leads pop. */
-const SCORES = ["high", "medium", "low"] as const satisfies readonly LeadScore[];
-const SCORE_TONE: Record<(typeof SCORES)[number], "default" | "muted" | "success"> = {
-  high: "success",
-  medium: "default",
-  low: "muted",
+/** Priority tier A/B/C, brightest on "A" so the hot leads pop. */
+const PRIORITIES = ["A", "B", "C"] as const satisfies readonly LeadPriority[];
+const PRIORITY_TONE: Record<(typeof PRIORITIES)[number], "default" | "muted" | "success"> = {
+  A: "success",
+  B: "default",
+  C: "muted",
 };
 
 const EMPTY_FORM = { email: "", name: "", phone: "", interest: "", notes: "" };
@@ -68,7 +68,9 @@ export function LeadsPanel() {
     if (loadError) toast.error(loadError);
   }, [loadError]);
   const [filter, setFilter] = React.useState<LeadStatus | null>(null);
-  const [scoreFilter, setScoreFilter] = React.useState<(typeof SCORES)[number] | null>(null);
+  const [priorityFilter, setPriorityFilter] = React.useState<(typeof PRIORITIES)[number] | null>(
+    null,
+  );
   const [showForm, setShowForm] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
   const [form, setForm] = React.useState(EMPTY_FORM);
@@ -78,7 +80,7 @@ export function LeadsPanel() {
 
   const visible = leads
     .filter((lead) => (filter ? lead.status === filter : true))
-    .filter((lead) => (scoreFilter ? lead.score === scoreFilter : true));
+    .filter((lead) => (priorityFilter ? lead.priority === priorityFilter : true));
   const attachedTo = (lead: Lead) => automations.filter((a) => a.leadId === lead.id);
 
   const create = async () => {
@@ -137,13 +139,13 @@ export function LeadsPanel() {
               {t(`leads.status.${status}`)}
             </Chip>
           ))}
-          {SCORES.map((score) => (
+          {PRIORITIES.map((priority) => (
             <Chip
-              key={score}
-              active={scoreFilter === score}
-              onClick={() => setScoreFilter(scoreFilter === score ? null : score)}
+              key={priority}
+              active={priorityFilter === priority}
+              onClick={() => setPriorityFilter(priorityFilter === priority ? null : priority)}
             >
-              {t(`leads.score.${score}`)}
+              {t(`leads.priority.${priority}`)}
             </Chip>
           ))}
         </div>
@@ -292,9 +294,9 @@ function LeadCard({
               {lead.name || lead.email}
             </span>
             <Badge variant={STATUS_TONE[lead.status]}>{t(`leads.status.${lead.status}`)}</Badge>
-            {lead.score !== "" && (
-              <Badge variant={SCORE_TONE[lead.score]} aria-label={t("leads.scoreLabel")}>
-                {t(`leads.score.${lead.score}`)}
+            {lead.priority !== "" && (
+              <Badge variant={PRIORITY_TONE[lead.priority]} aria-label={t("leads.priorityLabel")}>
+                {t(`leads.priority.${lead.priority}`)}
               </Badge>
             )}
           </div>
@@ -331,6 +333,11 @@ function LeadCard({
 
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-2xs text-muted-foreground tabular-nums">
         {lead.persona && <span>{lead.persona}</span>}
+        {lead.language && (
+          <span>
+            {t("leads.language")}: {lead.language}
+          </span>
+        )}
         {meta.map((line) => (
           <span key={line}>{line}</span>
         ))}

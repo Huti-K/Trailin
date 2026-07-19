@@ -6,13 +6,11 @@ import { recordLead, removeLead } from "../leads/manage.js";
 import { textResult, tool } from "./toolkit.js";
 
 /**
- * Tools over the leads directory (db/leads.ts). Recording, reading and
- * updating stay available to unattended runs: a lead row is inert structured
- * data — unlike an automation instruction it is never executed — so the worst
- * a prompt-injected email can do is file itself as a lead, which is the
- * intake feature working as designed. Deletion is interactive-only: it also
- * cascades over the lead's automations, and destroying pipeline state is a
- * human call.
+ * Record/read/update stay available to unattended runs: a lead row is inert
+ * data (never executed like an automation instruction), so the worst a
+ * prompt-injected email can do is file itself as a lead. Deletion is
+ * interactive-only: it cascades over the lead's automations, and destroying
+ * pipeline state is a human call.
  */
 
 const STATUS_DESCRIPTION =
@@ -20,17 +18,24 @@ const STATUS_DESCRIPTION =
   `reply), "engaged" (they replied, conversation ongoing), "qualified" (serious prospect), ` +
   `"won" or "lost" (closed).`;
 
-const scoreSchema = Type.Union(
-  [Type.Literal("high"), Type.Literal("medium"), Type.Literal("low")],
-  { description: "Estimated purchase likelihood, judged from the inquiry's substance." },
-);
+const prioritySchema = Type.Union([Type.Literal("A"), Type.Literal("B"), Type.Literal("C")], {
+  description:
+    "Priority tier from purchase likelihood: A hot (concrete budget, time pressure, or a " +
+    "viewing wish for a specific unit), B warm (a clear search profile without urgency), " +
+    "C cold (a vague first inquiry).",
+});
+
+const languageSchema = Type.String({
+  description: 'Language of the inquiry as a BCP-47 primary subtag, e.g. "de", "en", "tr".',
+});
 
 function leadLine(lead: Lead): string {
   const who = lead.name ? `${lead.name} <${lead.email}>` : lead.email;
   const details = [
     lead.interest && `interest: ${lead.interest}`,
     lead.persona && `persona: ${lead.persona}`,
-    lead.score && `score ${lead.score}`,
+    lead.priority && `priority ${lead.priority}`,
+    lead.language && `lang ${lead.language}`,
     lead.phone && `phone ${lead.phone}`,
     lead.accountId && `via account ${lead.accountId}`,
     lead.onofficeAddressId && `onOffice address ${lead.onofficeAddressId}`,
@@ -66,7 +71,8 @@ const leadRecord: AgentTool = tool({
         description: 'Buyer type in a few words, e.g. "Kapitalanleger", "junge Familie".',
       }),
     ),
-    score: Type.Optional(scoreSchema),
+    priority: Type.Optional(prioritySchema),
+    language: Type.Optional(languageSchema),
     notes: Type.Optional(Type.String({ description: "Anything else worth keeping." })),
     inboundAt: Type.Optional(
       Type.String({ description: "ISO date of the email this came from, e.g. its Date header." }),
@@ -157,7 +163,8 @@ const leadUpdate: AgentTool = tool({
     persona: Type.Optional(
       Type.String({ description: 'Buyer type in a few words, e.g. "Kapitalanleger".' }),
     ),
-    score: Type.Optional(scoreSchema),
+    priority: Type.Optional(prioritySchema),
+    language: Type.Optional(languageSchema),
     notes: Type.Optional(Type.String({ description: "Complete replacement text." })),
     inboundAt: Type.Optional(
       Type.String({ description: "ISO date of the latest email received from the lead." }),
@@ -197,7 +204,6 @@ const leadDelete: AgentTool = tool({
   },
 });
 
-/** The lead surface unattended runs get: record, read, update — never delete. */
 export const leadTools: AgentTool[] = [leadRecord, leadList, leadUpdate];
 
 /** Interactive-only: deletion cascades over the lead's automations. */

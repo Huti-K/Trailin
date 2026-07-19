@@ -1,7 +1,7 @@
 import type { ConnectedAccount, EmailThreadMessage } from "@trailin/shared";
-import { upstreamStatusCode } from "../../errors.js";
-import { proxyRequest } from "../../pipedream/connect.js";
-import { mapWithConcurrency } from "../../utils/jobs.js";
+import { upstreamStatusCode } from "../../core/errors.js";
+import { mapWithConcurrency } from "../../core/utils/jobs.js";
+import { proxyRequest } from "../../integrations/pipedream/connect.js";
 import type { MailReadProvider, SentMessage, ThreadDetail } from "../read/readProviders.js";
 import { splitAddressList } from "../textUtils.js";
 import {
@@ -14,13 +14,7 @@ import {
   type ThreadGetResponse,
 } from "./message.js";
 
-/**
- * Gmail MailReadProvider: live sent-mail and thread reads through the Connect
- * proxy. `after:` in a messages.list query takes epoch seconds; the per-id
- * full fetches that follow are capped so one call never fans out unboundedly.
- */
-
-/** Concurrency cap for the per-message GET calls behind one listSentSince. */
+/** Gmail messages.list `after:` takes epoch seconds; the per-id fetches that follow are concurrency-capped. */
 const BATCH_CONCURRENCY = 5;
 
 const DEFAULT_LIMIT = 50;
@@ -42,8 +36,7 @@ function toSentMessage(msg: GmailMessageFull): SentMessage {
     providerMessageId: msg.id,
     providerThreadId: msg.threadId,
     subject: decodeHeaderText(header("Subject")),
-    // Encoded-words decode AFTER the list is split: a decoded display name
-    // may legitimately contain a comma, which must not create a bogus entry.
+    // Decode encoded-words AFTER splitting: a decoded display name may contain a comma that would create a bogus entry.
     to: splitAddressList(header("To")).map(decodeHeaderText),
     date: msg.internalDate
       ? new Date(Number(msg.internalDate)).toISOString()
@@ -59,9 +52,7 @@ async function listSentSince(
 ): Promise<SentMessage[]> {
   const limit = opts?.limit ?? DEFAULT_LIMIT;
   const afterEpochSeconds = Math.floor(Date.parse(sinceIso) / 1000);
-  // messages.list returns newest first, so maxResults keeps the newest
-  // `limit` ids (the listSentSince contract); the sort at the end restores
-  // the oldest-first return order.
+  // messages.list returns newest first, so maxResults keeps the newest `limit`; the final sort restores oldest-first.
   const list = (await proxyRequest(account.id, "get", `${GMAIL_API}/messages`, {
     params: {
       q: `in:sent after:${afterEpochSeconds}`,
@@ -91,9 +82,7 @@ async function newestInbound(
   })) as MessagesListResponse;
   const id = list.messages?.[0]?.id;
   if (!id) return null;
-  // Steady state, one call: the newest message is the one the caller already
-  // knows, so its date needn't be fetched again (the contract lets date be
-  // null exactly when id === knownId).
+  // Newest is the id the caller already knows, so skip the date fetch (contract: date is null exactly when id === knownId).
   if (id === opts?.knownId) return { id, date: null };
   const msg = (await proxyRequest(account.id, "get", `${GMAIL_API}/messages/${id}`, {
     params: { format: "minimal" },
@@ -156,8 +145,7 @@ async function getThread(
     if (upstreamStatusCode(error) === 404) return null;
     throw error;
   }
-  // Unsent drafts sit inside the thread they answer — the conversation view
-  // must not echo them back as if they had been sent.
+  // Unsent drafts sit inside the thread they answer; the view does not echo them as sent.
   const messages = (res.messages ?? [])
     .filter((m) => !m.labelIds?.includes("DRAFT"))
     .sort((a, b) => Number(a.internalDate ?? 0) - Number(b.internalDate ?? 0));

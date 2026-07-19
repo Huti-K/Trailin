@@ -10,13 +10,13 @@ import { parseStoredToolCalls } from "../agent/history.js";
 import { buildSystemPrompt } from "../agent/prompt.js";
 import { disposeSession } from "../agent/sessionCache.js";
 import { beginTurn, type Turn, TurnInFlightError } from "../agent/turnRecorder.js";
+import { badRequest, conflict, requireRow } from "../core/errors.js";
+import { emitServerEvent } from "../core/events.js";
+import { errorMessage } from "../core/utils/util.js";
 import { deleteConversationCascade } from "../db/conversationStore.js";
 import { db, lazyStatement, schema } from "../db/index.js";
 import { likeContains, likePattern } from "../db/like.js";
 import { buildFtsMatch } from "../db/sql.js";
-import { badRequest, conflict, requireRow } from "../errors.js";
-import { emitServerEvent } from "../events.js";
-import { errorMessage } from "../utils/util.js";
 import { openSse } from "./sse.js";
 
 const conversationsQuery = Type.Object({
@@ -29,19 +29,15 @@ const idParams = Type.Object({ id: Type.String() });
 
 const conversationPatchBody = Type.Object({
   title: Type.Optional(Type.String()),
-  /** Manual focus pick from the chat header chip: an account id, or null to clear focus. */
   focusAccountId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
 });
 
 const chatBody = Type.Object({
   conversationId: Type.Optional(Type.String()),
-  // A mailbox pre-selected in the header chip before this conversation existed;
-  // applied as the new conversation's focus so even the first turn respects it.
   focusAccountId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
   message: Type.String(),
-  // Composer @-mentions: emails the user explicitly pinned to this message.
-  // See agent/emailRefs.ts — these become an authoritative note appended to
-  // the prompt actually run, while the persisted row keeps `message` raw.
+  // Composer @-mentions (agent/emailRefs.ts): appended to the prompt run as an
+  // authoritative note, while the persisted row keeps `message` raw.
   refs: Type.Optional(
     Type.Array(
       Type.Object({
@@ -58,23 +54,12 @@ const chatBody = Type.Object({
   ),
 });
 
-// Conversation ids with a visibly in-flight turn, purely for the history
-// rail's live "responding…" indicator (the `running` flag below). This is
-// deliberately separate from the correctness guard in agent/turnRecorder.ts
-// (beginTurn/TurnInFlightError): that guard exists so a second overlapping
-// send can never corrupt the transcript, and is released the instant
-// Turn.run() ends, wherever it's called from. This Set only drives a UI
-// badge and is safe to manage locally, right around the request lifecycle.
+// Conversation ids with a visibly in-flight turn, only for the history rail's
+// "responding…" badge (the `running` flag below). Deliberately separate from the
+// correctness guard in agent/turnRecorder.ts (beginTurn/TurnInFlightError): this
+// Set only drives a UI badge, so it's safe to manage locally around the request.
 const runningConversations = new Set<string>();
 
-/**
- * Message-content half of conversation search: messages_fts is the FTS5
- * external-content index over `messages` (db/schemaSteps.ts), kept in sync by
- * insert/update/delete triggers, so this never scans message bodies with
- * LIKE. Every hit is joined back to `messages` by rowid to read the owning
- * conversation id; DISTINCT collapses a conversation with several matching
- * messages to one row. Same idiom as search/sources.ts's messageHitsStmt.
- */
 const messageMatchStmt = lazyStatement(`
   SELECT DISTINCT m.conversation_id AS conversationId
   FROM messages_fts
@@ -88,11 +73,8 @@ export const chatRoutes: FastifyPluginAsyncTypebox = async (app) => {
     const limit = Math.min(req.query.limit ?? 50, 200);
     const offset = req.query.offset ?? 0;
 
-    // Matches conversations by title (LIKE — titles are short and few), or
-    // that contain at least one message hit against messages_fts. buildFtsMatch
-    // mirrors search/sources.ts's searchChats: null when the query has no
-    // word/number characters, so a query like "***" degrades to a title-only
-    // match rather than an empty MATCH expression (which SQLite rejects).
+    // buildFtsMatch is null when the query has no word/number chars, so "***"
+    // degrades to a title-only match rather than an empty MATCH (which SQLite rejects).
     const pattern = q ? likeContains(q) : undefined;
     const ftsMatch = q ? buildFtsMatch(q, "AND") : null;
     const matchedConversationIds = ftsMatch
@@ -132,8 +114,8 @@ export const chatRoutes: FastifyPluginAsyncTypebox = async (app) => {
       if (title === undefined && focusAccountId === undefined) {
         throw badRequest("nothing to update");
       }
-      // Input validation precedes the existence check — a malformed request
-      // is a 400 regardless of whether the id resolves.
+      // Validate before the existence check: a malformed request is a 400
+      // regardless of whether the id resolves.
       const trimmed = title?.trim();
       if (title !== undefined && !trimmed) throw badRequest("title is required");
       await requireRow(
@@ -152,9 +134,8 @@ export const chatRoutes: FastifyPluginAsyncTypebox = async (app) => {
         emitServerEvent("conversations");
       }
 
-      // A manual pick sets the account and clears the thread part (the user
-      // is redirecting the conversation, not pinning an email); null removes
-      // focus entirely. Both emit "conversations" themselves.
+      // A manual pick sets the account and clears the thread; null clears focus
+      // entirely. Both emit "conversations" themselves.
       if (focusAccountId === null) {
         await clearConversationFocus(req.params.id);
       } else if (focusAccountId !== undefined) {
@@ -175,20 +156,18 @@ export const chatRoutes: FastifyPluginAsyncTypebox = async (app) => {
         .where(eq(schema.conversations.id, req.params.id)),
       "not found",
     );
-    // A turn currently running for this conversation can still insert its
-    // assistant row (turnRecorder.ts's recordOutcome) after the delete below —
-    // refuse instead of racing it, same 409 shape POST /api/chat itself
-    // returns for a second concurrent send. runningConversations is added
-    // synchronously right after beginTurn acquires the real in-flight guard,
-    // with no `await` between the two, so this check can't miss a turn that
-    // only just started.
+    // A turn still running for this conversation could insert its assistant row
+    // (turnRecorder's recordOutcome) after the delete below; refuse with the
+    // same 409 as a concurrent send rather than race it. runningConversations is
+    // set synchronously right after beginTurn with no await between, so this
+    // can't miss a just-started turn.
     if (runningConversations.has(req.params.id)) {
       throw conflict("a reply is in progress for this conversation");
     }
-    // Drop the live agent session before deleting rows, not after: once this
-    // resolves, nothing can start a new turn against this conversationId (the
-    // next getOrCreateSession would rebuild from `messages`, which is about
-    // to be gone), so no write can land after the delete below commits.
+    // Dispose the live session before deleting rows, not after: once this
+    // resolves nothing can start a new turn (the next getOrCreateSession would
+    // rebuild from `messages`, about to be gone), so no write lands after the
+    // delete commits.
     await disposeSession(req.params.id);
     deleteConversationCascade(req.params.id);
     return { ok: true };
@@ -197,8 +176,7 @@ export const chatRoutes: FastifyPluginAsyncTypebox = async (app) => {
   app.get("/api/chat/system-prompt", async () => ({ prompt: await buildSystemPrompt() }));
 
   app.get("/api/conversations/:id/messages", { schema: { params: idParams } }, async (req) => {
-    // Compaction rows are model-history bookkeeping (agent/history.ts), not
-    // part of the visible transcript.
+    // Compaction rows are model-history bookkeeping, not the visible transcript.
     const rows = await db
       .select()
       .from(schema.messages)
@@ -210,7 +188,6 @@ export const chatRoutes: FastifyPluginAsyncTypebox = async (app) => {
       )
       .orderBy(schema.messages.createdAt);
 
-    // The cards/refs/toolCalls columns are JSON blobs internally; the API ships parsed values.
     return rows.map(({ cards, toolCalls, refs, compactionCutoff: _, ...row }) => ({
       ...row,
       cards: parseStoredCards(cards),
@@ -223,12 +200,9 @@ export const chatRoutes: FastifyPluginAsyncTypebox = async (app) => {
     const message = req.body.message.trim();
     if (!message) throw badRequest("message is required");
 
-    // Resolve the id and acquire the turn guard before hijacking the reply —
-    // once hijack() hands the socket over there is no way left to answer
-    // with a real HTTP status code, so an overlapping send has to be turned
-    // away here. A brand-new conversation's id is freshly minted and can
-    // never already be in flight, so this applies uniformly whether or not
-    // the client sent one.
+    // Resolve the id and acquire the turn guard before hijacking the reply: once
+    // hijack() hands over the socket there is no way to answer with an HTTP
+    // status, so an overlapping send is refused here.
     const conversationId = req.body.conversationId ?? randomUUID();
     let turn: Turn;
     try {
@@ -240,8 +214,8 @@ export const chatRoutes: FastifyPluginAsyncTypebox = async (app) => {
       throw error;
     }
 
-    // Stop the turn as soon as the client disconnects, so an abandoned tab
-    // doesn't keep burning tool calls and model tokens.
+    // Abort the turn when the client disconnects, so an abandoned tab stops
+    // burning tool calls and tokens.
     const controller = new AbortController();
     const stream = openSse<ChatStreamEvent>(reply, () => controller.abort());
     const send = (event: ChatStreamEvent) => stream.send(event);
@@ -253,15 +227,10 @@ export const chatRoutes: FastifyPluginAsyncTypebox = async (app) => {
 
       send({ type: "conversation", conversationId });
 
-      // turnRecorder ensures the parent Conversation row (type "chat") before
-      // writing this turn's messages, using the title below. This fires for
-      // every freshly minted id, but a client-supplied id can also name a
-      // conversation this server never recorded (e.g. stale client state
-      // after a delete) — either way, ensureConversation is idempotent, so
-      // this turn's messages never end up orphaned against a nonexistent
-      // conversation. No other route creates type: "chat" rows (automations/
-      // runRecorder.ts creates its own type: "automation" rows, keyed to the
-      // run id).
+      // ensureConversation (in turnRecorder) is idempotent, so a client-supplied
+      // id naming a conversation this server never recorded (stale client state
+      // after a delete) never orphans this turn's messages. No other route
+      // creates type: "chat" rows.
       let thinkingSent = false;
       const { text } = await turn.run({
         prompt: message,
@@ -274,7 +243,6 @@ export const chatRoutes: FastifyPluginAsyncTypebox = async (app) => {
             streamedText += delta;
             send({ type: "text_delta", delta });
           },
-          // At most one per turn — it only drives the UI's "thinking…" placeholder.
           onThinking: () => {
             if (!thinkingSent) {
               thinkingSent = true;
@@ -307,11 +275,9 @@ export const chatRoutes: FastifyPluginAsyncTypebox = async (app) => {
 
       send({ type: "done", text });
     } catch (error) {
-      // A client-disconnect abort surfaces here too (the recorder rethrows
-      // after writing the cancelled row); stream.send already suppresses
-      // writes once the stream has ended. The transcript is already closed
-      // out one way or another by turn.run() itself — this is only about
-      // telling a still-connected client that something went wrong.
+      // turn.run() already closed out the transcript (including a client-
+      // disconnect abort, which surfaces here); this only notifies a still-
+      // connected client. stream.send is a no-op once the stream has ended.
       req.log.error(error, "chat failed");
       send({ type: "error", message: errorMessage(error) });
     } finally {

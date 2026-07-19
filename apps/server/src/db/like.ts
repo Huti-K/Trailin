@@ -5,7 +5,7 @@ function escapeLikeInput(value: string): string {
   return value.replace(/[\\%_]/g, (ch) => `\\${ch}`);
 }
 
-/** `column LIKE '%…%' ESCAPE '\'` — the pattern must already be escaped with escapeLikeInput. */
+/** `column LIKE '%…%' ESCAPE '\'`; the pattern is pre-escaped by escapeLikeInput. */
 export function likePattern(column: SQLWrapper, pattern: string) {
   return sql`${column} LIKE ${pattern} ESCAPE '\\'`;
 }

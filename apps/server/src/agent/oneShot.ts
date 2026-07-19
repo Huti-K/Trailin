@@ -1,25 +1,22 @@
 import { Agent, type AgentTool, type StreamFn } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
-import { modelRegistry, resolveActiveModel } from "../llm/registry.js";
+import { modelRegistry, resolveActiveModel } from "./llm/registry.js";
 import { runPrompt } from "./run.js";
 
 /**
  * Routes an Agent's model calls through the registry so stored credentials
- * apply (subscription OAuth with auto-refresh, saved API keys, then env
- * vars). Shared by runOneShot below and assembly.ts's buildAgent,
- * which builds its Agent directly rather than through runOneShot.
+ * apply (subscription OAuth, saved API keys, then env vars). Shared by
+ * runOneShot and assembly.ts's buildAgent.
  */
 export const streamViaModelRegistry: StreamFn = (model, context, options) =>
   modelRegistry.streamSimple(model, context, options);
 
 /**
- * Runs one prompt through a fresh, throwaway Agent and returns its final
- * text — the shape every one-shot sub-agent call in this app shares (the
- * draft humanizer, compaction's summarizer, delegate's parallel workers):
- * build an Agent scoped to one system prompt and toolset, run exactly one
- * prompt through it, and discard it. Runs on the active model — which
- * Settings can change between calls, so it's resolved per call — unless the
- * caller pins one via `model` (the nightly sweeps resolve theirs up front).
+ * Runs one prompt through a fresh, throwaway Agent and returns its final text:
+ * the shape every one-shot sub-agent call shares (humanizer, compaction
+ * summarizer, delegate workers). Runs on the active model, resolved per call
+ * since Settings can change between calls, unless the caller pins one via
+ * `model`.
  */
 export async function runOneShot(opts: {
   systemPrompt: string;
@@ -37,10 +34,9 @@ export async function runOneShot(opts: {
 }
 
 /**
- * The single report tool a runReportPrompt call exposes. `parameters` is the
- * tool's raw parameter JSON schema (a TypeBox object qualifies); `narrow`
- * distills the model's raw arguments — untrusted, so it must check rather
- * than assume the schema held — into the report value, and must not throw.
+ * The single report tool a runReportPrompt call exposes. `narrow` distills the
+ * model's raw arguments (untrusted, so it checks rather than assumes the
+ * schema held) into the report value, and does not throw.
  */
 export interface ReportToolSpec<T> {
   name: string;
@@ -51,14 +47,11 @@ export interface ReportToolSpec<T> {
 }
 
 /**
- * Structured output from a one-shot run: a fresh Agent whose only tool is
- * the given report tool, marked `terminate: true` so the run ends with the
- * report rather than starting another turn. Returns the narrowed report;
- * throws when the model finishes without calling the tool at all — including
- * when `timeoutMs` lapses first — naming the tool unless the caller supplies
- * `missingReportError` (surfaced to users by some callers). Used by every
- * report-shaped LLM call: voice learning, the learning sweep's extraction and
- * tiebreak, and the automation-suggestion sweep.
+ * Structured output from a one-shot run: a fresh Agent whose only tool is the
+ * report tool, marked `terminate: true` so the run ends with the report rather
+ * than starting another turn. Returns the narrowed report; throws when the
+ * model finishes without calling the tool (including when `timeoutMs` lapses),
+ * naming the tool unless the caller supplies `missingReportError`.
  */
 export async function runReportPrompt<T>(opts: {
   systemPrompt: string;

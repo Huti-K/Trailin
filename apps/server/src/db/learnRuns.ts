@@ -1,15 +1,8 @@
 import { randomUUID } from "node:crypto";
 import type { LearnRun } from "@trailin/shared";
 import { desc, inArray } from "drizzle-orm";
-import { emitServerEvent } from "../events.js";
+import { emitServerEvent } from "../core/events.js";
 import { db, schema } from "./index.js";
-
-/**
- * Run log for the draft-vs-sent learning sweep: one row per completed sweep
- * (boot catch-up or nightly), so the Knowledge page can show that the loop
- * ran and what it found. A short trailing window is all that's useful —
- * older rows are pruned on every insert.
- */
 
 const KEEP_RUNS = 20;
 

@@ -1,17 +1,13 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "@sinclair/typebox";
-import { listSkills, readSkill, writeSkill } from "../skills/store.js";
+import { listSkills, readSkill, writeSkill } from "../storage/skills/store.js";
 import { textResult, tool } from "./toolkit.js";
 
 /**
- * The agent's surface over the user's skills (skills/store.ts): named
- * playbooks that say how the user wants a recurring task done. skill_read is
- * mounted in every session — unattended runs follow skills too ("Follow the
- * skill 'x'" automations) — but skill_write is interactive-only: a skill is a
- * standing instruction executed on later runs, so unattended sessions reading
- * attacker-controlled mail must never be able to plant or alter one (the same
- * rule as memory writes and automation management). Deletion is UI-only, like
- * library documents.
+ * Named playbooks (skills/store.ts). skill_read is in every session (unattended
+ * runs follow skills too), but skill_write is interactive-only: a skill is a
+ * standing instruction run on later runs, so unattended sessions reading
+ * attacker-controlled mail can't plant or alter one. Deletion is UI-only.
  */
 
 export const skillReadTool: AgentTool = tool({
@@ -67,12 +63,7 @@ export const skillWriteTool: AgentTool = tool({
   },
 });
 
-/**
- * The system-prompt index of saved skills: name + one-line description each,
- * with the body deliberately left to skill_read — descriptions must stay
- * cheap because every entry rides along on every turn. Returns "" when no
- * skills exist.
- */
+/** System-prompt index: name + one-line description only; the body is left to skill_read since every entry rides on every turn. */
 export async function buildSkillsContext(): Promise<string> {
   const skills = await listSkills();
   if (skills.length === 0) return "";

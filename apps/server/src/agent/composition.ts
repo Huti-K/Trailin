@@ -1,15 +1,8 @@
-import { moduleLogger } from "../logger.js";
-import { prompts } from "../prompts.js";
+import { moduleLogger } from "../core/logger.js";
 import { runOneShot } from "./oneShot.js";
+import { prompts } from "./prompts.js";
 
 const log = moduleLogger("composition");
-
-/**
- * Draft composition — everything between "the model wrote a body" and "the
- * provider saves a draft" lives here: the humanizer copy-edit (prompt text in
- * prompts/humanizer.md). One module so every surface that saves a draft
- * (chat, automations) composes identically.
- */
 
 /** Strips a wrapping \`\`\` fence if the model added one despite being told not to. */
 function stripCodeFence(text: string): string {
@@ -19,15 +12,13 @@ function stripCodeFence(text: string): string {
 
 export interface ComposedDraftBody {
   body: string;
-  /** The humanizer pass changed the text. */
   humanized: boolean;
 }
 
 /**
  * The full compose pipeline for a draft body: copy-edits it to remove AI-tell
- * writing, or returns it unchanged if it already reads naturally. Fails open:
- * any error, or an empty model result, falls back to the original body
- * untouched.
+ * writing, or returns it unchanged. Fails open: any error, or an empty model
+ * result, falls back to the original body untouched.
  */
 export async function composeDraftBody(input: {
   body: string;

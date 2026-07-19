@@ -1,19 +1,11 @@
-/**
- * Text helpers for turning stored content — markdown, plain prose, file
- * titles — into the short plain-text snippets search results and library
- * hits show under a heading.
- */
-
-/** Collapse runs of whitespace to a single space and trim the ends. */
 export function collapseWhitespace(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }
 
 /**
- * Chats, briefings and library documents all store markdown, but a snippet is
- * rendered as plain text — without this, hits read as literal
- * `## Zusammenfassung **selin@…**` noise. Runs before whitespace is collapsed,
- * because the line-anchored rules (headings, quotes, bullets) need the newlines.
+ * Strip markdown so snippets render as plain text, not literal `## **…**` noise.
+ * Runs before whitespace is collapsed: the line-anchored rules (headings,
+ * quotes, bullets) need the newlines.
  */
 function stripMarkdown(text: string): string {
   return (
@@ -34,19 +26,13 @@ function stripMarkdown(text: string): string {
   );
 }
 
-/** Markdown stripped, whitespace collapsed — how every search snippet reaches the client. */
 export function plainText(text: string): string {
   return collapseWhitespace(stripMarkdown(text));
 }
 
-/**
- * Characters of context kept on each side of the first match (~320 total with the
- * match itself). The search palette's list truncates this to one line; its preview
- * pane shows the whole thing, which is what the extra context is for.
- */
+/** Context kept each side of the first match; the palette list truncates to one line, the preview pane shows the whole thing. */
 const SNIPPET_RADIUS = 160;
 
-/** ~320 chars of context around the first case-insensitive match, or the start of the text. */
 export function buildSnippet(text: string, query: string): string {
   const collapsed = plainText(text);
   if (!collapsed) return "";
@@ -59,7 +45,6 @@ export function buildSnippet(text: string, query: string): string {
   return `${prefix}${collapsed.slice(start, end)}${suffix}`;
 }
 
-/** Collapse whitespace and cap length at `max` chars, breaking on a word boundary. */
 export function trimSnippet(value: string, max = 200): string {
   const collapsed = collapseWhitespace(value);
   if (collapsed.length <= max) return collapsed;

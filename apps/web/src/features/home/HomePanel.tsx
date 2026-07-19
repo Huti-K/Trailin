@@ -31,7 +31,7 @@ import { SectionTitle } from "@/components/ui/section-header";
 import { Select } from "@/components/ui/select";
 import { DraftRow } from "@/features/drafts/DraftRow";
 import { BriefingHero, findBriefingCard, RunBody } from "@/features/home/BriefingHero";
-import { GlanceStrip } from "@/features/home/GlanceStrip";
+import { TodosSection } from "@/features/home/TodosSection";
 import { accountColor, useAccountColors } from "@/lib/accounts";
 import { api } from "@/lib/api";
 import {
@@ -181,8 +181,6 @@ export function HomePanel({
 
       {missed.length > 0 && <MissedRunsBanner missed={missed} />}
 
-      <GlanceStrip drafts={drafts} heroRun={heroRun} automations={automations} />
-
       {heroRun && (
         <BriefingHero
           run={heroRun}
@@ -196,6 +194,7 @@ export function HomePanel({
         />
       )}
 
+      <TodosSection automations={automations} onNavigate={onNavigate} />
       <ReviewSection
         drafts={drafts}
         colors={colors}

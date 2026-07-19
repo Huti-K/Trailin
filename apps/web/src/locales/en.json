@@ -147,6 +147,12 @@
         "discardedLabel": "Discarded",
         "goneLabel": "This draft no longer exists"
       },
+      "messageDraft": {
+        "badge": "{{channel}} draft",
+        "sentLabel": "Sent",
+        "sendConfirm": "Send this message now? It goes out exactly as written.",
+        "discardConfirm": "Discard this message?"
+      },
       "attachments": {
         "title": "Attachments",
         "count_one": "{{count}} file",
@@ -169,7 +175,7 @@
         "draftReplyPrompt": "Draft a reply to {{sender}}'s email \"{{subject}}\" in {{account}} (thread {{threadId}}). The briefing summarized it as: {{gist}}",
         "draftReplyPromptNoAccount": "Draft a reply to {{sender}}'s email \"{{subject}}\" (thread {{threadId}}). The briefing summarized it as: {{gist}}",
         "reviewDraftPrompt": "Show me the draft you wrote for {{sender}}'s email \"{{subject}}\" (thread {{threadId}}, draft {{draftId}}) so I can review it.",
-        "askAboutPrompt": "In this morning's briefing you flagged {{sender}}'s email \"{{subject}}\" (thread {{threadId}}) — \"{{gist}}\". What is this about, and does anything need me?",
+        "askAboutPrompt": "In this morning's briefing you flagged {{sender}}'s email \"{{subject}}\" (thread {{threadId}}), \"{{gist}}\". What is this about, and does anything need me?",
         "groups": {
           "urgent": "Urgent",
           "reply": "Awaiting your reply",
@@ -189,7 +195,7 @@
       }
     },
     "showcase": {
-      "intro": "Here is a sample of everything I can show in chat — tool activity, one of every card, a formatted reply, and the thinking state.",
+      "intro": "Here is a sample of everything I can show in chat, tool activity, one of every card, a formatted reply, and the thinking state.",
       "toolsNote": "While tools run, each one appears as a chip: finished, still running, or failed."
     },
     "attachmentViewer": {
@@ -276,13 +282,13 @@
     "emailAccounts": "Connected accounts",
     "permissions": {
       "edit": "Permissions",
-      "hint": "Reading is always allowed — the assistant can read and search this account. Everything else needs its own grant:",
-      "hintEmail": "Reading is always allowed — the assistant can read and search this account and prepare drafts. Everything else needs its own grant:",
+      "hint": "Reading is always allowed, the assistant can read and search this account. Everything else needs its own grant:",
+      "hintEmail": "Reading is always allowed, the assistant can read and search this account and prepare drafts. Everything else needs its own grant:",
       "write": {
         "title": "Create & change",
         "on": "May create and change things in this account when you ask it to.",
         "off": "Cannot create or change anything in this account.",
-        "offEmail": "Cannot change this mailbox — creating drafts is always allowed.",
+        "offEmail": "Cannot change this mailbox, creating drafts is always allowed.",
         "confirmTitle": "Allow the AI to create & change as {{account}}?",
         "confirmBody": "Once on, the assistant can create and change things in this account when you ask it to. Sending and deleting stay separate switches. You can turn this off anytime.",
         "confirmCta": "Allow create & change"
@@ -291,7 +297,7 @@
         "title": "Send",
         "on": "May send messages from this account when you ask it to.",
         "off": "Cannot send anything from this account.",
-        "offEmail": "Cannot send — outgoing email stays as drafts for your review.",
+        "offEmail": "Cannot send, outgoing email stays as drafts for your review.",
         "confirmTitle": "Allow the AI to send as {{account}}?",
         "confirmBody": "Once on, the assistant can send messages as {{account}} when you ask it to. You can turn this off anytime.",
         "confirmCta": "Allow sending"
@@ -306,10 +312,10 @@
       },
       "onoffice": {
         "title": "Automations may create records",
-        "rowOn": "Automations may create CRM records (contacts, appointments, tasks, links) — never edit, delete or send.",
+        "rowOn": "Automations may create CRM records (contacts, appointments, tasks, links), never edit, delete or send.",
         "rowOff": "Automations only read the CRM; records are created in chat, with your confirmation.",
         "confirmTitle": "Let automations create onOffice records?",
-        "confirmBody": "Scheduled runs (e.g. lead intake) can then create contacts, appointments, tasks and links in your live CRM on their own — your colleagues will see those records. Editing, deleting and sending stay chat-only. You can turn this off anytime.",
+        "confirmBody": "Scheduled runs (e.g. lead intake) can then create contacts, appointments, tasks and links in your live CRM on their own, your colleagues will see those records. Editing, deleting and sending stay chat-only. You can turn this off anytime.",
         "confirmCta": "Allow creating records"
       },
       "onofficeWrites": {
@@ -321,12 +327,12 @@
         "confirmCta": "Allow CRM changes"
       },
       "whatsappSend": {
-        "title": "Send messages",
-        "rowOn": "May send WhatsApp messages from your personal account when you ask it to in chat.",
-        "rowOff": "Can read WhatsApp chats but not send; messages go out only after you arm this.",
-        "confirmTitle": "Allow the AI to send WhatsApp messages?",
-        "confirmBody": "Once on, the assistant can send WhatsApp messages from your personal account when you ask it to in chat — they dispatch immediately, with no draft to review. Scheduled runs never get this tool. You can turn this off anytime.",
-        "confirmCta": "Allow sending"
+        "title": "Auto-send",
+        "rowOn": "WhatsApp drafts are sent automatically, including from automations that explicitly send.",
+        "rowOff": "WhatsApp messages are saved as drafts and sent only after you approve them.",
+        "confirmTitle": "Auto-send WhatsApp messages?",
+        "confirmBody": "Once on, WhatsApp messages are sent immediately whenever an instruction or automation explicitly asks to send, with no draft to review. Without this, every message stays a draft with a Send button. You can turn this off anytime.",
+        "confirmCta": "Allow auto-send"
       }
     },
     "noAccounts": "No email accounts connected yet. Use the buttons above, you can connect several accounts per provider.",
@@ -342,7 +348,7 @@
     "advanced": "Advanced",
     "advancedBuiltin": "Built-in Pipedream",
     "advancedCustom": "Own Pipedream project",
-    "learnVoiceStarted": "Learning your writing style from {{name}} — it'll appear in Settings shortly.",
+    "learnVoiceStarted": "Learning your writing style from {{name}}, it'll appear in Settings shortly.",
     "voiceLearning": "Learning style…",
     "voiceLearnFailed": "Style learning failed",
     "voiceLearnRetry": "Retry learning writing style"
@@ -355,6 +361,12 @@
     "missedBanner_other": "{{count}} automations didn't run while the app was closed.",
     "missedRun": "Run now",
     "missedRunning": "Running…",
+    "todosTitle": "Needs you",
+    "todosOverdue": "Missed",
+    "todosToday": "Today",
+    "todosTomorrow": "Tomorrow",
+    "todosAnytime": "Anytime",
+    "todosDismiss": "Dismiss",
     "reviewTitle": "Needs your review",
     "reviewEmpty": "No drafts waiting. When you or the agent prepare replies, they show up here.",
     "reviewEmptyFiltered": "No drafts in this period.",
@@ -379,12 +391,7 @@
     "briefingUrgent_other": "{{count}} urgent",
     "briefingRefresh": "Update briefing",
     "briefingNext": "Next briefing: {{when}}",
-    "openInChat": "Open in chat",
-    "glance": {
-      "drafts_one": "{{count}} draft to review",
-      "drafts_other": "{{count}} drafts to review",
-      "nextRun": "Next run {{when}}"
-    }
+    "openInChat": "Open in chat"
   },
   "drafts": {
     "noSubject": "(no subject)",
@@ -433,7 +440,7 @@
     "day": "Day",
     "customDaysRequired": "Pick at least one day.",
     "dateOnceHint": "Runs once on this date, then turns off automatically.",
-    "manualHint": "Never runs on its own — only when you press “Run now”.",
+    "manualHint": "Never runs on its own, only when you press “Run now”.",
     "advancedToggle": "Advanced: edit as cron",
     "simpleToggle": "Back to the simple schedule",
     "advancedLossNote": "The custom cron expression was replaced by the schedule above.",
@@ -472,7 +479,7 @@
     },
     "suggestions": {
       "title": "Suggested automations",
-      "hint": "Patterns from your recent chats — accept one to schedule it, or dismiss it and it won't come back.",
+      "hint": "Patterns from your recent chats, accept one to schedule it, or dismiss it and it won't come back.",
       "accept": "Add automation",
       "dismiss": "Dismiss",
       "showInstruction": "Show instruction"
@@ -482,14 +489,14 @@
     "new": "New lead",
     "create": "Create",
     "formTitle": "New lead",
-    "formHint": "Record a prospect by hand — email inquiries are filed automatically.",
+    "formHint": "Record a prospect by hand, email inquiries are filed automatically.",
     "email": "Email address",
     "name": "Name",
     "phone": "Phone",
     "interest": "Interested in",
     "interestPlaceholder": "3-room flat in Mitte, up to €600k…",
     "notes": "Notes",
-    "mergedNote": "{{email}} was already recorded — the details were merged.",
+    "mergedNote": "{{email}} was already recorded, the details were merged.",
     "filters": {
       "all": "All"
     },
@@ -502,104 +509,101 @@
       "lost": "Lost"
     },
     "statusLabel": "Lead status",
-    "score": {
-      "high": "High intent",
-      "medium": "Medium intent",
-      "low": "Low intent"
+    "priority": {
+      "A": "A (hot)",
+      "B": "B (warm)",
+      "C": "C (cold)"
     },
-    "scoreLabel": "Purchase likelihood",
+    "priorityLabel": "Priority",
+    "language": "Language",
     "lastInbound": "Heard from them {{time}}",
     "noInbound": "No reply yet",
     "lastOutbound": "Contacted {{time}}",
     "noOutbound": "No outreach yet",
     "emptyTitle": "No leads yet",
-    "emptyBody": "When an email shows someone interested, the agent records them here — or add one yourself.",
+    "emptyBody": "When an email shows someone interested, the agent records them here, or add one yourself.",
     "emptyFilteredTitle": "No leads with this status",
     "emptyFilteredBody": "Try another filter.",
     "delete": "Delete",
     "deleteConfirm": "Delete lead “{{email}}”? Automations attached to this lead are deleted too."
   },
-  "memory": {
-    "addPlaceholder": "Add something Trailin should remember…",
-    "add": "Add memory",
-    "edit": "Edit memory",
-    "save": "Save",
-    "searchPlaceholder": "Search memories…",
-    "delete": "Delete",
-    "deleteConfirm": "Delete this memory?",
-    "collapse": "Collapse memory",
-    "expand": "Expand memory",
-    "usedTimes": "{{count}}×",
-    "lastUsed": "Last used {{time}}",
-    "nearCap": "Memory is almost full ({{count}}/{{max}}).",
-    "pruneHint": "Consider removing entries the agent rarely uses — least used: “{{example}}”."
-  },
   "library": {
-    "folderLabel": "Library folder path",
-    "changeFolder": "Change folder",
-    "editPath": "Edit path manually",
     "upload": "Upload files",
     "uploading": "Uploading…",
     "uploaded_one": "{{count}} file added",
     "uploaded_other": "{{count}} files added",
     "dropTitle": "Drop files to add them",
-    "searchPlaceholder": "Search documents…",
-    "emptyTitle": "No documents yet",
-    "emptyBody": "Drop files into the folder above or upload them.",
     "error": "error",
     "delete": "Delete",
     "deleteConfirm": "Delete \"{{title}}\"? The file is also removed from the folder.",
-    "openDocument": "Open document",
     "sectionCount_one": "{{count}} section",
     "sectionCount_other": "{{count}} sections",
     "showMore_one": "Show 1 more",
-    "showMore_other": "Show {{count}} more"
+    "showMore_other": "Show {{count}} more",
+    "deleteFolderConfirm": "The folder \"{{title}}\" and every file inside it will be deleted.",
+    "deleteManyConfirm_one": "{{count}} entry will be deleted, folders with everything inside them.",
+    "deleteManyConfirm_other": "{{count}} entries will be deleted, folders with everything inside them."
   },
-  "knowledge": {
-    "sections": {
-      "memory": {
-        "title": "Memory",
-        "description": "What your agent knows: short facts, always available. It saves them when you say \"remember …\", and you can edit them here.",
-        "general": "General",
-        "scopeLabel": "Scope",
-        "contacts": "Contacts",
-        "contact": "Contact",
-        "contactPlaceholder": "Contact's email address",
-        "learning": {
-          "toggle": "Learning activity",
-          "description": "Trailin learns your writing style by comparing drafts it wrote with what you actually sent — checked at startup and every night around 3:00.",
-          "nextRun": "Next check {{time}}.",
-          "empty": "No checks recorded yet — the next one runs tonight or at the next start.",
-          "reasonBoot": "startup",
-          "reasonScheduled": "nightly",
-          "runFailed": "Check failed: {{error}}",
-          "runNothing": "Nothing sent to learn from",
-          "runNoChanges_one": "{{count}} sent draft checked — no changes to learn from",
-          "runNoChanges_other": "{{count}} sent drafts checked — no changes to learn from",
-          "runLessons_one": "Learned {{count}} style lesson",
-          "runLessons_other": "Learned {{count}} style lessons"
-        }
-      },
-      "skills": {
-        "title": "Skills",
-        "description": "Saved playbooks for how you want recurring tasks done. The agent saves one when you say “always do it like this” — or write your own.",
-        "empty": "No skills yet. Tell the agent how you want a recurring task done (“from now on, when I ask for…”) or add one here.",
-        "add": "Add skill",
-        "edit": "Edit skill",
-        "delete": "Delete skill",
-        "deleteConfirm": "Delete this skill?",
-        "collapse": "Collapse skills",
-        "expand": "Expand skills",
-        "namePlaceholder": "name (e.g. market-report)",
-        "descriptionPlaceholder": "One line: what it does and when it applies",
-        "instructionsPlaceholder": "The playbook: when it applies, which accounts and tools, the steps, what the result should look like…",
-        "save": "Save"
-      },
-      "library": {
-        "title": "Documents",
-        "description": "What your agent can look up: PDF, Word, Markdown, text, CSV and HTML files it searches and reads on demand. Drop files into the folder or upload them, everything stays on this computer."
+  "storage": {
+    "nav": {
+      "folder": "All files",
+      "recent": "Recent"
+    },
+    "folders": "Folders",
+    "breadcrumbs": "Path",
+    "searchPlaceholder": "Search files",
+    "sortLabel": "Sort by",
+    "sort": {
+      "name": "Name",
+      "updatedAt": "Modified",
+      "sizeBytes": "Size"
+    },
+    "sortDir": {
+      "asc": "Sort ascending",
+      "desc": "Sort descending"
+    },
+    "view": {
+      "list": "List",
+      "grid": "Grid"
+    },
+    "columns": {
+      "name": "Name",
+      "size": "Size",
+      "modified": "Modified"
+    },
+    "tree": {
+      "expand": "Expand",
+      "collapse": "Collapse"
+    },
+    "empty": {
+      "folder": "This folder is empty.",
+      "recent": "No recently changed files.",
+      "search": "No matches for this search."
+    },
+    "usage": "{{used}} used",
+    "actions": {
+      "delete": "Delete",
+      "select": "Select"
+    },
+    "editor": {
+      "save": "Save",
+      "scope": "Applies to",
+      "general": "General",
+      "descriptionPlaceholder": "Short description of the skill",
+      "new": "New",
+      "newTitle": "New file",
+      "namePlaceholder": "File name",
+      "kinds": {
+        "note": "Note",
+        "memory": "Memory",
+        "skill": "Skill",
+        "folder": "Folder"
       }
-    }
+    },
+    "selected_one": "{{count}} selected",
+    "selected_other": "{{count}} selected",
+    "clearSelection": "Clear selection",
+    "selectAll": "Select all"
   },
   "setup": {
     "title": "Welcome to Trailin",
@@ -609,11 +613,11 @@
     "aiDone": "Signed in, using {{model}}.",
     "stepEmailTitle": "Connect an email account",
     "stepEmailDescription": "Link Gmail or Outlook so the agent can see your mail. You can add more accounts later.",
-    "pipedreamMissingBody": "This build has no built-in email bridge — Trailin connects through your own free Pipedream project instead. Set it up once right here, then link your accounts:",
+    "pipedreamMissingBody": "This build has no built-in email bridge, Trailin connects through your own free Pipedream project instead. Set it up once right here, then link your accounts:",
     "advancedLink": "Advanced: use my own Pipedream project",
     "allSetTitle": "You're all set",
     "allSetBody": "The agent can now read your mail, draft replies, and answer your questions.",
-    "allSetReadOnly": "Trailin starts read-only: the agent drafts and answers, but never sends, changes or deletes anything until you allow it per account — the shield on each account's row in Settings.",
+    "allSetReadOnly": "Trailin starts read-only: the agent drafts and answers, but never sends, changes or deletes anything until you allow it per account, the shield on each account's row in Settings.",
     "openApp": "Open Trailin",
     "skip": "Skip for now, I'll look around first",
     "offlineTitle": "Can't reach the server",
@@ -672,7 +676,7 @@
     },
     "backup": {
       "label": "Backup",
-      "description": "A snapshot of the local database — chats, drafts, memories, and automations, but not your connected accounts' credentials.",
+      "description": "A snapshot of the local database, chats, drafts, memories, and automations, but not your connected accounts' credentials.",
       "cta": "Download"
     },
     "about": {
@@ -680,7 +684,7 @@
       "build": "Build",
       "bundleId": "Bundle ID",
       "license": "License",
-      "licenseValue": "Source-available — all rights reserved",
+      "licenseValue": "Source-available, all rights reserved",
       "source": "Source code",
       "viewOnGithub": "View on GitHub",
       "reportIssue": "Report an issue",
@@ -724,7 +728,7 @@
         "on": "May list folders, find files, search their contents (grep), and read files when you ask it to.",
         "off": "Cannot read any files.",
         "confirmTitle": "Allow the AI to read files?",
-        "confirmBody": "Once on, the assistant can list folders, find files, search their contents (grep), and read files anywhere on this computer when you ask it to — your Downloads, Documents, and everything else your account can see. Instructions hidden in an email could try to make it read private files, so it is told never to pass file contents on without your say-so. You can turn this off anytime.",
+        "confirmBody": "Once on, the assistant can list folders, find files, search their contents (grep), and read files anywhere on this computer when you ask it to, your Downloads, Documents, and everything else your account can see. Instructions hidden in an email could try to make it read private files, so it is told never to pass file contents on without your say-so. You can turn this off anytime.",
         "confirmCta": "Allow reading files"
       },
       "write": {
@@ -742,7 +746,7 @@
         "on": "May run shell commands as you (bash) when you ask it to.",
         "off": "Cannot run any commands.",
         "confirmTitle": "Allow the AI to run commands?",
-        "confirmBody": "Once on, the assistant can run real shell commands as you — with everything your user account can do. Instructions hidden in an email you receive could try to trigger harmful ones. Only arm this if you understand that risk. You can turn it off anytime.",
+        "confirmBody": "Once on, the assistant can run real shell commands as you, with everything your user account can do. Instructions hidden in an email you receive could try to trigger harmful ones. Only arm this if you understand that risk. You can turn it off anytime.",
         "confirmCta": "Allow running commands"
       }
     }
@@ -757,7 +761,7 @@
     "openInMailbox": "Open in mailbox",
     "copyEmailAddress": "Copy email address",
     "copiedToClipboard": "Copied {{email}} to clipboard",
-    "copyFailed": "Couldn't copy {{email}} — copy it manually"
+    "copyFailed": "Couldn't copy {{email}}, copy it manually"
   },
   "errorBoundary": {
     "title": "Something went wrong",

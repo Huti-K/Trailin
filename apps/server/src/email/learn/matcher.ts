@@ -1,14 +1,14 @@
 import type { ConnectedAccount } from "@trailin/shared";
+import { resolveCheapModel } from "../../agent/llm/registry.js";
+import { emitServerEvent } from "../../core/events.js";
+import { moduleLogger } from "../../core/logger.js";
 import {
   getLatestDraftBody,
   listOpenDraftSnapshots,
   markDraftStatus,
   type OpenDraftSnapshot,
 } from "../../db/draftStore.js";
-import { emitServerEvent } from "../../events.js";
-import { resolveCheapModel } from "../../llm/registry.js";
-import { moduleLogger } from "../../logger.js";
-import { listAccounts } from "../../pipedream/connect.js";
+import { listAccounts } from "../../integrations/pipedream/connect.js";
 import {
   getMailReadProvider,
   type MailReadProvider,
@@ -19,30 +19,18 @@ import { resolveTiebreak } from "./matchLLM.js";
 
 const log = moduleLogger("learn-match");
 
-/** Standalone drafts only match sent mail within this window of their creation.
- *  Doubles as the sweep's anchor floor — see sentSinceAnchor. */
+/** Standalone drafts match sent mail only within this window of creation; also the sweep's anchor floor (see sentSinceAnchor). */
 const STANDALONE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
- * One sweep's worth of the draft-vs-sent matcher: for every open agent_drafts
- * snapshot, look for the mail it turned into. Candidates come live from the
- * account's MailReadProvider — one listSentSince call per account per sweep,
- * anchored at that account's oldest open draft (clamped, see
- * sentSinceAnchor); accounts that are gone, have no read driver, or fail the
- * fetch are skipped without aborting the sweep.
- *
- * Deterministic rules, in order:
- *  - Reply drafts (snapshot has a threadId): any candidate sharing that
- *    provider thread id is the match — the earliest one after creation when
- *    several exist, no LLM involved.
- *  - Standalone drafts: candidates whose recipient set equals the snapshot's
- *    `to` set and whose subject matches ignoring reply prefixes, case, and
- *    whitespace, within STANDALONE_WINDOW_MS of creation. Exactly one such
- *    candidate is the match; zero leaves the draft open; more than one is
- *    genuinely ambiguous and falls to the tiebreak seam.
- *
- * A draft with zero candidates at all (nothing sent from the account since
- * it was created) is skipped without touching the match rules.
+ * The draft-vs-sent matcher. Candidates come live from each account's
+ * MailReadProvider (one listSentSince per account, anchored at its oldest open
+ * draft). Deterministic rules, in order:
+ *  - Reply drafts (snapshot has a threadId): the earliest candidate sharing
+ *    that provider thread id, no LLM.
+ *  - Standalone drafts: candidates whose recipient set and prefix-stripped
+ *    subject match, within STANDALONE_WINDOW_MS. Exactly one is the match; zero
+ *    leaves it open; more than one falls to the tiebreak seam.
  */
 
 export type TiebreakFn = (input: {
@@ -50,16 +38,13 @@ export type TiebreakFn = (input: {
   candidates: Array<{ providerMessageId: string; body: string }>;
 }) => Promise<string | null>;
 
-/** Injectable seams: the tiebreak model call and the live account/read lookups. */
 export interface MatchSweepDeps {
   tiebreak?: TiebreakFn;
   listAccounts?: () => Promise<ConnectedAccount[]>;
   readerFor?: (app: string) => MailReadProvider | null;
 }
 
-/** Real tiebreak: resolves a cheap model and asks it to pick the matching candidate. May throw
- *  (unconfigured model, network failure, timeout, a malformed report) — runMatchSweep's call site
- *  is what guarantees a failure here is treated exactly like an explicit "none". */
+/** May throw (unconfigured model, network, timeout, malformed report); the call site treats any failure as an explicit "none". */
 async function defaultTiebreak(input: {
   latestBody: string;
   candidates: Array<{ providerMessageId: string; body: string }>;
@@ -68,12 +53,11 @@ async function defaultTiebreak(input: {
   return resolveTiebreak(input.latestBody, input.candidates, model);
 }
 
-/** The earliest candidate in the same thread, or null when none share it. Relies on listSentSince's ascending order. */
+/** The earliest candidate sharing the thread, or null; relies on listSentSince's ascending order. */
 function threadMatch(candidates: SentMessage[], threadId: string): SentMessage | null {
   return candidates.find((candidate) => candidate.providerThreadId === threadId) ?? null;
 }
 
-/** Every candidate whose recipients and subject match the draft, within the standalone window. */
 function standaloneMatches(
   candidates: SentMessage[],
   draft: { to: string[]; subject: string; createdAt: string },
@@ -88,13 +72,7 @@ function standaloneMatches(
   });
 }
 
-/**
- * The listSentSince anchor covering every draft in the group: the oldest
- * createdAt, clamped to STANDALONE_WINDOW_MS ago. A stale draft that never
- * matches must not drag the anchor arbitrarily far back — listSentSince caps
- * its result, and an over-wide range spends that cap on mail no draft can
- * match anymore.
- */
+/** The listSentSince anchor: oldest createdAt, clamped to STANDALONE_WINDOW_MS ago, so a stale draft can't drag the anchor back and spend listSentSince's cap on unmatchable mail. */
 function sentSinceAnchor(drafts: OpenDraftSnapshot[]): string {
   const oldest = drafts.reduce(
     (min, draft) => (draft.createdAt < min ? draft.createdAt : min),
@@ -131,11 +109,7 @@ async function matchDraft(
     return true;
   }
 
-  // Genuinely ambiguous: several sends share recipients and subject within
-  // the window. No match beats a wrong match, so anything but a confident
-  // pick from the tiebreak — including the tiebreak itself failing — leaves
-  // the draft open for a later sweep, and must not abort the rest of this
-  // sweep's remaining drafts.
+  // Ambiguous: several sends share recipients and subject. No match beats a wrong one, so any non-confident tiebreak (including it failing) leaves the draft open and never aborts the sweep.
   const latestBody = await getLatestDraftBody(draft.accountId, draft.providerDraftId);
   if (!latestBody) return false;
   let matchedId: string | null;
@@ -162,7 +136,6 @@ async function matchDraft(
 }
 
 export interface MatchSweepResult {
-  /** Drafts this sweep matched to a sent message. */
   matched: number;
 }
 

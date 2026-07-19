@@ -1,25 +1,16 @@
 import type { EmailRef } from "@trailin/shared";
-import { isNonEmptyString, isRecord } from "../utils/util.js";
+import { isNonEmptyString, isRecord } from "../core/utils/util.js";
 
 /**
- * The one place that owns EmailRef serialization (messages.refs) and the
- * prompt note wording that makes an attached email authoritative to the
- * agent. Chat messages carry these as composer @-mentions; refs are never
- * inferred by the model — only ever supplied by the client on a user turn.
+ * Owns EmailRef serialization (messages.refs). Refs are never inferred by the
+ * model, only supplied by the client on a user turn.
  */
 
-/** Serializes a message's refs for the messages.refs column; null when there are none. */
 export function serializeRefs(refs: EmailRef[] | undefined): string | null {
   return refs && refs.length > 0 ? JSON.stringify(refs) : null;
 }
 
-/**
- * Defensive parse of a single ref-shaped value: threadId/accountId are
- * required non-empty strings (the tool handles they feed — the account's
- * read tools, create-draft — need both), every other field is an optional
- * string kept only when non-empty. Never throws; returns undefined for
- * anything malformed rather than a half-built ref.
- */
+/** threadId/accountId are required (the account's read/draft tools need both); returns undefined for anything malformed. */
 export function parseEmailRef(value: unknown): EmailRef | undefined {
   if (!isRecord(value)) return undefined;
   const { threadId, accountId, accountName, messageId, subject, from, date } = value;
@@ -35,12 +26,7 @@ export function parseEmailRef(value: unknown): EmailRef | undefined {
   };
 }
 
-/**
- * Parses a messages.refs JSON blob back into validated refs. Same trust
- * posture as cards.ts's parseStoredCards: the column is our own write, but it
- * round-trips through JSON, so malformed entries are dropped rather than
- * crashing message restore.
- */
+/** Our own db write, but it round-trips through JSON, so malformed entries are dropped rather than crashing message restore. */
 export function parseStoredRefs(raw: string | null | undefined): EmailRef[] | undefined {
   if (!raw) return undefined;
   try {
@@ -53,7 +39,6 @@ export function parseStoredRefs(raw: string | null | undefined): EmailRef[] | un
   }
 }
 
-/** One bracketed, model-facing note per ref — omits fields the ref doesn't carry. */
 export function renderRefNotes(refs: EmailRef[]): string {
   return refs
     .map((ref) => {
@@ -70,12 +55,7 @@ export function renderRefNotes(refs: EmailRef[]): string {
     .join("\n");
 }
 
-/**
- * The prompt actually run against the model: the user's raw content plus a
- * note per attached ref, so the agent treats pinned emails as authoritative
- * instead of resolving them itself. The persisted message row keeps `content`
- * raw (see turnRecorder.ts) — only the live prompt is decorated.
- */
+/** The persisted message row keeps `content` raw (see turnRecorder.ts); only the live prompt is decorated with the ref notes. */
 export function decoratePrompt(content: string, refs: EmailRef[] | undefined): string {
   if (!refs || refs.length === 0) return content;
   return `${content}\n\n${renderRefNotes(refs)}`;

@@ -26,6 +26,7 @@ export const queryClient = new QueryClient({
 const DATA_TOPICS: Record<Exclude<ServerEventTopic, "notification">, true> = {
   runs: true,
   drafts: true,
+  todos: true,
   memories: true,
   skills: true,
   library: true,

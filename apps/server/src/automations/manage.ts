@@ -1,36 +1,23 @@
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
+import { badRequest, conflict, requireRow } from "../core/errors.js";
+import { emitServerEvent } from "../core/events.js";
 import { deleteConversationCascade } from "../db/conversationStore.js";
 import { db, lazyTransaction, schema, sqlite } from "../db/index.js";
-import { badRequest, conflict, requireRow } from "../errors.js";
-import { emitServerEvent } from "../events.js";
 import { isRunInFlight, isValidCron, refreshSchedule, unschedule } from "./scheduler.js";
-
-/**
- * Create/update/delete for automations, shared by the HTTP routes and the
- * agent's automation tools so both entry points get identical validation, the
- * pinned-row invariant, cron (re)scheduling, and the UI change event.
- * Validation failures throw AppErrors: the central handler renders them for
- * routes, and the agent tools surface the message as steering text
- * (catchToText).
- */
 
 export type AutomationRow = typeof schema.automations.$inferSelect;
 
 export interface AutomationInput {
   name: string;
   instruction: string;
-  /** Five-field cron, or empty/omitted for a manual-only automation that runs
-   *  only on demand ("Run now" or runOnNewMail), never on a schedule. */
+  /** Five-field cron; empty/omitted means manual-only, never on a schedule. */
   schedule?: string;
   enabled?: boolean;
   showInActivity?: boolean;
   pinned?: boolean;
-  /** Also run immediately when the mail probe sees new inbound mail (automations/mailProbe.ts). */
   runOnNewMail?: boolean;
-  /** Show a desktop notification when a run of this automation finishes. */
   notifyOnCompletion?: boolean;
-  /** Lead this automation belongs to; it is deleted with the lead (leads/manage.ts). */
   leadId?: string | null;
 }
 
@@ -46,10 +33,8 @@ export interface AutomationPatch {
 }
 
 /**
- * Exactly one automation may be pinned. Clearing every other row and setting
- * this one happen as a single SQLite transaction so two concurrent "pin"
- * requests can never both leave a row pinned — whichever transaction commits
- * last wins, and the invariant (at most one pinned row) always holds.
+ * At most one automation is pinned. Unpinning every other row and pinning this
+ * one run as one transaction, so concurrent pins can't both leave a row pinned.
  */
 const pinExclusively = lazyTransaction((id: string) => {
   sqlite.prepare("UPDATE automations SET pinned = 0 WHERE id != ?").run(id);
@@ -121,10 +106,9 @@ export async function updateAutomation(id: string, patch: AutomationPatch): Prom
   }
   if (Object.keys(updates).length === 0) throw badRequest("nothing to update");
 
-  // Must run before any mutation: pinExclusively unpins every other row,
-  // so an update for a nonexistent id must never reach it — otherwise a
-  // pinned: true request for a bad id would unpin every real automation
-  // and then still report not found.
+  // Must run before any mutation: a pinned:true update for a nonexistent id
+  // would otherwise unpin every real automation via pinExclusively and still
+  // report not found.
   await requireRow(
     db
       .select({ id: schema.automations.id })
@@ -144,8 +128,6 @@ export async function updateAutomation(id: string, patch: AutomationPatch): Prom
   );
 }
 
-/** Delete an automation and its whole run history. Returns false when no such
- *  automation exists; throws conflict while a run of it is executing. */
 export async function deleteAutomation(id: string): Promise<boolean> {
   const [existing] = await db
     .select({ id: schema.automations.id })
@@ -153,23 +135,17 @@ export async function deleteAutomation(id: string): Promise<boolean> {
     .where(eq(schema.automations.id, id));
   if (!existing) return false;
 
-  // A run executing right now would still write its run row and conversation
-  // messages after the cascade below (SQLite here enforces no FKs), leaving
-  // rows nothing ever cleans up — refuse instead of racing it, the same 409
-  // contract routes/chat.ts applies to deleting a conversation mid-turn.
+  // A run executing now would write its run and conversation rows after the
+  // cascade below, orphaning rows nothing cleans up; refuse instead of racing.
   if (isRunInFlight(id)) {
     throw conflict("a run of this automation is in progress");
   }
 
   unschedule(id);
 
-  // Each run also created a conversation (id = run id) plus its user/
-  // assistant message rows (see automations/runRecorder.ts) — nothing else
-  // ever cleans those up, so without this they'd linger forever in the
-  // chat sidebar's Automations section, orphaned from a deleted automation.
-  // Each cascade is its own transaction (db/conversationStore.ts) — the
-  // same atomicity guarantee routes/chat.ts gets for a single conversation,
-  // applied once per run here.
+  // Each run created a conversation (id = run id) with its message rows;
+  // nothing else cleans those up, so without this they'd linger forever in the
+  // chat sidebar, orphaned from a deleted automation.
   const runs = await db
     .select({ id: schema.automationRuns.id })
     .from(schema.automationRuns)

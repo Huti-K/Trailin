@@ -1,27 +1,22 @@
 import type { AgentCard, EmailRef } from "@trailin/shared";
 import { eq } from "drizzle-orm";
+import { emitServerEvent } from "../core/events.js";
 import { db, schema } from "../db/index.js";
-import { emitServerEvent } from "../events.js";
 
 /**
- * Conversation focus: the account — and, while one email is the topic, the
- * thread — a chat works in. Focus is the agent's tool-call DEFAULT, not a
- * hard scope: the turn prompt carries it as a note (conversationFocusNote)
- * and the agent may still go cross-account when the user clearly asks.
- *
- * Last writer wins. Three writers funnel through here: a manual pick from the
- * chat header chip (routes/chat.ts PATCH), the user's @-mention refs, and the
- * agent's own activity observed through the cards it emits — inference over
- * cards rather than a dedicated tool, so keeping the chip honest can't be
- * forgotten by the model. Every write emits "conversations" so the chip
- * follows live.
+ * Conversation focus: the account (and, while one email is the topic, the
+ * thread) a chat works in. Focus is the agent's tool-call DEFAULT, not a hard
+ * scope: the turn prompt carries it as a note and the agent may still go
+ * cross-account when the user clearly asks. Last writer wins. Three writers
+ * funnel through here: the chat header chip, the user's @-mention refs, and
+ * the agent's own activity inferred from the cards it emits. Every write emits
+ * "conversations" so the chip follows live.
  */
 
 export interface FocusPatch {
   accountId: string;
   /** null clears the thread part (the topic moved on); undefined leaves it as is. */
   threadId?: string | null;
-  /** Display subject for the chip; only meaningful alongside a threadId. */
   subject?: string | null;
 }
 
@@ -44,7 +39,6 @@ export async function applyConversationFocus(
   emitServerEvent("conversations");
 }
 
-/** Remove focus entirely (the chip's "no focus / all accounts" pick). */
 export async function clearConversationFocus(conversationId: string): Promise<void> {
   await db
     .update(schema.conversations)
@@ -53,18 +47,15 @@ export async function clearConversationFocus(conversationId: string): Promise<vo
   emitServerEvent("conversations");
 }
 
-/** An @-mention pins a specific email — focus follows the last one attached. */
+/** An @-mention pins a specific email; focus follows the last one attached. */
 export function focusFromRefs(refs: EmailRef[] | undefined): FocusPatch | null {
   const last = refs?.[refs.length - 1];
   if (!last) return null;
   return { accountId: last.accountId, threadId: last.threadId, subject: last.subject ?? null };
 }
 
-/** What a card says about where the conversation is. */
 export function focusFromCard(card: AgentCard): FocusPatch | null {
   switch (card.kind) {
-    // Draft cards follow the draft's own thread — a reply draft pins focus to
-    // the thread it replies to.
     case "email_draft":
       return card.account
         ? {
@@ -73,13 +64,14 @@ export function focusFromCard(card: AgentCard): FocusPatch | null {
             subject: card.draft.subject ?? null,
           }
         : null;
-    // An attachments listing is an aside within a thread, not a focus move.
-    // Choices and briefing cards carry no top-level account (a briefing's
-    // items span accounts; a choices card is a question, not activity in
-    // one) and never move focus.
+    // An attachments listing is an aside, not a focus move. Choices and
+    // briefing carry no top-level account (a briefing spans accounts, a choices
+    // card is a question) and never move focus; a message draft is
+    // channel-scoped, not email-account-scoped.
     case "attachments":
     case "choices":
     case "briefing":
+    case "message_draft":
       return null;
     default:
       return card satisfies never;
@@ -87,8 +79,8 @@ export function focusFromCard(card: AgentCard): FocusPatch | null {
 }
 
 /**
- * The standing-focus note appended to each turn's prompt — what makes focus
- * the tool-call default. Empty string when the conversation has no focus.
+ * The standing-focus note appended to each turn's prompt: what makes focus the
+ * tool-call default. Empty string when the conversation has no focus.
  */
 export async function conversationFocusNote(conversationId: string): Promise<string> {
   const [row] = await db

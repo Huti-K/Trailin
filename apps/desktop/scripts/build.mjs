@@ -110,10 +110,18 @@ await build({
 });
 
 // The server reads its prompt texts at runtime from prompts/ beside the
-// bundle (see apps/server/src/prompts.ts).
+// bundle (see apps/server/src/agent/prompts.ts).
 cpSync(
-  path.join(repoRoot, "apps", "server", "src", "prompts"),
+  path.join(repoRoot, "apps", "server", "src", "agent", "prompts"),
   path.join(outDir, "server", "prompts"),
+  { recursive: true },
+);
+
+// Default automation instructions, read at runtime from instructions/ beside
+// the bundle (see apps/server/src/automations/defaults.ts).
+cpSync(
+  path.join(repoRoot, "apps", "server", "src", "automations", "instructions"),
+  path.join(outDir, "server", "instructions"),
   { recursive: true },
 );
 

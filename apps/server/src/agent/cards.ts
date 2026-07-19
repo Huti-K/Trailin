@@ -12,18 +12,13 @@ import {
   type EmailRef,
   type MessageCard,
 } from "@trailin/shared";
-import { isNonEmptyString, isRecord } from "../utils/util.js";
+import { isNonEmptyString, isRecord } from "../core/utils/util.js";
 import { parseEmailRef } from "./emailRefs.js";
 
 /**
- * The AgentCard system: every kind's shape rules and the parse dispatch that
- * turns tool `details` payloads into cards the chat can render. Each kind
- * keeps the same split: coerce* validates one untrusted entry, build*
- * assembles the card its emitting tool publishes (agent/emailToolset.ts's draft
- * tools, briefingTool, choicesTool, attachmentTool), and its arm in
- * CARD_PARSERS (below) revalidates a stored or round-tripped payload. What a
- * card means for conversation focus lives with the focus logic itself
- * (focusFromCard in focus.ts).
+ * The AgentCard system: each kind splits into coerce* (validates one untrusted
+ * entry), build* (assembles the card its tool publishes), and a CARD_PARSERS
+ * arm (revalidates a stored or round-tripped payload).
  */
 
 /** The AgentCard union member for one kind. */
@@ -31,10 +26,8 @@ export type CardOf<K extends AgentCard["kind"]> = Extract<AgentCard, { kind: K }
 
 /**
  * The reminder a card-emitting tool appends to its result text: the card
- * already renders `subject` to the user, so the model's reply should react to
- * it — per `instruction` — instead of restating its contents. One phrasing,
- * shared by every card-emitting tool, so this instruction reads the same
- * everywhere rather than being reworded per tool.
+ * already renders `subject`, so the model should react to it (per
+ * `instruction`) instead of restating its contents.
  */
 export function cardNote(subject: string, instruction: string): string {
   return `\n\n[The user sees ${subject} as a card in the conversation. ${instruction}]`;
@@ -44,7 +37,6 @@ export function isString(value: unknown): value is string {
   return typeof value === "string";
 }
 
-/** Coerces a header-ish value (string, string[], or anything else) to string[]. */
 export function toStringArray(value: unknown): string[] | undefined {
   if (Array.isArray(value)) {
     const arr = value.filter(isString);
@@ -53,7 +45,6 @@ export function toStringArray(value: unknown): string[] | undefined {
   return isString(value) && value.length > 0 ? [value] : undefined;
 }
 
-/** Maps a resolved connected account onto a card's account slot. */
 export function toCardAccount(account: ConnectedAccount): CardAccount {
   return {
     accountId: account.id,
@@ -64,7 +55,6 @@ export function toCardAccount(account: ConnectedAccount): CardAccount {
   };
 }
 
-/** Defensive parse of an untrusted `details.account`-shaped value. */
 export function parseCardAccount(value: unknown): CardAccount | undefined {
   if (!isRecord(value)) return undefined;
   const { accountId, name, app, appName, imgSrc } = value;
@@ -78,10 +68,9 @@ export function parseCardAccount(value: unknown): CardAccount | undefined {
   };
 }
 
-// email_draft — a saved or rewritten draft preview. The create/update draft
-// tools (agent/emailToolset.ts) assemble the raw draft object from trusted local
-// state; both they and parseAgentCard funnel through buildEmailDraftCard so
-// the required-field rule lives once.
+// email_draft — a saved or rewritten draft preview. Both the draft tools
+// (trusted local state) and parseAgentCard funnel through buildEmailDraftCard
+// so the required-field rule lives once.
 
 /** Validates one raw attachment entry of a draft preview. `filename` is required; a malformed size is dropped, not the entry. */
 function coerceDraftAttachment(value: unknown): { filename: string; size?: number } | undefined {
@@ -121,7 +110,6 @@ export function coerceDraftPreview(value: unknown): DraftPreview | undefined {
 
 export interface EmailDraftCardInput {
   account?: CardAccount;
-  /** Raw draft-shaped value, coerced via coerceDraftPreview. */
   draft: unknown;
 }
 
@@ -139,12 +127,48 @@ function parseEmailDraftCard(
   return buildEmailDraftCard({ account, draft: details.draft });
 }
 
+// message_draft — a pending outbound message (WhatsApp and future channels),
+// approved with the same draft→send card as email. Carries no account; its
+// draftId addresses the row under /api/outbound.
+
+export interface MessageDraftCardInput {
+  channel: string;
+  targetLabel: string;
+  body: string;
+  draftId: string;
+}
+
+export function buildMessageDraftCard(
+  input: MessageDraftCardInput,
+): CardOf<"message_draft"> | undefined {
+  if (!isNonEmptyString(input.channel) || !isNonEmptyString(input.draftId)) return undefined;
+  return {
+    kind: "message_draft",
+    channel: input.channel,
+    targetLabel: input.targetLabel,
+    body: input.body,
+    draftId: input.draftId,
+  };
+}
+
+function parseMessageDraftCard(
+  details: Record<string, unknown>,
+): CardOf<"message_draft"> | undefined {
+  const { channel, targetLabel, body, draftId } = details;
+  if (!isNonEmptyString(channel) || !isNonEmptyString(draftId) || !isString(body)) return undefined;
+  return buildMessageDraftCard({
+    channel,
+    targetLabel: isString(targetLabel) ? targetLabel : "",
+    body,
+    draftId,
+  });
+}
+
 // attachments — a message's attachments, each with the handle its row actions
 // (open in the viewer, save to library) need. list_attachments builds it from
-// the provider's live listing plus the resolved account and the server-decided
-// viewable/saveable flags; the parse arm trusts a stored card's own item
-// fields. accountId/messageId/filename together address the bytes through
-// GET /api/mail/attachments/open.
+// the provider's live listing plus server-decided viewable/saveable flags; the
+// parse arm trusts a stored card's own fields. accountId/messageId/filename
+// together address the bytes through GET /api/mail/attachments/open.
 
 /** Validates a raw attachment-shaped value. accountId/messageId/filename are required; the flags default to false when absent. */
 export function coerceAttachmentItem(value: unknown): AttachmentItem | undefined {
@@ -169,11 +193,10 @@ export function coerceAttachmentItem(value: unknown): AttachmentItem | undefined
 export interface AttachmentsCardInput {
   account?: CardAccount;
   subject?: string;
-  /** Raw attachment-shaped values, coerced one by one — malformed entries are dropped, not the whole card. */
+  /** Raw attachment-shaped values, coerced one by one; malformed entries are dropped, not the whole card. */
   items: unknown[];
 }
 
-/** Builds the "attachments" card. */
 export function buildAttachmentsCard(input: AttachmentsCardInput): CardOf<"attachments"> {
   const items = input.items
     .map(coerceAttachmentItem)
@@ -198,12 +221,10 @@ function parseAttachmentsCard(
   });
 }
 
-// choices — clickable buttons the user picks from. present_choices
-// (choicesTool.ts) attaches each option's bare ref
-// via its own `account`/`threadId` parameters — never from a raw `ref` field
-// — while the parse arm trusts a stored card's own `ref` field, parsed via
-// parseEmailRef; both funnel an option's label/detail/reply through
-// coerceChoiceOption, with the ref resolved by each caller its own way.
+// choices — clickable buttons the user picks from. present_choices attaches
+// each option's ref via its own `account`/`threadId` parameters, never from a
+// raw `ref` field; the parse arm trusts a stored card's own `ref`
+// (parseEmailRef). Both funnel label/detail/reply through coerceChoiceOption.
 
 /** Validates a raw option-shaped value against an already-resolved ref. `label` is the only required field. */
 export function coerceChoiceOption(
@@ -221,15 +242,14 @@ export function coerceChoiceOption(
   };
 }
 
-/** Builds the "choices" card from already-validated options — present_choices has its own min/max option-count gate before this ever runs. */
+/** Builds the "choices" card from already-validated options; present_choices gates option count before this runs. */
 export function buildChoicesCard(question: string, options: ChoiceOption[]): CardOf<"choices"> {
   return { kind: "choices", question, options };
 }
 
 /**
- * Unlike the other kinds, a choices card carries no top-level `account` —
- * options are self-contained via their own `ref`, parsed here straight off
- * each raw option.
+ * Unlike the other kinds, a choices card carries no top-level `account`;
+ * options are self-contained via their own `ref`, parsed off each raw option.
  */
 function parseChoicesCard(details: Record<string, unknown>): CardOf<"choices"> | undefined {
   if (!isNonEmptyString(details.question) || !Array.isArray(details.options)) return undefined;
@@ -240,15 +260,11 @@ function parseChoicesCard(details: Record<string, unknown>): CardOf<"choices"> |
   return buildChoicesCard(details.question, options);
 }
 
-// briefing — a triaged, cross-account inbox digest. compose_briefing
-// (briefingTool.ts) resolves the model's account name/address string against
-// connected accounts and builds the webmail deep link from threadId + account
-// before calling coerceBriefingItem, while the parse arm trusts a stored
-// card's `accountId`/`webUrl` fields directly — both funnel item/rollup
-// validation through the coerce functions, so the required-field rule and the
-// priority fallback live in exactly one place. This trusted/untrusted
-// asymmetry is why briefing's coercion stays hand-written rather than leaning
-// on anything generic.
+// briefing — a triaged, cross-account inbox digest. compose_briefing resolves
+// the model's account string and builds the webmail deep link server-side
+// before calling coerceBriefingItem, while the parse arm trusts a stored card's
+// `accountId`/`webUrl` directly. This trusted/untrusted asymmetry is why
+// briefing's coercion stays hand-written rather than leaning on anything generic.
 
 export function isBriefingPriority(value: unknown): value is BriefingPriority {
   return typeof value === "string" && (BRIEFING_PRIORITIES as readonly string[]).includes(value);
@@ -256,11 +272,10 @@ export function isBriefingPriority(value: unknown): value is BriefingPriority {
 
 /**
  * Coerces a raw item-shaped record into a BriefingItem, given an
- * already-resolved accountId and webUrl. Both accountId and webUrl are taken
- * only from the resolved parameters, never read off the raw model-supplied
- * `value` — the model can't be trusted to name our internal account ids or
- * construct a correct provider deep link. Drops anything missing threadId,
- * sender, subject or gist rather than throwing; an unrecognized priority
+ * already-resolved accountId and webUrl. Both are taken only from the resolved
+ * parameters, never off the raw model-supplied `value`: the model can't be
+ * trusted to name our internal account ids or build a correct deep link. Drops
+ * anything missing threadId, sender, subject or gist; an unrecognized priority
  * degrades to the least-pressing tier rather than dropping the item.
  */
 export function coerceBriefingItem(
@@ -315,10 +330,8 @@ function parseBriefingItem(value: unknown): BriefingItem | undefined {
 
 /**
  * Coerces a raw rollup-shaped record into a BriefingRollup, given its items
- * already coerced by the caller (compose_briefing resolves each item's account
- * and webUrl server-side; the parse arm reads them off the stored item). Keeps
- * the group only when it has a label and at least one surviving item — an empty
- * group has nothing to render.
+ * already coerced by the caller. Keeps the group only when it has a label and
+ * at least one surviving item; an empty group has nothing to render.
  */
 export function coerceBriefingRollup(
   value: unknown,
@@ -340,14 +353,12 @@ function parseBriefingRollup(value: unknown): BriefingRollup | undefined {
 export interface BriefingCardInput {
   headline?: string;
   periodLabel?: string;
-  /** Every account the briefing covered — omitted entirely when empty, so empty ones still get credit only when actually listed. */
   accounts?: CardAccount[];
   items: BriefingItem[];
   rollups?: BriefingRollup[];
   scanned?: number;
 }
 
-/** Builds the "briefing" card from already-validated items/rollups — both callers coerce their raw entries themselves (see coerceBriefingItem/coerceBriefingRollup) before reaching this. */
 export function buildBriefingCard(input: BriefingCardInput): CardOf<"briefing"> {
   return {
     kind: "briefing",
@@ -360,7 +371,6 @@ export function buildBriefingCard(input: BriefingCardInput): CardOf<"briefing"> 
   };
 }
 
-/** Unlike the other kinds, a briefing carries every account it touched as an array rather than a single top-level `account`. */
 function parseBriefingCard(details: Record<string, unknown>): CardOf<"briefing"> | undefined {
   if (!Array.isArray(details.items)) return undefined;
   const items = details.items
@@ -383,10 +393,9 @@ function parseBriefingCard(details: Record<string, unknown>): CardOf<"briefing">
 }
 
 /**
- * One parse arm per kind. The mapped type keeps this record exhaustive:
- * adding a kind to the shared AgentCard union fails compilation here until
- * the kind supplies its parse arm. Each arm gets the already-parsed top-level
- * `details.account`; kinds that carry no top-level account ignore it.
+ * One parse arm per kind. The mapped type keeps this record exhaustive: adding
+ * a kind to the AgentCard union fails compilation here until it supplies its
+ * parse arm. Each arm gets the already-parsed `details.account`.
  */
 const CARD_PARSERS: {
   [K in AgentCard["kind"]]: (
@@ -395,6 +404,7 @@ const CARD_PARSERS: {
   ) => CardOf<K> | undefined;
 } = {
   email_draft: parseEmailDraftCard,
+  message_draft: (details) => parseMessageDraftCard(details),
   attachments: parseAttachmentsCard,
   choices: parseChoicesCard,
   briefing: parseBriefingCard,
@@ -403,18 +413,16 @@ const CARD_PARSERS: {
 /**
  * Validates a tool `details` payload into an `AgentCard` the chat can render.
  * The last line of defense before a card reaches the client: `details` is
- * `unknown` by the time it gets here (it round-trips through pi's event
- * stream as `any`), so every field is checked rather than trusted, and
- * nothing here ever throws — this function is just the dispatch through the
- * CARD_PARSERS record above.
+ * `unknown` (it round-trips through pi's event stream as `any`), so every field
+ * is checked rather than trusted, and nothing here ever throws.
  */
 export function parseAgentCard(details: unknown): AgentCard | undefined {
   try {
     if (!isRecord(details)) return undefined;
     const kind = details.kind;
     // Object.hasOwn (not `in`) so a kind string naming an Object.prototype
-    // member can't reach the lookup; after the guard the string is known to
-    // be a parser key, which is what the narrowing cast records.
+    // member can't reach the lookup; after the guard the string is a known
+    // parser key, which the narrowing cast records.
     if (typeof kind !== "string" || !Object.hasOwn(CARD_PARSERS, kind)) return undefined;
     const parse = CARD_PARSERS[kind as AgentCard["kind"]];
     return parse(details, parseCardAccount(details.account));
@@ -424,10 +432,9 @@ export function parseAgentCard(details: unknown): AgentCard | undefined {
 }
 
 /**
- * Parses a messages.cards JSON blob back into validated cards for the API.
- * Same trust posture as parseAgentCard: the column is our own write, but it
- * round-trips through JSON, so anything malformed is dropped rather than
- * crashing message restore.
+ * Parses a messages.cards JSON blob back into validated cards for the API. Same
+ * trust posture as parseAgentCard: our own write, but it round-trips through
+ * JSON, so anything malformed is dropped rather than crashing message restore.
  */
 export function parseStoredCards(raw: string | null | undefined): MessageCard[] | undefined {
   if (!raw) return undefined;

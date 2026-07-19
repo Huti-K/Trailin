@@ -1,17 +1,7 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { MEMORY_MAX_LENGTH } from "@trailin/shared";
 import { type ReportToolSpec, runReportPrompt } from "../../agent/oneShot.js";
-import { prompts } from "../../prompts.js";
-
-/**
- * The nightly extraction LLM call (extractor.ts): one account's pending
- * draft-vs-sent pairs go in, an array of GENERAL style directives comes out
- * via the report-tool one-shot (agent/oneShot.ts, runReportPrompt).
- * Directives must never repeat content from any one pair (names, dates,
- * deals) — only transferable writing-style adjustments a future draft for
- * this account should follow, the same shape voiceLearn.ts's report_style
- * produces from sent mail alone.
- */
+import { prompts } from "../../agent/prompts.js";
 
 export interface ExtractionPair {
   draftBody: string;
@@ -55,15 +45,10 @@ function renderPairs(pairs: ExtractionPair[], accountName: string): string {
   return [`Account: ${accountName}`, "", blocks.join("\n\n---\n\n")].join("\n");
 }
 
-/** Hard cap on one extraction call — a stuck provider can't wedge the nightly sweep. */
+/** Hard cap on one extraction call, so a stuck provider can't wedge the nightly sweep. */
 const EXTRACT_TIMEOUT_MS = 60_000;
 
-/**
- * Extract style lessons from one account's pending pairs. Throws when the
- * model never produced a usable report (including on timeout) — the caller
- * (extractor.ts) leaves the pairs unstamped so they're retried the next
- * night rather than silently losing the comparison.
- */
+/** Throws when the model produced no usable report (incl. timeout); the caller leaves the pairs unstamped to retry next night. */
 export async function extractLessons(
   pairs: ExtractionPair[],
   accountName: string,

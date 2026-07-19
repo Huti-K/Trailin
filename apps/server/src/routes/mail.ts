@@ -2,20 +2,13 @@ import { extname } from "node:path";
 import type { FastifyPluginAsyncTypebox } from "@fastify/type-provider-typebox";
 import { Type } from "@sinclair/typebox";
 import { findAccount } from "../agent/accounts.js";
+import { badRequest, notFound, toProviderError } from "../core/errors.js";
+import { contentDisposition, inlineForMime, mimeForExt } from "../core/utils/fileResponse.js";
+import { errorMessage } from "../core/utils/util.js";
 import { fetchAttachment } from "../email/attachmentFetch.js";
 import { getMailReadProvider, type ThreadDetail } from "../email/read/readProviders.js";
-import { badRequest, notFound, toProviderError } from "../errors.js";
-import { saveUpload } from "../library/ingest.js";
-import { listAccounts } from "../pipedream/connect.js";
-import { contentDisposition, inlineForMime, mimeForExt } from "../utils/fileResponse.js";
-import { errorMessage } from "../utils/util.js";
-
-/**
- * On-demand mailbox access for the web UI: attachment bytes for the chat's
- * slide-over viewer, and a thread's conversation for the drafts' collapsible
- * history. Nothing is stored locally — every request reads live through the
- * account's provider (AttachmentProvider / MailReadProvider).
- */
+import { listAccounts } from "../integrations/pipedream/connect.js";
+import { saveUpload } from "../storage/library/ingest.js";
 
 const attachmentQuery = Type.Object({
   accountId: Type.String(),
@@ -35,10 +28,8 @@ const threadQuery = Type.Object({
 });
 
 export const mailRoutes: FastifyPluginAsyncTypebox = async (app) => {
-  // Stream one attachment's bytes so the browser can render it. The served
-  // MIME is derived from the filename extension (never the provider's declared
-  // type), so foreign content can't be served as executable text/html; PDFs,
-  // text and images open inline, everything else downloads.
+  // The served MIME comes from the filename extension, never the provider's
+  // declared type, so foreign content can't be served as executable text/html.
   app.get(
     "/api/mail/attachments/open",
     { schema: { querystring: attachmentQuery } },
@@ -46,9 +37,9 @@ export const mailRoutes: FastifyPluginAsyncTypebox = async (app) => {
       const { accountId, messageId, filename } = req.query;
       const { filename: name, bytes } = await fetchAttachment(accountId, messageId, filename).catch(
         (error: unknown) => {
-          // A provider 404 means the message is gone upstream; anything else
-          // upstream is a 502 — never the raw SDK error, whose statusCode
-          // (e.g. a Pipedream 401) would masquerade as this API's own.
+          // A provider 404 means the message is gone; anything else is a 502,
+          // never the raw SDK error whose statusCode (e.g. a Pipedream 401)
+          // would masquerade as this API's own.
           throw toProviderError(error, "attachment not found");
         },
       );
@@ -62,8 +53,6 @@ export const mailRoutes: FastifyPluginAsyncTypebox = async (app) => {
     },
   );
 
-  // Ingest one attachment into the document library, where it is indexed and
-  // becomes searchable/readable — the viewer's "Save to library" action.
   app.post("/api/mail/attachments/save", { schema: { body: attachmentBody } }, async (req) => {
     const { accountId, messageId, filename } = req.body;
     const { filename: name, bytes } = await fetchAttachment(accountId, messageId, filename).catch(
@@ -78,8 +67,6 @@ export const mailRoutes: FastifyPluginAsyncTypebox = async (app) => {
     }
   });
 
-  // One thread's conversation (drafts excluded), read live — what a reply
-  // draft's collapsible history expands into.
   app.get(
     "/api/mail/threads",
     { schema: { querystring: threadQuery } },

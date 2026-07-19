@@ -9,10 +9,10 @@ import {
   runAutomation,
   runMissedAutomations,
 } from "../automations/scheduler.js";
+import { notFound, requireRow } from "../core/errors.js";
 import { decideSuggestion, listPendingSuggestions } from "../db/automationSuggestions.js";
 import { db, schema } from "../db/index.js";
 import { likeContains, likePattern } from "../db/like.js";
-import { notFound, requireRow } from "../errors.js";
 
 const runsQuery = Type.Object({
   q: Type.Optional(Type.String()),
@@ -25,7 +25,7 @@ const idParams = Type.Object({ id: Type.String() });
 const automationBody = Type.Object({
   name: Type.String(),
   instruction: Type.String(),
-  /** Empty (or omitted) = manual-only: the automation runs only on demand. */
+  /** Empty or omitted = manual-only: runs only on demand. */
   schedule: Type.Optional(Type.String()),
   enabled: Type.Optional(Type.Boolean()),
   showInActivity: Type.Optional(Type.Boolean()),
@@ -46,15 +46,9 @@ const automationPatchBody = Type.Object({
   notifyOnCompletion: Type.Optional(Type.Boolean()),
 });
 
-/** Join condition linking a run to its automation, shared by every runs query and its count. */
 const runToAutomation = eq(schema.automations.id, schema.automationRuns.automationId);
 
-/**
- * The run+automation-name projection every runs list reads from — a fresh
- * query builder each call, since a caller chains its own where/orderBy/limit
- * onto it. leftJoin keeps a run whose automation was deleted in the result,
- * with a null automationName, rather than dropping it.
- */
+// leftJoin keeps a run whose automation was deleted, with a null automationName.
 function runsSelectBase() {
   return db
     .select({
@@ -71,7 +65,6 @@ function runsSelectBase() {
     .leftJoin(schema.automations, runToAutomation);
 }
 
-/** The cards column is a JSON blob internally; every run the API ships carries it parsed. */
 function toRunDto<T extends { cards: string | null }>(
   row: T,
 ): Omit<T, "cards"> & { cards: ReturnType<typeof parseStoredCards> } {
@@ -88,20 +81,17 @@ export const automationRoutes: FastifyPluginAsyncTypebox = async (app) => {
     return rows.map((row) => ({ ...row, nextRunAt: getNextRunAt(row.id) }));
   });
 
-  /** Cross-automation run feed for the Home activity section. */
   app.get("/api/runs", { schema: { querystring: runsQuery } }, async (req) => {
     const q = req.query.q?.trim();
     const limit = Math.min(req.query.limit ?? 30, 100);
     const offset = req.query.offset ?? 0;
 
-    // Hide runs from automations the user has excluded from the activity feed.
-    // leftJoin → a run whose automation was deleted has NULL columns; keep those.
+    // isNull keeps both the unset default and a deleted automation's NULL rows.
     const visible = or(
       isNull(schema.automations.showInActivity),
       eq(schema.automations.showInActivity, true),
     );
-    // SQLite's LIKE is case-insensitive for ASCII by default, which covers the
-    // digest text this searches over.
+    // SQLite LIKE is case-insensitive for ASCII, which covers this digest text.
     const pattern = q ? likeContains(q) : undefined;
     const where = pattern
       ? and(
@@ -129,13 +119,8 @@ export const automationRoutes: FastifyPluginAsyncTypebox = async (app) => {
     return { items, total: Number(totalRow?.count ?? 0) };
   });
 
-  /**
-   * The pinned automation's latest successful run, for the Home page lead
-   * card. Deliberately bypasses both filters /api/runs applies: it is not
-   * hidden by showInActivity (pinning is an explicit, stronger signal), and
-   * it is not subject to that endpoint's pagination limit, so an old pinned
-   * run can never fall out of view.
-   */
+  // Deliberately bypasses both /api/runs filters: pinning overrides showInActivity,
+  // and there is no pagination limit, so an old pinned run never falls out of view.
   app.get("/api/runs/pinned", async () => {
     const [automation] = await db
       .select()
@@ -160,26 +145,17 @@ export const automationRoutes: FastifyPluginAsyncTypebox = async (app) => {
     };
   });
 
-  /**
-   * Automations whose latest scheduled slot elapsed without a covering run
-   * (see automations/scheduler.ts). Empty once boot catch-up has run them, so
-   * the Home page shows its "run missed" button only when catch-up couldn't.
-   */
   app.get("/api/runs/missed", async () => {
     return { items: await findMissedAutomations() };
   });
 
-  /** Run every automation with an uncovered past slot now — the Home button's
-   *  manual fallback when boot catch-up didn't (or couldn't). */
   app.post("/api/runs/catch-up", async () => {
     const started = await runMissedAutomations();
     return { started };
   });
 
-  /** Pending proposals from the suggestion sweep, for the Automations page's accept/dismiss queue. */
   app.get("/api/automations/suggestions", async () => listPendingSuggestions());
 
-  /** Accept a suggestion: create the automation it proposes, then retire the suggestion. */
   app.post(
     "/api/automations/suggestions/:id/accept",
     { schema: { params: idParams } },
@@ -192,8 +168,7 @@ export const automationRoutes: FastifyPluginAsyncTypebox = async (app) => {
         instruction: suggestion.instruction,
         schedule: suggestion.schedule,
       });
-      // Only after the automation exists — a failed create leaves the
-      // suggestion pending instead of silently swallowing the proposal.
+      // Retire only after the automation exists, so a failed create leaves the suggestion pending.
       await decideSuggestion(req.params.id, "accepted");
       return automation;
     },

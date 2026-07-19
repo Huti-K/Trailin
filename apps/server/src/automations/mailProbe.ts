@@ -1,29 +1,20 @@
 import type { ConnectedAccount } from "@trailin/shared";
 import { and, eq } from "drizzle-orm";
+import { moduleLogger } from "../core/logger.js";
+import { JobLoop } from "../core/utils/jobs.js";
 import { db, schema } from "../db/index.js";
 import { getSetting, setSetting } from "../db/settings.js";
 import { getMailReadProvider, type MailReadProvider } from "../email/read/readProviders.js";
-import { moduleLogger } from "../logger.js";
-import { listAccounts } from "../pipedream/connect.js";
-import { JobLoop } from "../utils/jobs.js";
+import { listAccounts } from "../integrations/pipedream/connect.js";
 import { requestRun } from "./scheduler.js";
 
 const log = moduleLogger("mailProbe");
-
-/**
- * The new-mail probe: polls each connected account's newest inbox message and,
- * when a genuinely new one appears anywhere, runs every enabled automation
- * flagged runOnNewMail — the reactive complement to their cron schedule. Runs
- * go through scheduler.ts's requestRun, so a burst of mail lands as one run
- * plus at most one queued follow-up per automation, never a stack.
- */
 
 /** Poll cadence. Tunable: each tick costs 1–2 proxied calls per connected account. */
 const PROBE_INTERVAL_MS = 2 * 60_000;
 
 const CURSORS_SETTING_KEY = "mailProbe.cursors";
 
-/** The last-seen newest inbox message per account id, persisted across restarts. */
 type ProbeCursors = Record<string, { id: string; date: string }>;
 
 async function loadCursors(): Promise<ProbeCursors> {
@@ -36,7 +27,6 @@ async function loadCursors(): Promise<ProbeCursors> {
   }
 }
 
-/** Injectable seams: the provider/account lookups and the run entry point. */
 export interface MailProbeDeps {
   readerFor?: (app: string) => MailReadProvider | null;
   listAccounts?: () => Promise<ConnectedAccount[]>;
@@ -44,22 +34,11 @@ export interface MailProbeDeps {
 }
 
 /**
- * One probe pass. Checks for flagged automations before touching any provider
- * (an idle tick with none flagged costs one local query), then per account:
- *
- * - No stored cursor: seed it from the observed newest without triggering, so
- *   a fresh boot or a newly connected account never fires a run storm over
- *   mail that was already there.
- * - Same id as the cursor: nothing new (date is null when the provider
- *   short-circuited on knownId; the stored entry already carries the date).
- * - Different id: new mail only when its date is strictly newer — the newest
- *   message being archived or deleted also changes the id, but only backwards
- *   in time. The cursor advances to the observed newest either way.
- *
- * A failing account is logged and keeps its cursor; the cursor map is written
- * once per pass, rebuilt from the live account list so entries for
- * disconnected accounts fall away. Any new mail triggers each flagged
- * automation once, fire-and-forget.
+ * One probe pass. A first-seen account (no stored cursor) seeds silently, so a
+ * fresh boot or newly connected account never fires a run storm over mail
+ * already there. A changed newest-id is new mail only when its date is strictly
+ * newer: archiving or deleting the newest message also changes the id, but
+ * backwards in time.
  */
 export async function probeOnce(deps: MailProbeDeps = {}): Promise<void> {
   const flagged = await db
@@ -92,7 +71,6 @@ export async function probeOnce(deps: MailProbeDeps = {}): Promise<void> {
     }
 
     if (!observed) {
-      // Empty inbox: nothing to compare against; the stored cursor stays.
       if (cursor) next[account.id] = cursor;
       continue;
     }
@@ -113,8 +91,7 @@ export async function probeOnce(deps: MailProbeDeps = {}): Promise<void> {
   if (!sawNewMail) return;
   const run = deps.requestRun ?? requestRun;
   for (const automation of flagged) {
-    // One request per automation per burst; requestRun coalesces anything
-    // that lands while a run is already in flight.
+    // One request per automation per burst; requestRun coalesces the rest.
     run(automation.id).catch((error: unknown) =>
       log.error({ err: error, automationId: automation.id }, "new-mail run failed"),
     );
@@ -131,7 +108,6 @@ export function startMailProbe(): void {
   loop.start();
 }
 
-/** Stop the interval; a probe already running finishes on its own. */
 export function stopMailProbe(): void {
   loop.stop();
 }

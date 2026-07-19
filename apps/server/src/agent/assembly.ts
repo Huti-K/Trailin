@@ -1,9 +1,8 @@
 import { Agent } from "@earendil-works/pi-agent-core";
 import type { Message } from "@earendil-works/pi-ai";
-import { resolveActiveModel } from "../llm/registry.js";
-import { moduleLogger } from "../logger.js";
-import { loadOnOfficeTools } from "../onoffice/tools.js";
-import { buildWhatsAppTools } from "../whatsapp/tools.js";
+import { moduleLogger } from "../core/logger.js";
+import { loadOnOfficeTools } from "../integrations/onoffice/tools.js";
+import { buildWhatsAppTools } from "../integrations/whatsapp/tools.js";
 import { automationManageTools, automationReadTools } from "./automationTools.js";
 import { composeBriefingTool } from "./briefingTool.js";
 import type { SessionCapabilities } from "./capabilities.js";
@@ -16,24 +15,18 @@ import { buildFileTools } from "./fileTools.js";
 import { recordCompactionMarker } from "./history.js";
 import { buildKnowledgeReadTools, buildKnowledgeTools } from "./knowledgeTools.js";
 import { leadDeleteTool, leadTools } from "./leadTools.js";
+import { resolveActiveModel } from "./llm/registry.js";
 import { streamViaModelRegistry } from "./oneShot.js";
 import { buildSystemPrompt } from "./prompt.js";
 import { skillReadTool, skillWriteTool } from "./skillTools.js";
+import { buildTodoTools } from "./todoTools.js";
 import { voiceLearnTool } from "./voiceLearn.js";
 import { webFetchTool } from "./webFetchTool.js";
 import { webSearchTool } from "./webSearchTool.js";
 
-/**
- * Builds the wired pi Agent for one session: active model, system prompt,
- * the capability-gated toolset, and the between-turns compaction hook. Which
- * tool groups arm is decided entirely by the SessionCapabilities profile
- * (capabilities.ts), so the toolset and the system prompt's claims about it
- * derive from the same record.
- */
-
 const log = moduleLogger("assembly");
 
-/** Fixed at a balanced default, not user-configurable — "medium" wherever the model can reason at all. */
+/** Balanced default, deliberately not user-configurable. */
 function resolveThinkingLevel(model: { reasoning: boolean }): "off" | "low" | "medium" | "high" {
   return model.reasoning ? "medium" : "off";
 }
@@ -44,42 +37,31 @@ export async function buildAgent(
   caps: SessionCapabilities,
   /**
    * The session's conversation id (a run id for automation sessions).
-   * Forwarded to providers that support session-scoped caching or affinity
-   * headers (see pi-ai's SimpleStreamOptions.sessionId), and the address the
-   * between-turns compaction hook persists its marker under.
+   * Forwarded to providers for session-scoped caching/affinity, and the
+   * address the between-turns compaction hook persists its marker under.
    */
   sessionId?: string,
 ): Promise<Agent> {
-  // Active model comes from Settings (SQLite), falling back to .env.
   const model = await resolveActiveModel();
-  // onOffice CRM tools (native, non-Pipedream): the read surface always,
-  // plus whichever create/write surfaces the profile arms — the CRM
-  // counterpart of the per-account permission grants. Empty when no onOffice
-  // credentials are configured.
+  // onOffice CRM tools (native, non-Pipedream): reads always, plus whichever
+  // create/write surfaces the profile arms. Empty without onOffice credentials.
   const onOfficeTools = await loadOnOfficeTools({
     allowWrites: caps.onOffice.writes,
     allowCreates: caps.onOffice.creates,
   });
-  // WhatsApp tools ride the local mirror (reads) and the live socket (send,
-  // when the profile arms it). Empty while no personal account is paired.
-  const whatsappTools = caps.whatsapp.linked
-    ? buildWhatsAppTools({ allowSend: caps.whatsapp.sends })
-    : [];
-  // The file tools are interactive-only: an unattended run reads
-  // attacker-controllable mail with nobody watching, so it never touches the
-  // filesystem regardless of the grants. Empty while nothing is armed.
-  const fileTools = caps.interactive ? await buildFileTools() : [];
+  // WhatsApp tools: local-mirror reads plus a draft-first send tool (autosend
+  // gated at call time by the Settings grant). Empty while no account is paired.
+  const whatsappTools = caps.whatsapp.linked ? buildWhatsAppTools() : [];
+  // SECURITY: every session gets the agent-home-confined file tools, but an
+  // unattended run reads attacker-controllable mail with nobody watching, so
+  // it gets the read-only set and the whole-filesystem grants are never
+  // consulted (fileTools.ts owns both rules).
+  const fileTools = await buildFileTools(caps.interactive);
   const agent = new Agent({
     initialState: {
       systemPrompt: await buildSystemPrompt(caps),
       model,
       thinkingLevel: resolveThinkingLevel(model),
-      // Per-account MCP tools (live reads always; the rest per permission grant),
-      // the local draft/attachment tools, web search/fetch, the memory/library
-      // tools, the delegate fan-out tool (built around this session's read
-      // subset so workers ride the same MCP sessions), and (interactive
-      // sessions only) present_choices for disambiguating with the user
-      // instead of guessing.
       tools: [
         listDraftsTool,
         ...toolset.tools,
@@ -88,30 +70,31 @@ export async function buildAgent(
         ...fileTools,
         webSearchTool,
         webFetchTool,
-        // An unattended run reads attacker-controllable mail with no human to
-        // review a write, so it gets read-only knowledge tools (no memory or
-        // library writes, no voice_learn): a memory or note persisted from a
-        // malicious email would otherwise be injected into every later
-        // session's system prompt. Same read-only surface delegate workers get.
+        // SECURITY: an unattended run reads attacker-controllable mail with no
+        // human to review a write, so it gets read-only knowledge tools. A
+        // memory persisted from a malicious email would otherwise be injected
+        // into every later session's system prompt. Same surface delegate
+        // workers get.
         ...(caps.interactive ? buildKnowledgeTools() : buildKnowledgeReadTools()),
-        // Automation management is interactive-only for the same reason: an
-        // automation's instruction is a standing prompt executed unattended
-        // on every tick, so mail content must never be able to plant or
-        // alter one. Past-run reads are inert, so every session gets them.
+        // SECURITY: automation management is interactive-only. An automation's
+        // instruction is a standing prompt executed unattended every tick, so
+        // mail content can't plant or alter one. Past-run reads are inert.
         ...(caps.interactive ? automationManageTools : []),
         ...automationReadTools,
-        // Lead rows are inert structured data (never executed), so intake and
-        // updates stay available unattended — that's how mail becomes leads.
-        // Deleting cascades over the lead's automations: interactive only.
-        // The leads directory belongs to the real-estate workflow: without
-        // CRM credentials the whole lead surface is absent.
+        // Lead rows are inert structured data, so intake and updates stay
+        // available unattended (that's how mail becomes leads). Deleting
+        // cascades over the lead's automations, so it's interactive-only.
+        // Without CRM credentials the whole lead surface is absent.
         ...(caps.onOffice.configured ? leadTools : []),
         ...(caps.onOffice.configured && caps.interactive ? [leadDeleteTool] : []),
+        // Todos are inert data like leads, so create/list/update stay available
+        // unattended: that is how a run that hits a decision it can't make files
+        // one for the user. create_todo links back to this session's conversation.
+        ...buildTodoTools(sessionId),
         buildDelegateTool(toolset.readTools),
-        // Skills are read everywhere — unattended runs follow them too ("Follow
-        // the skill 'x'" automations) — but written only interactively: a skill
-        // is a standing instruction executed on later runs, so mail content
-        // must never be able to plant or alter one.
+        // SECURITY: skills are read everywhere (unattended runs follow them),
+        // but written only interactively: a skill is a standing instruction
+        // executed on later runs, so mail content can't plant or alter one.
         skillReadTool,
         ...(caps.interactive ? [skillWriteTool] : []),
         ...(caps.interactive ? [voiceLearnTool] : []),
@@ -121,17 +104,16 @@ export async function buildAgent(
       messages: history,
     },
     // Route model calls through the registry so stored credentials apply
-    // (subscription OAuth with auto-refresh, saved API keys, then env vars).
+    // (subscription OAuth, saved API keys, then env vars).
     streamFn: streamViaModelRegistry,
     sessionId,
   });
-  // A tool-heavy run (a many-thread digest) can outgrow the context window
-  // between the turns of one run, where runPrompt's pre-prompt compaction
-  // can't reach. This hook runs after every turn inside a run: when the
-  // loop's context nears the window, hand the loop a compacted replacement
-  // and mirror it onto agent state so the durable transcript matches what
-  // the model sees next. The state setter copies the array, so the loop's
-  // context and the agent's transcript stay independent for later appends.
+  // A tool-heavy run can outgrow the context window between the turns of one
+  // run, where runPrompt's pre-prompt compaction can't reach. This hook trims
+  // mid-run: hand the loop a compacted replacement and mirror it onto agent
+  // state so the durable transcript matches what the model sees next. The
+  // state setter copies the array, so loop context and agent transcript stay
+  // independent for later appends.
   agent.prepareNextTurnWithContext = async ({ context }, signal) => {
     const compacted = await compactedMessages(
       {

@@ -1,6 +1,7 @@
 import type { Lead } from "@trailin/shared";
 import { eq } from "drizzle-orm";
 import { deleteAutomation } from "../automations/manage.js";
+import { badRequest } from "../core/errors.js";
 import { db, schema } from "../db/index.js";
 import {
   createLead,
@@ -10,25 +11,21 @@ import {
   normalizeLeadEmail,
   updateLead,
 } from "../db/leads.js";
-import { badRequest } from "../errors.js";
 
 /**
- * Lead intake and removal, shared by the HTTP routes and the agent's lead
- * tools so both entry points get identical validation, email-keyed dedup,
- * and the cascade over a lead's automations. Validation failures throw
- * AppErrors: the central handler renders them for routes, and the agent
- * tools surface the message as steering text (catchToText).
+ * Lead intake and removal, shared by the HTTP routes and the agent's lead tools
+ * so both get identical validation, email-keyed dedup, and the cascade over a
+ * lead's automations. Validation failures throw AppErrors, surfaced as steering
+ * text to the agent.
  */
 
-/** Loose shape check — enough to reject names, phone numbers, or free text in the email slot. */
 const EMAILISH = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /**
- * The intake upsert: create the lead, or merge into the row already keyed by
- * this address. Merging is deliberately conservative — repeat intake must
- * never regress what's already known, so it only fills empty fields, keeps
- * status untouched (updateLead/PATCH is the explicit editor), and advances
- * the two last-message timestamps monotonically.
+ * Create the lead, or merge into the row already keyed by this address. Merging
+ * is deliberately conservative: repeat intake never regresses what's known,
+ * so it only fills empty fields, leaves status untouched, and advances the two
+ * last-message timestamps monotonically.
  */
 export async function recordLead(input: LeadInput): Promise<{ lead: Lead; created: boolean }> {
   const email = normalizeLeadEmail(input.email);
@@ -45,7 +42,8 @@ export async function recordLead(input: LeadInput): Promise<{ lead: Lead; create
     accountId: fillEmpty(existing.accountId, input.accountId),
     interest: fillEmpty(existing.interest, input.interest),
     persona: fillEmpty(existing.persona, input.persona),
-    score: existing.score === "" ? input.score : undefined,
+    priority: existing.priority === "" ? input.priority : undefined,
+    language: fillEmpty(existing.language, input.language),
     notes: fillEmpty(existing.notes, input.notes),
     onofficeAddressId: existing.onofficeAddressId ?? input.onofficeAddressId,
     lastInboundAt: latest(existing.lastInboundAt, input.lastInboundAt),
@@ -55,7 +53,6 @@ export async function recordLead(input: LeadInput): Promise<{ lead: Lead; create
   return { lead, created: false };
 }
 
-/** Delete a lead and every automation attached to it. Returns false when the id is unknown. */
 export async function removeLead(id: string): Promise<boolean> {
   const attached = await db
     .select({ id: schema.automations.id })

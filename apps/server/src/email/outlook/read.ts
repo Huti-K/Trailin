@@ -1,6 +1,6 @@
 import type { ConnectedAccount, EmailThreadMessage } from "@trailin/shared";
-import { upstreamStatusCode } from "../../errors.js";
-import { proxyRequest } from "../../pipedream/connect.js";
+import { upstreamStatusCode } from "../../core/errors.js";
+import { proxyRequest } from "../../integrations/pipedream/connect.js";
 import type { MailReadProvider, SentMessage, ThreadDetail } from "../read/readProviders.js";
 import { stripHtml } from "../textUtils.js";
 import {
@@ -11,19 +11,13 @@ import {
   type GraphRecipient,
 } from "./message.js";
 
-/**
- * Outlook MailReadProvider: live sent-mail and conversation reads via
- * Microsoft Graph through the Connect proxy. Pages follow @odata.nextLink
- * verbatim (the link carries the whole query) up to the caller's limit.
- */
-
 const DEFAULT_LIMIT = 50;
 
 const SENT_SELECT = "subject,toRecipients,sentDateTime,body,conversationId";
 
 const THREAD_SELECT = "subject,from,toRecipients,ccRecipients,receivedDateTime,body,isDraft";
 
-/** Messages a conversation view shows at most — a display cap, not a paging unit. */
+/** Display cap on a conversation view, not a paging unit. */
 const THREAD_LIMIT = 50;
 
 interface GraphSentMessage {
@@ -80,8 +74,7 @@ async function listSentSince(
   const limit = opts?.limit ?? DEFAULT_LIMIT;
   const messages: SentMessage[] = [];
 
-  // Queried newest-first so the cap keeps the newest `limit` messages (the
-  // listSentSince contract), then reversed into the oldest-first return order.
+  // Queried newest-first so the cap keeps the newest `limit`; reversed into oldest-first for return.
   let page = (await proxyRequest(
     account.id,
     "get",
@@ -114,8 +107,7 @@ async function newestInbound(
   account: ConnectedAccount,
   opts?: { knownId?: string; signal?: AbortSignal },
 ): Promise<{ id: string; date: string | null } | null> {
-  // Always one Graph call: id and receivedDateTime come back together, so
-  // there is no second fetch for opts.knownId to short-circuit.
+  // id and receivedDateTime come back together, so there's no second fetch for knownId to short-circuit.
   const page = (await proxyRequest(
     account.id,
     "get",
@@ -176,11 +168,7 @@ async function getThread(
     signal,
   );
 
-  // Unsent drafts sit inside the conversation they answer — the view shows
-  // only what was actually exchanged. isDraft is culled here rather than in
-  // the OData $filter, which rejects some property combinations as
-  // inefficient; an unknown conversation simply matches nothing, so empty
-  // means "gone" the same way a 404 does elsewhere.
+  // Cull unsent drafts here, not in the OData $filter, which rejects some property combinations as inefficient; an unknown conversation just comes back empty.
   const exchanged = messages
     .filter((m) => !m.isDraft)
     .sort((a, b) => (a.receivedDateTime ?? "").localeCompare(b.receivedDateTime ?? ""));

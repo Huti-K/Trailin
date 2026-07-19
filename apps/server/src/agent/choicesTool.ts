@@ -1,21 +1,11 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "@sinclair/typebox";
 import type { ChoiceOption, ConnectedAccount, EmailRef } from "@trailin/shared";
-import { listAccounts } from "../pipedream/connect.js";
-import { isNonEmptyString } from "../utils/util.js";
+import { isNonEmptyString } from "../core/utils/util.js";
+import { listAccounts } from "../integrations/pipedream/connect.js";
 import { findAccount } from "./accounts.js";
 import { buildChoicesCard, cardNote, coerceChoiceOption } from "./cards.js";
 import { textResult, tool } from "./toolkit.js";
-
-/**
- * Agent tool that asks the user to pick instead of the model guessing, for a
- * draft/send/label/delete request that more than one account, thread or
- * draft plausibly matches. Publishes the "choices" AgentCard (clickable
- * buttons); the user's pick arrives as their next chat message, same as any
- * other reply — this tool never blocks waiting for it. Nothing here throws:
- * a malformed call yields a text error result instead of an unhandled
- * rejection.
- */
 
 const MIN_OPTIONS = 2;
 const MAX_OPTIONS = 6;
@@ -26,12 +16,6 @@ const CHOICES_CARD_NOTE = cardNote(
     "their next message. Do not act until then.",
 );
 
-/**
- * Builds the option's EmailRef when it names a thread: a bare, actionable
- * ref (thread + account) — display fields ride on the option's own
- * label/detail, which the model fills from what it just read. Returns
- * undefined rather than a half-built ref when the account didn't resolve.
- */
 function buildRef(
   threadId: string | undefined,
   resolvedAccount: ConnectedAccount | undefined,
@@ -54,10 +38,9 @@ export const presentChoicesTool: AgentTool = tool({
     question: Type.String({
       description: 'What you need the user to decide, e.g. "Which email do you mean?".',
     }),
-    // Options are validated and filtered by hand below (label presence,
-    // MIN_OPTIONS/MAX_OPTIONS bounds) rather than via schema constraints, so a
-    // model that omits a label on one option or over/undershoots the count
-    // still reaches that logic instead of bouncing as "Invalid parameters".
+    // Validated by hand below (label presence, count bounds) not via schema
+    // constraints, so a bad option reaches that logic instead of bouncing as
+    // "Invalid parameters".
     options: Type.Array(
       Type.Object({
         label: Type.Optional(

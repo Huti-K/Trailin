@@ -3,7 +3,9 @@ import { Type } from "@sinclair/typebox";
 import { isLanguage, SUPPORTED_LANGUAGES } from "@trailin/shared";
 import { resetSessions } from "../agent/sessionCache.js";
 import { rescheduleAll } from "../automations/scheduler.js";
-import { rescheduleNightlySuggest } from "../automations/suggestService.js";
+import { rescheduleNightlySuggest } from "../automations/suggest.js";
+import { badRequest } from "../core/errors.js";
+import { emitServerEvent } from "../core/events.js";
 import {
   getAccountColors,
   getAccountPermissions,
@@ -19,8 +21,6 @@ import {
   TIMEZONE_SETTING_KEY,
 } from "../db/settings.js";
 import { rescheduleNightlyLearn } from "../email/learn/service.js";
-import { badRequest } from "../errors.js";
-import { emitServerEvent } from "../events.js";
 
 const languageBody = Type.Object({ language: Type.String() });
 
@@ -56,8 +56,7 @@ export const settingsRoutes: FastifyPluginAsyncTypebox = async (app) => {
       throw badRequest(`language must be one of: ${SUPPORTED_LANGUAGES.join(", ")}`);
     }
     await setSetting(LANGUAGE_SETTING_KEY, language);
-    // The language lives in the system prompt, so drop in-memory agents —
-    // new conversations (and scheduled runs) pick it up immediately.
+    // The language lives in the system prompt, so drop in-memory agents; new conversations pick it up.
     await resetSessions();
     return { language };
   });
@@ -70,16 +69,13 @@ export const settingsRoutes: FastifyPluginAsyncTypebox = async (app) => {
       throw badRequest("timezone must be a valid IANA timezone");
     }
     await setSetting(TIMEZONE_SETTING_KEY, timezone);
-    // node-cron bakes the timezone into each task when it is created, so
-    // every cron-driven schedule is rebuilt against the new zone: the user's
-    // automations plus the fixed nightly jobs (learning extraction and the
-    // automation-suggestion sweep) — otherwise they'd keep firing on the old
-    // zone until a restart.
+    // node-cron bakes the timezone into each task at creation, so every schedule
+    // (user automations plus the nightly learn and suggest jobs) is rebuilt;
+    // otherwise they keep firing on the old zone until a restart.
     await rescheduleAll();
     await rescheduleNightlyLearn();
     await rescheduleNightlySuggest();
-    // The current time is baked into the system prompt, so drop in-memory
-    // agents — the next prompt in every conversation picks up the change.
+    // The current time is baked into the system prompt, so drop in-memory agents.
     await resetSessions();
     return { timezone };
   });
@@ -92,20 +88,17 @@ export const settingsRoutes: FastifyPluginAsyncTypebox = async (app) => {
     "/api/settings/permissions",
     { schema: { body: accountPermissionsBody } },
     async (req) => {
-      // Last entry wins per account; all-false records are dropped so the
-      // stored list only names accounts with at least one grant (absence is
-      // the read-only default).
+      // Last entry wins per account; all-false records are dropped so absence
+      // means the read-only default.
       const byId = new Map(req.body.permissions.map((p) => [p.accountId, p]));
       const permissions = [...byId.values()].filter((p) => p.write || p.send || p.delete);
       await setAccountPermissions(permissions);
-      // The per-account grants decide which tools get registered — rebuild agent toolsets.
+      // Per-account grants decide which tools get registered; rebuild agent toolsets.
       await resetSessions();
       emitServerEvent("accounts");
       return { permissions };
     },
   );
-
-  // ---- File access ----
 
   app.get("/api/settings/file-access", async () => ({
     fileAccess: await getFileAccessSettings(),
@@ -114,13 +107,10 @@ export const settingsRoutes: FastifyPluginAsyncTypebox = async (app) => {
   app.put("/api/settings/file-access", { schema: { body: fileAccessBody } }, async (req) => {
     const fileAccess = req.body;
     await setFileAccessSettings(fileAccess);
-    // The grants decide which file tools buildAgent mounts and what the
-    // system prompt says about them — rebuild agent sessions.
+    // The grants decide which file tools buildAgent mounts and the prompt text; rebuild sessions.
     await resetSessions();
     return { fileAccess };
   });
-
-  // ---- Account colors ----
 
   app.get("/api/settings/account-colors", async () => ({
     colors: await getAccountColors(),

@@ -23,16 +23,9 @@ import {
 } from "./updater";
 
 /**
- * The desktop shell: boots the bundled @trailin/server as a utility child
- * process on a loopback port, opens a window on it, and installs updates
- * published as GitHub releases (updater.ts). All app state lives with the
- * server under Electron's per-user data directory.
- */
-
-/**
- * First port tried for the local server, scanning upward when taken. Kept
- * stable across launches so the renderer origin — and with it localStorage
- * (theme, collapsed panels, the setup-dismissed flag) — survives restarts.
+ * First port tried, scanning upward when taken. Stable across launches so the
+ * renderer origin (and with it localStorage: theme, panels, setup flag)
+ * survives restarts.
  */
 const BASE_PORT = 43117;
 const PORT_SCAN_RANGE = 20;
@@ -44,8 +37,7 @@ let quitting = false;
 
 const smokeMode = Boolean(process.env.TRAILIN_DESKTOP_SMOKE);
 
-/** Report a startup/runtime failure and leave — non-zero in smoke mode so a
- * scripted run (CI, the verify loop) fails instead of hanging on a dialog. */
+/** Report a fatal error and leave; non-zero exit in smoke mode so a scripted run fails instead of hanging on a dialog. */
 function fatal(message: string): void {
   log.error(message);
   if (smokeMode) {
@@ -72,11 +64,7 @@ async function findFreePort(): Promise<number> {
   throw new Error(`no free port in ${BASE_PORT}-${BASE_PORT + PORT_SCAN_RANGE - 1}`);
 }
 
-/**
- * The child's environment: the parent's (minus undefined values, which the
- * utilityProcess API rejects) plus the desktop wiring — loopback binding and
- * every data path pointed into Electron's userData directory.
- */
+/** Filters out undefined values (which the utilityProcess API rejects); adds the loopback binding and data paths under Electron's userData. */
 function serverEnv(port: number): Record<string, string> {
   const dataRoot = app.getPath("userData");
   mkdirSync(dataRoot, { recursive: true });
@@ -90,6 +78,12 @@ function serverEnv(port: number): Record<string, string> {
     HOST: "127.0.0.1",
     PORT: String(port),
     DATABASE_PATH: path.join(dataRoot, "data", "trailin.db"),
+    // The agent home lives under userData like the DB, so it survives updates
+    // (electron-updater replaces the app bundle, not userData). The old ~/Trailin
+    // location migrates in via the default LEGACY_AGENT_HOME_PATH.
+    AGENT_HOME_PATH: path.join(dataRoot, "agent-home"),
+    // Pre-agent-home locations, still set so the server's boot migration can
+    // move their contents into the agent home.
     LIBRARY_PATH: path.join(dataRoot, "library"),
     SKILLS_PATH: path.join(dataRoot, "skills"),
     WHATSAPP_AUTH_PATH: path.join(dataRoot, "data", "whatsapp-auth"),
@@ -140,14 +134,11 @@ async function waitForServer(port: number): Promise<void> {
 }
 
 /**
- * Route new-window requests out of the shell: anything the app opens
- * (login pages, Gmail/Outlook web links, docs, API downloads) lands in the
- * user's default browser instead of an Electron child window. The one
- * exception is a popup opened by the embedded Pipedream Connect iframe —
- * the provider's OAuth window — which must stay an in-app window because
- * the iframe holds its handle to detect completion and report the linked
- * account back. Applied recursively so links clicked inside that OAuth
- * window also leave for the browser.
+ * Route new-window requests to the user's browser, not an Electron child
+ * window. The one exception: a popup from the embedded Pipedream Connect
+ * iframe (the provider's OAuth window) stays in-app, since the iframe
+ * holds its handle to detect completion. Applied recursively so links inside
+ * that OAuth window also leave for the browser.
  */
 function installLinkPolicy(contents: WebContents): void {
   contents.setWindowOpenHandler(({ url, referrer }) => {
@@ -167,13 +158,12 @@ function createWindow(port: number): void {
     height: 860,
     minWidth: 720,
     minHeight: 480,
-    // Neutral pre-paint fill so the first frame isn't a white flash.
     backgroundColor: "#f4f4f5",
     webPreferences: { preload: path.join(__dirname, "preload.cjs") },
   });
   installLinkPolicy(window.webContents);
-  // The main window never leaves the local app: a stray in-window navigation
-  // (a dragged-in link, a location assignment) opens in the browser instead.
+  // The main window never leaves the local app: a stray in-window navigation to
+  // an external origin opens in the browser instead.
   window.webContents.on("will-navigate", (event, url) => {
     let external: boolean;
     try {
@@ -186,7 +176,6 @@ function createWindow(port: number): void {
     if (/^https?:/i.test(url)) void shell.openExternal(url);
   });
   void window.loadURL(`${origin}/`);
-  // CI/dev smoke mode: prove the packaged shell boots end-to-end, then leave.
   if (smokeMode) {
     window.webContents.once("did-finish-load", () => {
       log.info("desktop smoke: window loaded");
@@ -195,7 +184,6 @@ function createWindow(port: number): void {
   }
 }
 
-/** Bring the existing window to front, or reopen one on the running server. */
 function focusOrCreateWindow(): void {
   const [window] = BrowserWindow.getAllWindows();
   if (window) {
@@ -208,8 +196,8 @@ function focusOrCreateWindow(): void {
 
 const hasLock = app.requestSingleInstanceLock();
 if (!hasLock) {
-  // A second launch would race the first for the port and the SQLite file —
-  // hand over to the running instance instead (it gets `second-instance`).
+  // A second launch would race the first for the port and the SQLite file;
+  // hand over to the running instance instead.
   app.quit();
 } else {
   app.on("second-instance", () => {
@@ -217,8 +205,8 @@ if (!hasLock) {
   });
 
   app.on("window-all-closed", () => {
-    // On macOS the server (and its scheduled automations) keeps running with
-    // the window closed, per platform convention; elsewhere closing quits.
+    // On macOS the server (and its scheduled automations) keeps running with the
+    // window closed; elsewhere closing quits.
     if (process.platform !== "darwin") app.quit();
   });
 
@@ -252,11 +240,8 @@ if (!hasLock) {
       startServer(port);
       await waitForServer(port);
       createWindow(port);
-      // Run-completion notifications come off the server's own event stream,
-      // so they keep working when every window is closed (macOS).
       startNotifications(port, { onOpenRequest: focusOrCreateWindow });
-      // Dev runs (`electron build/app`) have no update feed baked in —
-      // app-update.yml only exists in a packaged build.
+      // Dev runs have no update feed baked in: app-update.yml only exists in a packaged build.
       if (app.isPackaged) {
         startUpdater((version) => {
           for (const window of BrowserWindow.getAllWindows()) {

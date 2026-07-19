@@ -3,11 +3,12 @@ import { Type } from "@sinclair/typebox";
 import { type ConnectedAccount, EMAIL_APPS } from "@trailin/shared";
 import { resetSessions } from "../agent/sessionCache.js";
 import { startVoiceLearnOnConnect } from "../agent/voiceLearn.js";
+import { env } from "../core/env.js";
+import { badRequest, notFound, upstreamError, upstreamStatusCode } from "../core/errors.js";
+import { emitServerEvent } from "../core/events.js";
+import { errorMessage } from "../core/utils/util.js";
 import { deleteVoiceLearnRun } from "../db/voiceRuns.js";
 import { invalidateDraftsCache } from "../email/draftsCache.js";
-import { env } from "../env.js";
-import { badRequest, notFound, upstreamError, upstreamStatusCode } from "../errors.js";
-import { emitServerEvent } from "../events.js";
 import {
   clearConnectSettings,
   createConnectToken,
@@ -22,13 +23,11 @@ import {
   searchApps,
   setUseCustom,
   verifyConnectConfig,
-} from "../pipedream/connect.js";
-import { errorMessage } from "../utils/util.js";
+} from "../integrations/pipedream/connect.js";
 
 const pipedreamConfigBody = Type.Object({
   clientId: Type.String(),
   clientSecret: Type.Optional(Type.String()),
-  // A raw proj_… id or any URL containing one.
   project: Type.String(),
   environment: Type.Optional(Type.String()),
 });
@@ -50,12 +49,11 @@ export const pipedreamRoutes: FastifyPluginAsyncTypebox = async (app) => {
     if (!clientId) {
       throw badRequest("clientId is required");
     }
-    // The project field accepts a raw proj_… id or any URL containing one.
     const projectId = extractProjectId(body.project);
     if (!projectId) {
       throw badRequest("project must be a proj_… id or a Pipedream project URL");
     }
-    // An empty secret on edit means "keep the one already saved".
+    // An empty secret on edit keeps the one already saved.
     const clientSecret = body.clientSecret?.trim() || (await getSavedClientSecret());
     if (!clientSecret) {
       throw badRequest("clientSecret is required");
@@ -84,7 +82,6 @@ export const pipedreamRoutes: FastifyPluginAsyncTypebox = async (app) => {
     return getPipedreamStatus();
   });
 
-  /** Switch between the built-in Pipedream credentials and the user's own. */
   app.put("/api/pipedream/mode", { schema: { body: pipedreamModeBody } }, async (req) => {
     await setUseCustom(req.body.useCustom);
     await resetSessions();
@@ -99,21 +96,16 @@ export const pipedreamRoutes: FastifyPluginAsyncTypebox = async (app) => {
     return getPipedreamStatus();
   });
 
-  /** ---- connected accounts (any app, any number per app) ---- */
-
   app.get("/api/pipedream/accounts", async (): Promise<ConnectedAccount[]> => {
     try {
-      // This is the Settings/Connections screen, which refetches right after
-      // the user finishes linking a new account in the Connect popup — it
-      // must see that account immediately, and a forced refresh here
-      // repopulates the shared cache for everyone else's next default-path call too.
+      // Force a refresh: this screen refetches right after linking an account
+      // and sees it immediately (and repopulates the shared cache).
       return await listAccounts({ refresh: true });
     } catch (error) {
       throw upstreamError(errorMessage(error), error);
     }
   });
 
-  /** Search Pipedream's app catalog for the provider picker. */
   app.get("/api/pipedream/apps", { schema: { querystring: appsQuerystring } }, async (req) => {
     const q = req.query.q?.trim() || "";
     try {
@@ -139,13 +131,6 @@ export const pipedreamRoutes: FastifyPluginAsyncTypebox = async (app) => {
     },
   );
 
-  /**
-   * Learn the account's writing voice from its own sent mail. The connect
-   * flow calls this automatically for a freshly linked email account, and
-   * the Settings account row's retry button calls it again after a failed
-   * attempt. Runs in the background — sent mail is read live from the
-   * provider — so this returns as soon as the job is launched.
-   */
   app.post(
     "/api/pipedream/accounts/:id/learn-voice",
     { schema: { params: accountIdParams } },
@@ -156,8 +141,6 @@ export const pipedreamRoutes: FastifyPluginAsyncTypebox = async (app) => {
         throw badRequest("voice learning needs an email account");
       }
       startVoiceLearnOnConnect(account.id);
-      // The connect flow calls this right after linking a mailbox — the
-      // closest server-side moment to "an account was added".
       emitServerEvent("accounts");
       return { ok: true };
     },
@@ -170,18 +153,15 @@ export const pipedreamRoutes: FastifyPluginAsyncTypebox = async (app) => {
       try {
         await deleteAccount(req.params.id);
       } catch (error) {
-        // Pipedream 404s when the account is already gone — that's a client-
-        // facing 404, not an outage.
+        // Pipedream 404s when the account is already gone: a client-facing 404, not an outage.
         if (upstreamStatusCode(error) === 404) throw notFound("account not found");
         throw upstreamError(errorMessage(error), error);
       }
       // Live agents may hold tools for the removed account.
       await resetSessions();
       invalidateDraftsCache(req.params.id);
-      // The account list itself just changed.
       invalidateAccountsCache();
       emitServerEvent("accounts");
-      // Drop the account's voice-learn attempt state with it.
       await deleteVoiceLearnRun(req.params.id);
       return { ok: true };
     },

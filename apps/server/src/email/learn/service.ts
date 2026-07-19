@@ -1,34 +1,20 @@
+import { moduleLogger } from "../../core/logger.js";
+import { JobLoop, NightlyJob } from "../../core/utils/jobs.js";
+import { errorMessage } from "../../core/utils/util.js";
 import { recordLearnRun } from "../../db/learnRuns.js";
 import { getTimezoneSetting } from "../../db/settings.js";
-import { moduleLogger } from "../../logger.js";
-import { JobLoop, NightlyJob } from "../../utils/jobs.js";
-import { errorMessage } from "../../utils/util.js";
 import { runExtractionSweep } from "./extractor.js";
 import { runMatchSweep } from "./matcher.js";
 
 const log = moduleLogger("learn");
 
 /**
- * Lifecycle of the draft-vs-sent learning subsystem — both of its loops
- * behind one start/stop pair:
- *
- * - The match loop drives the matcher (matcher.ts) on a plain interval: a
- *   boot catch-up plus a fixed cadence. A sweep with no open drafts costs one
- *   local query and zero provider calls, so idle ticks are effectively free;
- *   when a draft is pending, the interval bounds how long a send can go
- *   unnoticed.
- * - The nightly extraction sweep (extractor.ts) runs at 03:00 in the user's
- *   configured timezone (falling back to the server's local time when none is
- *   set), plus a boot catch-up run so a pair that became learnable while the
- *   process was down isn't stuck waiting for the next 03:00.
- *
- * Each extraction sweep runs the matcher first: extraction only sees pairs
- * the matcher has resolved, so matching immediately before it keeps a
- * same-day send from waiting on the match loop's slower cadence.
- *
- * Every extraction sweep — including one that found nothing to learn — is
- * recorded via db/learnRuns.ts, feeding the Knowledge page's
- * learning-activity history.
+ * Lifecycle of the learning subsystem's two loops. The match loop runs the
+ * matcher on a fixed interval; the nightly sweep runs at 03:00 in the user's
+ * timezone (server local when unset), each preceded by a boot catch-up run.
+ * A full sweep runs the matcher BEFORE extraction: extraction only sees pairs
+ * the matcher has resolved, so a same-day send needn't wait on the match loop's
+ * slower cadence.
  */
 
 const MATCH_INTERVAL_MS = 30 * 60_000;
@@ -88,9 +74,7 @@ export async function startLearning(): Promise<void> {
   nightly.start((await getTimezoneSetting()) ?? undefined);
 }
 
-/** Rebuild the nightly extraction cron against the current timezone setting
- *  (see routes/settings.ts's timezone route); a no-op while stopped. The
- *  match loop is interval-based and needs no rebuild. */
+/** Rebuild the nightly cron against the current timezone; a no-op while stopped. The interval-based match loop needs no rebuild. */
 export async function rescheduleNightlyLearn(): Promise<void> {
   nightly.reschedule((await getTimezoneSetting()) ?? undefined);
 }
@@ -101,7 +85,7 @@ export function stopLearning(): void {
   nightly.stop();
 }
 
-/** When the nightly extraction sweep will fire next; null while it isn't scheduled. */
+/** When the nightly sweep fires next; null while not scheduled. */
 export function nextLearnRunAt(): string | null {
   return nightly.nextRunAt();
 }

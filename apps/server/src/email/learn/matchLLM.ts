@@ -1,14 +1,6 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { type ReportToolSpec, runReportPrompt } from "../../agent/oneShot.js";
-import { prompts } from "../../prompts.js";
-
-/**
- * The tiebreak LLM call for ambiguous standalone-draft matches (matcher.ts):
- * more than one sent message shares the draft's recipients and subject, so
- * the model reads the draft's latest body against each candidate's body and
- * reports which one (if any) is confidently the same email, via the
- * report-tool one-shot (agent/oneShot.ts, runReportPrompt).
- */
+import { prompts } from "../../agent/prompts.js";
 
 export interface TiebreakCandidate {
   providerMessageId: string;
@@ -53,14 +45,10 @@ function renderPrompt(draftBody: string, candidates: TiebreakCandidate[]): strin
   ].join("\n");
 }
 
-/** Hard cap on one tiebreak call — a stuck provider can't wedge the matcher's sweep. */
+/** Hard cap on one tiebreak call, so a stuck provider can't wedge the matcher's sweep. */
 const TIEBREAK_TIMEOUT_MS = 60_000;
 
-/**
- * Resolve one ambiguous match. Throws when the model never produced a usable
- * report (including on timeout) — callers treat any rejection the same as an
- * explicit "none": leave the draft open rather than risk a wrong pair.
- */
+/** Throws when the model produced no usable report (incl. timeout); callers treat any rejection as "none" and leave the draft open. */
 export async function resolveTiebreak(
   draftBody: string,
   candidates: TiebreakCandidate[],

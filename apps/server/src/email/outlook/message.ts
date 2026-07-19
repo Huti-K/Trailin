@@ -1,15 +1,9 @@
 import type { ConnectedAccount } from "@trailin/shared";
-import { proxyRequest } from "../../pipedream/connect.js";
-
-/**
- * Microsoft Graph message helpers shared by the Outlook drivers (drafts.ts,
- * read.ts): the GraphRecipient type, "Name <addr>" formatting, and
- * conversation paging — one provider's wire format in one place.
- */
+import { proxyRequest } from "../../integrations/pipedream/connect.js";
 
 export const GRAPH_API = "https://graph.microsoft.com/v1.0/me";
 
-/** Page size for fetchConversationMessages — Graph's own default (10) is too small for an active thread. */
+/** Page size; Graph's own default (10) is too small for an active thread. */
 const CONVERSATION_PAGE_SIZE = 50;
 
 interface GraphMessagePage<T> {
@@ -18,14 +12,10 @@ interface GraphMessagePage<T> {
 }
 
 /**
- * Messages of one conversation, paging through `@odata.nextLink` up to `cap`
- * (enforced exactly — the last page is trimmed). `T` names the shape the
- * caller's `select` produces.
- *
- * `$orderby` is deliberately not combined with `$filter` here — Graph often
- * rejects that pairing as an inefficient query — so the caller orders the
- * result itself; Graph's per-page order isn't otherwise guaranteed. An
- * unknown conversation simply matches nothing and comes back empty.
+ * Messages of one conversation, paging `@odata.nextLink` up to `cap` (the last
+ * page is trimmed to it). `$orderby` is deliberately not combined with
+ * `$filter`, which Graph often rejects as inefficient, so the caller orders the
+ * result itself; an unknown conversation comes back empty.
  */
 export async function fetchConversationMessages<T>(
   account: ConnectedAccount,
@@ -34,7 +24,7 @@ export async function fetchConversationMessages<T>(
   cap: number,
   signal?: AbortSignal,
 ): Promise<T[]> {
-  // OData string literals escape a single quote by doubling it.
+  // OData escapes a single quote by doubling it.
   const escapedThreadId = threadId.replace(/'/g, "''");
   const messages: T[] = [];
   let url = `${GRAPH_API}/messages`;
@@ -52,8 +42,7 @@ export async function fetchConversationMessages<T>(
     messages.push(...(res.value ?? []));
     const nextLink = res["@odata.nextLink"];
     if (!nextLink) break;
-    // nextLink is already a full URL carrying the escaped $filter/$select/$top
-    // as its query string — passing params again would duplicate them.
+    // nextLink already carries the full query, so passing params again would duplicate it.
     url = nextLink;
     params = undefined;
   }
@@ -64,28 +53,20 @@ export interface GraphRecipient {
   emailAddress?: { name?: string; address?: string };
 }
 
-/** Bare address of one recipient; undefined when Graph gave none. */
 function recipientAddress(recipient: GraphRecipient | undefined): string | undefined {
   const address = recipient?.emailAddress?.address;
   return address?.trim() || undefined;
 }
 
-/** Bare addresses only, as an array. */
 function recipientAddresses(recipients: GraphRecipient[] | undefined): string[] {
   return (recipients ?? []).map(recipientAddress).filter((a): a is string => !!a);
 }
 
-/** Bare addresses joined the way a mail header would list them. */
 export function addressListOf(recipients: GraphRecipient[] | undefined): string {
   return recipientAddresses(recipients).join(", ");
 }
 
-/**
- * "Name <address>" the way a mail header would render it — Graph gives name
- * and address as separate fields rather than a single header string like
- * Gmail's. Bare address (or name) when the other half is missing; undefined
- * when there's nothing at all.
- */
+/** "Name <address>", which Graph splits into separate fields; bare address or name when one half is missing, undefined when neither. */
 export function formatRecipient(recipient: GraphRecipient | undefined): string | undefined {
   const address = recipient?.emailAddress?.address?.trim();
   const name = recipient?.emailAddress?.name?.trim();
@@ -93,21 +74,11 @@ export function formatRecipient(recipient: GraphRecipient | undefined): string |
   return name && name !== address ? `${name} <${address}>` : address;
 }
 
-/** "Name <address>" per entry, dropping recipients Graph left empty. */
 export function formatRecipients(recipients: GraphRecipient[] | undefined): string[] {
   return (recipients ?? []).map(formatRecipient).filter((r): r is string => !!r);
 }
 
-/**
- * The item with the lexicographically latest `receivedDateTime` (ISO-8601
- * sorts correctly as plain strings, the same assumption read.ts's thread
- * date sorts make). Undefined for an empty list; an item missing the field
- * sorts as if it were the oldest.
- *
- * Used to find "the newest message in a conversation" — e.g. the target for
- * a Graph createReply call — without requiring the whole page to already be
- * date-sorted.
- */
+/** The item with the latest `receivedDateTime` (ISO-8601 sorts correctly as plain strings); undefined for an empty list, a missing field sorts oldest. */
 export function newestByReceivedDate<T extends { receivedDateTime?: string }>(
   items: T[],
 ): T | undefined {

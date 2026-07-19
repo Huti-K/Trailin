@@ -6,6 +6,8 @@ dist/
 !.env.example
 # Runtime state: SQLite DB + stored credentials (auth.json)
 apps/server/data/
+# Agent home (memory/, skills/, knowledge/); the desktop app keeps it under userData
+agent-home/
 # Assembled desktop app (bundles + staged node_modules); installers land in
 # apps/desktop/dist/, covered by the global dist/ rule above.
 apps/desktop/build/
@@ -18,8 +20,6 @@ apps/desktop/build/
 *.db-journal
 CLAUDE.md
 CONTEXT.md
-# Graphify knowledge-graph index (local dev tool output)
-graphify-out/
 
 # Local agent rules — deliberately unpublished
 AGENTS.md

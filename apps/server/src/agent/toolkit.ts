@@ -6,33 +6,20 @@ import type {
 import { type Static, type TObject, type TProperties, Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import type { AgentCard, ConnectedAccount } from "@trailin/shared";
-import { errorMessage } from "../utils/util.js";
+import { errorMessage } from "../core/utils/util.js";
 import { accountNameMap, resolveAccountParam } from "./accounts.js";
 
 /**
- * Typed factory for the app's own agent tools (MCP-wrapped tools keep their
- * raw pass-through schemas as plain AgentTool literals — see
- * emailToolset.ts). Parameters are
- * declared once as TypeBox properties: the JSON schema the model sees and the
- * `params` type execute receives both derive from that one declaration, so
- * they cannot drift, and every call is re-validated here — direct invocations
- * (tests, delegate workers) get the same guarantee as pi's agent loop.
- *
- * Cross-cutting parameter conventions live here, not in each tool:
- * - `account: "optional" | "required"` injects the account parameter with the
- *   canonical description, resolves it against the connected accounts, and
- *   short-circuits with the not-found guidance text so execute only ever
- *   sees a valid resolution.
- * - `catchToText` converts a thrown error into plain result text for tools
- *   whose failures should steer the model rather than fail the run.
- * - Malformed-but-unambiguous argument shapes are repaired before validation
- *   ever rejects them (see repairToolArguments), wired through pi's
- *   prepareArguments hook.
+ * Typed factory for the app's own agent tools (MCP-wrapped tools stay plain
+ * AgentTool literals, see emailToolset.ts). Parameters are declared once as
+ * TypeBox properties, so the JSON schema the model sees and the `params` type
+ * execute receives cannot drift, and every call is re-validated here: direct
+ * invocations (tests, delegate workers) get the same guarantee as pi's agent
+ * loop.
  */
 
 type ToolResult = AgentToolResult<AgentCard | undefined>;
 
-/** The plain-text AgentTool result every local tool returns. */
 export function textResult(value: string, card?: AgentCard) {
   return {
     content: [{ type: "text" as const, text: value }],
@@ -43,19 +30,13 @@ export function textResult(value: string, card?: AgentCard) {
 export interface ToolCtx {
   toolCallId: string;
   signal?: AbortSignal;
-  /** Stream partial progress text while the tool is still running (e.g. delegate's "N/M tasks done"). */
   onUpdate?: AgentToolUpdateCallback<AgentCard | undefined>;
 }
 
 export interface AccountToolCtx extends ToolCtx {
-  /** Set when the model passed an account that resolved. */
   account?: ConnectedAccount;
-  /** Every connected account, regardless of what the parameter resolved to. */
   accounts: ConnectedAccount[];
-  /**
-   * ` [name]` label for multi-account output rows; empty when the tool call
-   * is already scoped to one account, where the label would be noise.
-   */
+  /** ` [name]` label for multi-account output rows; empty when already scoped to one account. */
   accountTag: (accountId: string) => string;
 }
 
@@ -67,7 +48,6 @@ interface ToolSpecBase<P extends TProperties> {
   name: string;
   label: string;
   description: string;
-  /** Tool parameters as TypeBox properties; the factory builds the object schema. */
   params: P;
   /** Return a thrown error's message as result text instead of failing the run. */
   catchToText?: boolean;
@@ -77,7 +57,6 @@ const OPTIONAL_ACCOUNT_DESCRIPTION =
   "Optional: only this connected account (its email address or id).";
 const REQUIRED_ACCOUNT_DESCRIPTION = "The connected account (its email address or id).";
 
-/** JSON.parse for a string that looks like a JSON object or array; undefined otherwise. */
 function parseJsonComposite(text: string): unknown {
   const trimmed = text.trim();
   if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return undefined;
@@ -90,12 +69,11 @@ function parseJsonComposite(text: string): unknown {
 
 /**
  * Repairs the malformed argument shapes models actually produce, before
- * validation rejects them: the whole arguments object sent as one JSON
- * string, a JSON-encoded string where an array or object parameter belongs,
- * and a bare element where an array belongs. Only unambiguous fixes are
- * applied — anything else returns unchanged for validation to report. pi
- * runs this through the tool's prepareArguments hook, ahead of its own
- * argument validation (which also handles primitive coercion like "5" → 5).
+ * validation rejects them: the whole arguments object as one JSON string, a
+ * JSON-encoded string where an array/object belongs, and a bare element where
+ * an array belongs. Only unambiguous fixes are applied; anything else returns
+ * unchanged for validation to report. pi runs this through prepareArguments,
+ * ahead of its own validation (which handles primitive coercion like "5" → 5).
  */
 export function repairToolArguments(parameters: TObject, raw: unknown): unknown {
   if (Value.Check(parameters, raw)) return raw;
@@ -157,9 +135,8 @@ export function tool(
     execute: (params: never, ctx: never) => Promise<ToolResult>;
   },
 ): AgentTool {
-  // The overloads pair each ctx shape with its account mode; inside the
-  // implementation that correspondence is enforced by construction, so the
-  // one widening cast here is sound.
+  // The overloads pair each ctx shape with its account mode; the
+  // implementation enforces that by construction, so the widening cast is sound.
   const execute = spec.execute as (params: unknown, ctx: unknown) => Promise<ToolResult>;
   const properties: TProperties = spec.account
     ? {
@@ -216,25 +193,20 @@ export function tool(
   };
 }
 
-/** The optional `limit` parameter, phrased consistently across list tools. */
 export function limitParam(defaultLimit: number, noun = "results") {
   return Type.Optional(Type.Number({ description: `Max ${noun} (default ${defaultLimit}).` }));
 }
 
-/** Clamp a limit parameter to [1, max], flooring fractions; default when unset. */
 export function clampLimit(raw: number | undefined, defaultLimit: number, max: number): number {
   const n = raw !== undefined && Number.isFinite(raw) ? Math.floor(raw) : defaultLimit;
   return Math.min(Math.max(n, 1), max);
 }
 
 export interface NumberedRow {
-  /** The `N. …` line. */
   head: string;
-  /** Indented detail lines; `false`/`undefined` entries are dropped. */
   body?: Array<string | false | undefined>;
 }
 
-/** The numbered-list shape every list tool prints: head lines with indented details. */
 export function numberedList(rows: NumberedRow[]): string {
   return rows
     .map((row, i) =>

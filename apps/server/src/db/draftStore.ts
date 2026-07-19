@@ -3,19 +3,16 @@ import { and, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import { db, lazyTransaction, schema } from "./index.js";
 
 /**
- * Snapshot store for agent-written drafts (agent_drafts +
- * agent_draft_versions). The provider remains source of truth for the live
- * drafts list; these rows preserve what the agent composed so the
- * draft-vs-sent learning loop can diff against it after the provider draft
- * has been edited, sent, or deleted. Only drafts created through the agent's
- * create-draft tool have a row here — a lookup miss means "not agent-written"
- * and every writer below treats that as a silent no-op, never an error:
- * snapshot bookkeeping must not fail the provider action it rides on.
+ * Snapshot store for agent-written drafts. The provider stays source of truth;
+ * these rows preserve what the agent composed so the learning loop can diff
+ * against it after the provider draft is edited/sent/deleted. Only agent
+ * create-draft rows exist here: a lookup miss means "not agent-written", which
+ * every writer below treats as a silent no-op, never an error, so snapshot
+ * bookkeeping never fails the provider action it rides on.
  *
- * Rows are keyed internally by uuid but addressed by callers as
- * (accountId, providerDraftId) — the identity the routes and tools actually
- * hold. Version rows are append-only; fields a patch omits carry forward from
- * the latest version so every row is a complete (subject, body) as-written.
+ * Rows are keyed by uuid but addressed by callers as (accountId,
+ * providerDraftId). Version rows are append-only; fields a patch omits carry
+ * forward from the latest version.
  */
 
 export type DraftVersionAuthor = "agent" | "user";
@@ -25,7 +22,6 @@ export interface DraftSnapshotInput {
   accountId: string;
   providerDraftId: string;
   providerMessageId?: string;
-  /** Provider thread id for reply drafts; omitted for standalone mail. */
   threadId?: string;
   subject: string;
   to: string[];
@@ -49,8 +45,8 @@ async function findByProviderId(accountId: string, providerDraftId: string) {
   return rows[0];
 }
 
-// One transaction for the snapshot row and its version 1, so a failure
-// between the two inserts can never leave a draft without any version row.
+// One transaction for the snapshot row and its version 1, so a failure between
+// the inserts can't leave a draft without any version row.
 const insertSnapshotRows = lazyTransaction((input: DraftSnapshotInput): void => {
   const now = new Date().toISOString();
   const id = randomUUID();
@@ -81,14 +77,13 @@ const insertSnapshotRows = lazyTransaction((input: DraftSnapshotInput): void => 
     .run();
 });
 
-/** Insert the snapshot row and its version 1 (author "agent"). */
 export async function createDraftSnapshot(input: DraftSnapshotInput): Promise<void> {
   insertSnapshotRows(input);
 }
 
 // One transaction per appended version: the latest row is read and the next
-// version number computed inside it, so concurrent appends can never collide
-// on the (draft_id, version) primary key or lose the carry-forward baseline.
+// version computed inside it, so concurrent appends can't collide on the
+// (draft_id, version) key or lose the carry-forward baseline.
 const insertVersionRow = lazyTransaction(
   (
     draftId: string,
@@ -122,11 +117,7 @@ const insertVersionRow = lazyTransaction(
   },
 );
 
-/**
- * Append one version row for an in-app write (UI edit or agent rewrite).
- * Fields the patch omits carry forward from the latest version. Returns false
- * when the draft has no snapshot (not agent-written).
- */
+/** Append a version row for an in-app write. Returns false when the draft has no snapshot. */
 export async function appendDraftVersion(
   accountId: string,
   providerDraftId: string,
@@ -140,9 +131,9 @@ export async function appendDraftVersion(
 }
 
 /**
- * Record the draft's fate. In-app sends pass the provider's sent message id
- * so the learning loop never has to match those; external sends are matched
- * later by the loop itself. Returns false when there is no snapshot.
+ * Record the draft's fate. In-app sends pass the provider's sent message id so
+ * the learning loop needn't match them; external sends it matches later.
+ * Returns false when there is no snapshot.
  */
 export async function markDraftStatus(
   accountId: string,
@@ -163,7 +154,6 @@ export async function markDraftStatus(
   return true;
 }
 
-/** Attach the conversation whose turn created the draft. Returns false on a lookup miss. */
 export async function linkDraftConversation(
   accountId: string,
   providerDraftId: string,
@@ -183,7 +173,6 @@ export interface DraftStatusResult {
   sentMessageId?: string;
 }
 
-/** The draft's recorded fate, or null when it has no snapshot. */
 export async function getDraftStatus(
   accountId: string,
   providerDraftId: string,
@@ -197,9 +186,9 @@ export async function getDraftStatus(
 }
 
 /**
- * providerDraftId -> conversationId for every given draft whose snapshot has
- * a link to a conversation that still exists (a deleted chat degrades to "no
- * link" instead of navigating into a dead id).
+ * providerDraftId -> conversationId for every given draft whose linked
+ * conversation still exists (a deleted chat degrades to "no link" rather than a
+ * dead id).
  */
 export async function getDraftConversationLinks(
   providerDraftIds: string[],
@@ -227,25 +216,15 @@ export async function getDraftConversationLinks(
   );
 }
 
-/**
- * Reads and mark-helpers for the draft-vs-sent learning loop
- * (email/learn/matcher.ts, email/learn/extractor.ts). The matcher sweeps
- * every open snapshot looking for the mail it turned into; the extractor
- * sweeps every sent-but-unlearned snapshot to diff against the sent message
- * as fetched live from the provider.
- */
-
 export interface OpenDraftSnapshot {
   accountId: string;
   providerDraftId: string;
-  /** Provider thread id for reply drafts; null for standalone mail. */
   threadId: string | null;
   subject: string;
   to: string[];
   createdAt: string;
 }
 
-/** Every snapshot still awaiting a match — the matcher's per-sweep candidate pool. */
 export async function listOpenDraftSnapshots(): Promise<OpenDraftSnapshot[]> {
   const rows = await db
     .select({
@@ -274,7 +253,6 @@ export interface SentDraftSnapshot {
   sentMessageId: string;
 }
 
-/** Sent snapshots the nightly extraction sweep hasn't consumed yet. */
 export async function listUnlearnedSentDrafts(): Promise<SentDraftSnapshot[]> {
   const rows = await db
     .select({
@@ -299,7 +277,7 @@ export async function listUnlearnedSentDrafts(): Promise<SentDraftSnapshot[]> {
     }));
 }
 
-/** The latest version's body regardless of author — the matcher tiebreak's baseline. Null on a lookup miss. */
+/** The latest version's body regardless of author (the matcher tiebreak's baseline). Null on a miss. */
 export async function getLatestDraftBody(
   accountId: string,
   providerDraftId: string,
@@ -325,10 +303,9 @@ export interface DraftCardDetails {
 }
 
 /**
- * Identity and latest content of a snapshot in the shape the chat's draft
- * card needs — recipients from the row (they never change after creation),
- * subject and body from the newest version. Null on a lookup miss (not
- * agent-written).
+ * Identity and latest content of a snapshot in the chat draft card's shape:
+ * recipients from the row (fixed at creation), subject and body from the newest
+ * version. Null on a lookup miss.
  */
 export async function getDraftCardDetails(
   accountId: string,
@@ -353,11 +330,10 @@ export async function getDraftCardDetails(
 }
 
 /**
- * The latest AGENT-authored version's body — what the extraction sweep diffs
- * against the sent message, since the lesson is about how the model's own
- * wording differs from what actually went out, not a later user edit. Null
- * when the draft has no snapshot, or (never expected in practice — version 1
- * is always author "agent") no agent-authored version at all.
+ * The latest AGENT-authored version's body: what the extraction sweep diffs
+ * against the sent message (the lesson is about the model's own wording, not a
+ * later user edit). Null on a lookup miss, or (not expected: version 1 is
+ * always author "agent") no agent version at all.
  */
 export async function getLatestAgentDraftBody(
   accountId: string,
@@ -379,7 +355,6 @@ export async function getLatestAgentDraftBody(
   return latest?.body ?? null;
 }
 
-/** Stamp learned_at on a snapshot the extraction sweep has processed. Returns false on a lookup miss. */
 export async function markDraftLearned(
   accountId: string,
   providerDraftId: string,

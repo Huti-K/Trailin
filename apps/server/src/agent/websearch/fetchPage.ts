@@ -3,14 +3,12 @@ import { isIP } from "node:net";
 import { type HtmlToTextOptions, htmlToText } from "html-to-text";
 
 /**
- * Direct URL fetch behind the agent's web_fetch tool: validates the target,
- * refuses private and internal addresses, follows redirects hop-by-hop under
- * the same check, and renders the body as plain text. The address guard
- * exists because sessions read attacker-controllable mail: a mail body must
- * never be able to steer a fetch at localhost (the app's own API) or the
- * LAN. The guard checks the addresses resolved here, not the ones the socket
- * ultimately connects to — its job is that naming a private target doesn't
- * work, not resisting a hostile DNS setup.
+ * Direct URL fetch behind web_fetch: refuses private/internal addresses,
+ * follows redirects hop-by-hop under the same check. The guard exists because
+ * sessions read attacker-controllable mail, so a mail body can't steer a
+ * fetch at localhost (the app's own API) or the LAN. It checks the addresses
+ * resolved here, not the ones the socket ultimately connects to: naming a
+ * private target doesn't work, but it doesn't resist a hostile DNS setup.
  */
 
 const MAX_REDIRECTS = 5;
@@ -20,10 +18,10 @@ const FETCH_TIMEOUT_MS = 30_000;
 const USER_AGENT = "Mozilla/5.0 (compatible; Trailin/1.0)";
 
 /**
- * Page links stay navigable — html-to-text's default "text [url]" rendering
- * is what lets the model fetch a page it discovered on another page. Only
- * images are noise. (Email stripping in email/textUtils.ts makes the
- * opposite call: bodies are for reading, so hrefs go.)
+ * Page links stay navigable: html-to-text's default "text [url]" rendering lets
+ * the model fetch a page it found on another. Only images are noise. (Email
+ * stripping in email/textUtils.ts makes the opposite call: bodies are for
+ * reading, so hrefs go.)
  */
 const PAGE_TEXT_OPTIONS: HtmlToTextOptions = {
   wordwrap: false,
@@ -36,11 +34,7 @@ const PAGE_TEXT_OPTIONS: HtmlToTextOptions = {
   ],
 };
 
-/**
- * True for addresses the tool must never reach: loopback, RFC1918, CGNAT,
- * link-local, unique-local, unspecified, multicast/reserved, and
- * v4-mapped v6 forms of any of those.
- */
+/** True for addresses the tool refuses: loopback, RFC1918, CGNAT, link-local, unique-local, unspecified, multicast/reserved, and v4-mapped v6 forms. */
 export function isPrivateAddress(address: string): boolean {
   const family = isIP(address);
   if (family === 4) {
@@ -70,7 +64,7 @@ export function isPrivateAddress(address: string): boolean {
   return false;
 }
 
-/** Protocol/credential gate shared by the initial URL and every redirect hop. */
+/** Protocol/credential gate, applied to the initial URL and every redirect hop. */
 function checkedUrl(url: URL): URL {
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     throw new Error(`Only http(s) URLs can be fetched, not ${url.protocol.replace(/:$/, "")}.`);
@@ -90,7 +84,7 @@ function parseFetchableUrl(raw: string): URL {
   }
 }
 
-/** Resolves the host and throws if any of its addresses is private/internal. */
+/** Throws if any of the host's resolved addresses is private/internal. */
 async function assertPublicHost(url: URL): Promise<void> {
   const bare = url.hostname.replace(/^\[|\]$/g, "");
   const addresses = isIP(bare)
@@ -103,12 +97,6 @@ async function assertPublicHost(url: URL): Promise<void> {
   }
 }
 
-/**
- * Renders a response body as plain text by content type: HTML/XML through
- * html-to-text, textual types as-is; anything binary is refused with the
- * reason. An absent content type is sniffed by whether the body reads as
- * markup.
- */
 export function extractPageText(body: string, contentType: string): string {
   const type = (contentType.split(";")[0] ?? "").trim().toLowerCase();
   if (type.includes("html") || type.includes("xml") || (type === "" && /^\s*</.test(body))) {
@@ -141,11 +129,9 @@ function decodeBody(bytes: Uint8Array, contentType: string): string {
 }
 
 export interface FetchedPage {
-  /** Final URL, after any redirects. */
   url: string;
-  /** The whole page as plain text (slicing for the model is the tool's job). */
+  /** The whole page as plain text; the tool slices it. */
   text: string;
-  /** True when the download hit MAX_BODY_BYTES, so the page end is missing. */
   bodyCapped: boolean;
 }
 

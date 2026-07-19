@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { ConnectedAccount, EmailDraft } from "@trailin/shared";
-import { moduleLogger } from "../../logger.js";
-import { proxyRequest } from "../../pipedream/connect.js";
-import { contentDisposition } from "../../utils/fileResponse.js";
-import { mapWithConcurrency } from "../../utils/jobs.js";
+import { moduleLogger } from "../../core/logger.js";
+import { contentDisposition } from "../../core/utils/fileResponse.js";
+import { mapWithConcurrency } from "../../core/utils/jobs.js";
+import { proxyRequest } from "../../integrations/pipedream/connect.js";
 import { draftsMutated } from "../draftsCache.js";
 import {
   type CreateDraftInput,
@@ -26,17 +26,9 @@ import {
 } from "./message.js";
 
 /**
- * Gmail drafts via the Connect proxy (plain Gmail REST API). Pipedream's
- * prebuilt create-draft component requires a paid workspace (File Stash);
+ * Gmail drafts via the Connect proxy (plain Gmail REST API): Pipedream's
+ * prebuilt create-draft component needs a paid workspace (File Stash), while
  * the proxy works on every plan and returns clean JSON.
- *
- * Registered as the "gmail" DraftProvider by ../registerProviders.ts;
- * gmailDraftProvider is this module's entire interface.
- *
- * `listDrafts` is a pure live fetch — no caching in here. Caching lives one
- * layer up in ../draftsCache.ts, shared across every provider; every
- * mutation below ends with its `draftsMutated` epilogue (invalidate, then
- * emit "drafts") so the SSE-driven refetch isn't served the old list.
  */
 
 const log = moduleLogger("gmail-drafts");
@@ -55,7 +47,6 @@ interface DraftGetResponse {
   };
 }
 
-/** Concurrency cap for the per-draft metadata fetches behind one list call. */
 const LIST_CONCURRENCY = 5;
 
 async function listGmailDrafts(account: ConnectedAccount): Promise<EmailDraft[]> {
@@ -63,8 +54,6 @@ async function listGmailDrafts(account: ConnectedAccount): Promise<EmailDraft[]>
     params: { maxResults: String(DRAFTS_LIST_LIMIT) },
   })) as DraftsListResponse;
 
-  // Fetch each draft's metadata concurrently (bounded) — independent Gmail
-  // round-trips; the list waits on the slowest few, not the sum of all.
   const fetched = await mapWithConcurrency(
     list.drafts ?? [],
     LIST_CONCURRENCY,
@@ -103,7 +92,6 @@ async function listGmailDrafts(account: ConnectedAccount): Promise<EmailDraft[]>
     .sort((a, b) => b.date.localeCompare(a.date));
 }
 
-/** Full content of one draft, for the in-app viewer. */
 async function getGmailDraftDetail(
   account: ConnectedAccount,
   draftId: string,
@@ -123,19 +111,16 @@ async function deleteGmailDraft(account: ConnectedAccount, draftId: string): Pro
   draftsMutated(account.id);
 }
 
-/** RFC 2047 B-encoding — safe for any subject, including umlauts. */
+/** RFC 2047 B-encoding, so non-ASCII subjects (umlauts) survive. */
 function encodeHeaderWord(value: string): string {
   return `=?UTF-8?B?${Buffer.from(value, "utf8").toString("base64")}?=`;
 }
 
 /**
- * To/Cc/Bcc reach buildRawMessage as raw strings interpolated straight into
- * an RFC822 header line, and ultimately trace back to LLM tool params
- * (mcp.ts's buildDraftTool passes model-supplied recipients through
- * unchanged) — a prompt-injected email could steer the agent into a
- * recipient value containing a CR/LF, smuggling an extra header (e.g. a
- * hidden `Bcc:`) into the message. Reject rather than silently strip, so the
- * caller sees a clear failure instead of a silently rewritten recipient list.
+ * To/Cc/Bcc are interpolated into RFC822 header lines and trace back to LLM
+ * tool params: a prompt-injected email could steer a recipient value
+ * containing CR/LF to smuggle an extra header (e.g. a hidden `Bcc:`). Reject
+ * rather than strip, so the caller sees a clear failure.
  */
 function assertSafeHeaderValue(header: string, value: string): void {
   // biome-ignore lint/suspicious/noControlCharactersInRegex: matches CR/LF and other control characters to reject header-injection attempts (see comment above)
@@ -144,11 +129,6 @@ function assertSafeHeaderValue(header: string, value: string): void {
   }
 }
 
-/**
- * Body headers + base64 content of the text part every raw message carries —
- * emitted at the top level of a single-part message, or as the first part of
- * a multipart/mixed one.
- */
 function textPartLines(body: string): string[] {
   return [
     "Content-Type: text/plain; charset=UTF-8",
@@ -158,14 +138,9 @@ function textPartLines(body: string): string[] {
   ];
 }
 
-/**
- * One attachment as MIME part lines (without boundary delimiters). The
- * Content-Disposition carries an ASCII `filename` fallback plus the exact
- * name via RFC 5987/6266 `filename*`, so names like "Exposé.pdf" survive.
- */
+/** One attachment as MIME part lines: an ASCII `filename` fallback plus RFC 5987/6266 `filename*`, so names like "Exposé.pdf" survive. */
 function attachmentPartLines(attachment: DraftAttachment): string[] {
-  // Filenames trace back to library file names on disk; a CR/LF in one would
-  // smuggle extra MIME headers, same as a recipient (see assertSafeHeaderValue).
+  // A CR/LF in a filename would smuggle extra MIME headers, same as a recipient (see assertSafeHeaderValue).
   assertSafeHeaderValue("attachment filename", attachment.filename);
   const ascii = attachment.filename.replace(/[\\"]/g, "").replace(/[^\x20-\x7e]/g, "_");
   return [
@@ -178,19 +153,12 @@ function attachmentPartLines(attachment: DraftAttachment): string[] {
 }
 
 /**
- * Build the RFC822 `raw` MIME message Gmail's drafts.create/drafts.update
- * both take. Recipients are already-joined header strings (not arrays) so a
- * caller preserving an existing draft's To/Cc/Bcc can pass the header value
- * straight through without a lossy split/rejoin round-trip.
- *
- * `extraHeaders` are emitted verbatim, always at the top level (so
- * In-Reply-To/References keep threading intact whether or not the message is
- * multipart). drafts.update replaces the whole message, so an updating caller
- * must pass back every header it wants to survive — see PRESERVED_HEADERS.
- *
- * With attachments the message becomes multipart/mixed: the text body part
- * first, then one part per attachment. Without them the output is a plain
- * single-part message.
+ * Build the RFC822 `raw` MIME message Gmail's drafts.create/drafts.update both
+ * take. Recipients are already-joined header strings, so a caller can preserve
+ * an existing draft's To/Cc/Bcc without a lossy split/rejoin. `extraHeaders` go
+ * at the top level (so In-Reply-To/References keep threading whether or not the
+ * message is multipart); drafts.update replaces the whole message, so an
+ * updating caller passes back every header it wants to survive (PRESERVED_HEADERS).
  */
 function buildRawMessage(input: {
   to: string;
@@ -221,7 +189,6 @@ function buildRawMessage(input: {
   return Buffer.from(lines.join("\r\n"), "utf8").toString("base64url");
 }
 
-/** The multipart/mixed body: text part first, then one part per attachment. */
 function multipartMixedLines(body: string, attachments: DraftAttachment[]): string[] {
   const boundary = `part-${randomUUID()}`;
   return [
@@ -235,22 +202,17 @@ function multipartMixedLines(body: string, attachments: DraftAttachment[]): stri
 }
 
 /**
- * Headers an update must carry over from the existing draft. `In-Reply-To` and
- * `References` are what non-Gmail clients thread on (Gmail itself relies on
- * threadId); `From` and `Reply-To` carry the user's send-as alias, which would
- * silently fall back to their primary address if dropped.
+ * Headers an update carries over. In-Reply-To/References are what non-Gmail
+ * clients thread on (Gmail itself uses threadId); From/Reply-To carry the
+ * send-as alias, which silently falls back to the primary address if dropped.
  */
 const PRESERVED_HEADERS = ["From", "Reply-To", "In-Reply-To", "References"] as const;
 
 /**
- * In-Reply-To/References for a reply draft, read from the thread's last
- * non-draft message — what non-Gmail clients thread on (Gmail itself relies
- * on the threadId createGmailDraft already sets). Drafts already sitting in
- * the thread (e.g. one started manually in Gmail) are skipped: they're
- * unsent and have no meaningful Message-ID to reply to. Returns undefined on
- * any failure, or if the thread has no usable message — createGmailDraft
- * falls back silently to its current threadId-only behavior rather than
- * blocking the draft on this lookup.
+ * In-Reply-To/References for a reply draft, from the thread's last non-draft
+ * message. Drafts in the thread are skipped: unsent, no meaningful Message-ID
+ * to reply to. Undefined on any failure or an empty thread, so createGmailDraft
+ * falls back to its threadId-only behavior rather than blocking on this lookup.
  */
 async function lastMessageThreadingHeaders(
   account: ConnectedAccount,
@@ -314,11 +276,7 @@ async function createGmailDraft(
   };
 }
 
-/**
- * Narrow one field of a drafts.create response before it is dereferenced —
- * the proxy can answer an error envelope instead of the API shape, and a
- * descriptive failure beats a bare TypeError from inside a cast.
- */
+/** The proxy can answer an error envelope instead of the API shape; a descriptive failure beats a bare TypeError from a cast. */
 function requireResponseString(value: unknown, field: string): string {
   if (typeof value !== "string") {
     throw new Error(`Gmail draft response carries no ${field} — unexpected response shape.`);
@@ -327,10 +285,8 @@ function requireResponseString(value: unknown, field: string): string {
 }
 
 /**
- * The draft message's attachments with their bytes resolved — inline
- * base64url `body.data` parts decoded directly, ref-only parts (which carry
- * just a `body.attachmentId`) downloaded via the attachments endpoint.
- * updateGmailDraft re-embeds these when it rebuilds the raw message, since
+ * The draft's attachments with bytes resolved: inline base64url `body.data`
+ * decoded, ref-only parts downloaded. updateGmailDraft re-embeds these because
  * drafts.update replaces the whole message and would otherwise drop them.
  */
 async function fetchDraftAttachments(
@@ -368,11 +324,6 @@ async function fetchDraftAttachments(
   return resolved;
 }
 
-/**
- * Gmail's drafts.get (format=full), read for exactly the fields
- * updateGmailDraft needs to preserve when the caller doesn't override them —
- * including the draft's attachments, with bytes.
- */
 async function fetchGmailDraftFull(
   account: ConnectedAccount,
   draftId: string,
@@ -413,17 +364,11 @@ async function fetchGmailDraftFull(
 }
 
 /**
- * Save a draft's body/subject exactly as the caller passed them — no
- * humanizer (that is the create-draft tool's job, not this
- * endpoint's). Everything the caller doesn't override (to/cc/bcc/threadId,
- * PRESERVED_HEADERS, attachments) is fetched from the current draft first,
- * since Gmail's drafts.update replaces the whole message rather than
- * patching headers.
- *
- * The rebuilt message is always text/plain. A draft composed in Gmail's own
- * web UI is text/html, so saving an edit to one converts it to the plain text
- * the editor showed — lossy for markup, but never for anything the user could
- * see or type here.
+ * Save body/subject as passed. Everything the caller doesn't override is
+ * fetched from the current draft first, since Gmail's drafts.update replaces
+ * the whole message rather than patching it. The rebuilt message is always
+ * text/plain, so saving an edit to an HTML draft composed in Gmail's web UI
+ * converts it to plain text: lossy for markup, not for anything shown here.
  */
 async function updateGmailDraft(
   account: ConnectedAccount,
@@ -448,11 +393,7 @@ async function updateGmailDraft(
   draftsMutated(account.id);
 }
 
-/**
- * Dispatch an existing draft via Gmail's drafts.send. Gmail returns the sent
- * message's id, which the caller records on the draft snapshot so the
- * learning loop never has to match this send.
- */
+/** Gmail's drafts.send returns the sent message's id, recorded on the snapshot so the learning loop needn't match this send. */
 async function sendGmailDraft(
   account: ConnectedAccount,
   draftId: string,
@@ -464,7 +405,6 @@ async function sendGmailDraft(
   return res.id ? { sentMessageId: res.id } : {};
 }
 
-/** This module's DraftProvider — and its entire interface (registered by ../registerProviders.ts). */
 export const gmailDraftProvider: DraftProvider = {
   listDrafts: listGmailDrafts,
   getDraftDetail: getGmailDraftDetail,

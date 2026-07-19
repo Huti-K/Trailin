@@ -320,7 +320,9 @@ export default function App() {
 
       <div
         className={cn(
-          "fixed inset-y-0 left-0 z-50 transition-transform duration-200 ease-out md:static md:z-auto md:translate-x-0",
+          // md:z-10 keeps the collapsed-nav hover tooltips above <main>, whose
+          // `isolate` stacking context would otherwise paint over them.
+          "fixed inset-y-0 left-0 z-50 transition-transform duration-200 ease-out md:static md:z-10 md:translate-x-0",
           mobileOpen ? "translate-x-0" : "-translate-x-full",
         )}
       >
@@ -404,12 +406,25 @@ export default function App() {
           </div>
         </header>
 
-        <div className="min-h-0 flex-1 overflow-y-auto scroll-stable px-5 pb-10 pt-1 sm:px-8 @container">
+        <div
+          className={cn(
+            "min-h-0 flex-1 overflow-y-auto scroll-stable @container",
+            // The Knowledge browser is a workspace, not a reading column: it
+            // fills the canvas edge to edge instead of scrolling (only a small
+            // bottom inset), so the scroller becomes a flex column the wrapper
+            // can size against. Ternaries, not overrides: tailwind-merge can't
+            // cancel the breakpoint/container-query variants of these classes.
+            currentPath === "knowledge" ? "flex flex-col pb-2 pl-3" : "px-5 pb-10 pt-1 sm:px-8",
+          )}
+        >
           <div
             className={cn(
-              // Steps up with the canvas (not the viewport — the sidebar and chat
-              // panel eat variable width), so large monitors aren't all gutter.
-              "mx-auto max-w-3xl @6xl:max-w-4xl @7xl:max-w-5xl",
+              currentPath === "knowledge"
+                ? "min-h-0 w-full flex-1"
+                : // Steps up with the canvas (not the viewport — the sidebar and
+                  // chat panel eat variable width), so large monitors aren't all
+                  // gutter.
+                  "mx-auto max-w-3xl @6xl:max-w-4xl @7xl:max-w-5xl",
               // DEV showcase — remove with the route. Its inner nav hugs the
               // canvas's left edge, so the gallery spans the full width.
               import.meta.env.DEV && currentPath === "showcase" && "max-w-none",

@@ -1,19 +1,14 @@
 /**
- * Numbered schema steps, applied in order against `PRAGMA user_version` by
- * db/index.ts: a database at version N gets steps N+1..length, each in its
- * own transaction. Append a new step to change the schema — never edit a
- * shipped one, since databases past it will not re-run it.
- *
- * Step 1 uses IF NOT EXISTS throughout so it can adopt a database whose
- * tables already exist but whose user_version is still 0; later steps are
- * plain DDL. User databases live through every update, so a step must bring
- * existing data forward, never destroy it (no DROP or lossy rewrite without
- * copying into the new shape). There is no downgrade path: db/index.ts
- * refuses to open a database newer than this list.
+ * Numbered schema steps applied in order against PRAGMA user_version by
+ * db/index.ts: a database at version N gets steps N+1..length, each in its own
+ * transaction. Append to change the schema; never edit a shipped step, since
+ * databases past it will not re-run it. A step brings existing data
+ * forward, never destroying it (no DROP or lossy rewrite without copying into the
+ * new shape). Step 1 uses IF NOT EXISTS so it can adopt pre-existing tables at
+ * user_version 0. No downgrade path: db/index.ts refuses a newer database.
  */
 export const SCHEMA_STEPS: readonly string[] = [
-  // 1: full base schema — chat, automations, settings, memories, library,
-  // draft links, and the mailbox mirror (mail_* + FTS).
+  // 1: base schema (chat, automations, settings, memories, library, draft links, mailbox mirror).
   `
     CREATE TABLE IF NOT EXISTS conversations (
       id TEXT PRIMARY KEY,
@@ -31,13 +26,10 @@ export const SCHEMA_STEPS: readonly string[] = [
       error TEXT,
       created_at TEXT NOT NULL
     );
-    -- External-content FTS5 index over messages.content: the index itself stores
-    -- no text, only a token->rowid mapping, and reads the row back from
-    -- 'messages' by rowid on demand. Kept in sync by triggers rather than app
-    -- code (contrast mail_fts/library_chunks, which are maintained by hand in
-    -- mailStore.ts/store.ts) because messages are written from more than one
-    -- place (routes/chat.ts and automations/scheduler.ts, both via
-    -- agent/turnRecorder.ts) — a trigger fires no matter which of them writes.
+    -- External-content FTS5 over messages.content: stores only a token->rowid map,
+    -- reading the row back from 'messages' on demand. Maintained by triggers, not
+    -- app code, because messages are written from more than one place, so a trigger
+    -- fires no matter which writer runs.
     CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
       content,
       content = 'messages',
@@ -174,20 +166,18 @@ export const SCHEMA_STEPS: readonly string[] = [
     CREATE INDEX IF NOT EXISTS idx_mail_messages_thread ON mail_messages(thread_id, date);
     CREATE INDEX IF NOT EXISTS idx_mail_messages_account ON mail_messages(account_id, date);
   `,
-  // 2: messages.refs — emails the user pinned to a chat message (composer @-mentions).
+  // 2: messages.refs (emails pinned to a chat message via composer @-mentions).
   `
     ALTER TABLE messages ADD COLUMN refs TEXT;
   `,
-  // 3: mail_threads lookup/ordering indexes — provider_thread_id backs
-  // getThreadDetail's by-provider-id lookup (mailQuery.ts); last_message_at
-  // lets enrichStore's staleness query scan threads in newest-first order
-  // instead of building a temporary sort on every cycle.
+  // 3: mail_threads indexes. provider_thread_id backs getThreadDetail's lookup;
+  // last_message_at lets enrichStore scan newest-first without a temp sort.
   `
     CREATE INDEX IF NOT EXISTS idx_mail_threads_provider_thread_id ON mail_threads(provider_thread_id);
     CREATE INDEX IF NOT EXISTS idx_mail_threads_last_message_at ON mail_threads(last_message_at);
   `,
-  // 4: agent-draft snapshots (agent_drafts + agent_draft_versions, replacing
-  // draft_links — conversation_id lives on the snapshot row now) and
+  // 4: agent-draft snapshots (agent_drafts + agent_draft_versions) replace
+  // draft_links; conversation_id now lives on the snapshot row. Plus
   // List-Unsubscribe capture on mirrored messages.
   `
     DROP TABLE IF EXISTS draft_links;
@@ -223,9 +213,8 @@ export const SCHEMA_STEPS: readonly string[] = [
     ALTER TABLE mail_messages ADD COLUMN list_unsubscribe TEXT;
     ALTER TABLE mail_messages ADD COLUMN list_unsubscribe_post INTEGER;
   `,
-  // 5: conversation focus (account + current thread, last writer wins) and
-  // the two Home-lane judgments: enrichment's awaiting_reply verdict and the
-  // hash-tied dismissal for the "waiting on you" lane.
+  // 5: conversation focus (account + thread, last writer wins) plus the
+  // awaiting_reply verdict and dismissed_hash for the Home "waiting on you" lane.
   `
     ALTER TABLE conversations ADD COLUMN focus_account_id TEXT;
     ALTER TABLE conversations ADD COLUMN focus_thread_id TEXT;
@@ -233,8 +222,7 @@ export const SCHEMA_STEPS: readonly string[] = [
     ALTER TABLE mail_thread_state ADD COLUMN awaiting_reply INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE mail_thread_state ADD COLUMN dismissed_hash TEXT;
   `,
-  // 6: contacts (one row per correspondent address, kind person|bulk) and the
-  // contact scope on memories.
+  // 6: contacts (one row per correspondent address) and memories.contact_id scope.
   `
     CREATE TABLE contacts (
       address TEXT PRIMARY KEY,
@@ -257,33 +245,28 @@ export const SCHEMA_STEPS: readonly string[] = [
     CREATE INDEX idx_contacts_kind ON contacts(kind, last_contact_at);
     ALTER TABLE memories ADD COLUMN contact_id TEXT;
   `,
-  // 7: persistent record of a successful one-click unsubscribe request per
-  // bulk sender — the Newsletters lane renders "requested" from this instead
-  // of re-offering the button after a reload.
+  // 7: unsubscribe_requested_at persists a one-click unsubscribe per bulk
+  // sender so the Newsletters lane renders "requested" across reloads.
   `
     ALTER TABLE contacts ADD COLUMN unsubscribe_requested_at TEXT;
   `,
-  // 8: per-memory usage tracking — how often the agent reports leaning on an
-  // entry (memory_used) and when it last did, feeding the Knowledge page's
-  // use counts and prune-candidate hints.
+  // 8: per-memory usage tracking (used_count, last_used_at).
   `
     ALTER TABLE memories ADD COLUMN used_count INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE memories ADD COLUMN last_used_at TEXT;
   `,
-  // 9: manual contact overrides. display_name_override is a user-set name that
-  // wins over the derived display_name and survives re-derivation (which only
-  // writes the derived column). hidden_at is the People lane's soft "delete":
-  // the row (and any enrichment/memories/category override) is kept, just
-  // filtered out of the lists — a re-derivation never resurrects it.
+  // 9: manual contact overrides. display_name_override wins over the derived
+  // display_name and survives re-derivation (which writes only the derived
+  // column). hidden_at is a soft delete: the row is kept but filtered out, and
+  // re-derivation never resurrects it.
   `
     ALTER TABLE contacts ADD COLUMN display_name_override TEXT;
     ALTER TABLE contacts ADD COLUMN hidden_at TEXT;
   `,
-  // 10: drop the mailbox mirror and the contacts directory — mail is read
-  // live from the providers, so nothing populates or reads these tables.
-  // Indexes go with their tables; dropping the FTS5 table removes its shadow
-  // tables. The two settings rows configured them. memories.contact_id stays:
-  // contact-scoped memories key on the normalized address itself.
+  // 10: drop the mailbox mirror and contacts directory. Mail is now read live
+  // from providers, so nothing populates or reads these tables. Dropping the
+  // FTS5 table removes its shadow tables. memories.contact_id stays: contact-
+  // scoped memories key on the normalized address itself.
   `
     DROP TABLE IF EXISTS mail_fts;
     DROP TABLE IF EXISTS mail_messages;
@@ -293,9 +276,7 @@ export const SCHEMA_STEPS: readonly string[] = [
     DROP TABLE IF EXISTS contacts;
     DELETE FROM settings WHERE key IN ('sync.backfillDays', 'contacts.recentThreadsLimit');
   `,
-  // 11: learning-sweep run log (db/learnRuns.ts) — one row per draft-vs-sent
-  // sweep, pruned to the newest handful, feeding the Knowledge page's
-  // learning-activity history.
+  // 11: learn_runs, one row per draft-vs-sent sweep (pruned to a recent window).
   `
     CREATE TABLE learn_runs (
       id TEXT PRIMARY KEY,
@@ -311,9 +292,8 @@ export const SCHEMA_STEPS: readonly string[] = [
       finished_at TEXT NOT NULL
     );
   `,
-  // 12: per-account voice-learn attempt state (db/voiceRuns.ts) — latest
-  // automatic style-analysis run per account, so a failed or skipped learn
-  // is visible and retryable in Settings.
+  // 12: voice_learn_runs, latest style-analysis attempt per account, so a
+  // failed or skipped learn stays visible and retryable.
   `
     CREATE TABLE voice_learn_runs (
       account_id TEXT PRIMARY KEY,
@@ -323,9 +303,8 @@ export const SCHEMA_STEPS: readonly string[] = [
       finished_at TEXT
     );
   `,
-  // 13: proposed automations from the nightly suggestion sweep
-  // (db/automationSuggestions.ts) — pending rows await accept/dismiss on the
-  // Automations page; decided rows remain as dedup context for later sweeps.
+  // 13: automation_suggestions. Pending rows await accept/dismiss; decided
+  // rows remain as dedup context for later sweeps.
   `
     CREATE TABLE automation_suggestions (
       id TEXT PRIMARY KEY,
@@ -338,11 +317,9 @@ export const SCHEMA_STEPS: readonly string[] = [
       decided_at TEXT
     );
   `,
-  // 14: the leads directory (db/leads.ts) — one row per prospect, keyed by
-  // normalized email address — plus the automations linkage: a lead's
-  // follow-up automations reference it and are deleted with it. The single
-  // defaultsSeeded flag gives way to per-default seed flags
-  // (automations/defaults.ts), so its settings row goes.
+  // 14: leads directory (one row per prospect, keyed by normalized email) plus
+  // automations.lead_id (a lead's follow-ups are deleted with it). The old
+  // defaultsSeeded settings row goes, superseded by per-default seed flags.
   `
     CREATE TABLE leads (
       id TEXT PRIMARY KEY,
@@ -365,31 +342,23 @@ export const SCHEMA_STEPS: readonly string[] = [
     ALTER TABLE automations ADD COLUMN lead_id TEXT;
     DELETE FROM settings WHERE key = 'automations.defaultsSeeded';
   `,
-  // 15: lead qualification — persona (buyer type in a few words) and score
-  // (estimated purchase likelihood: high/medium/low, '' while unassessed),
-  // filled by the intake automation and used to prioritize follow-ups.
+  // 15: lead qualification: persona and score (high/medium/low, '' unassessed).
   `
     ALTER TABLE leads ADD COLUMN persona TEXT NOT NULL DEFAULT '';
     ALTER TABLE leads ADD COLUMN score TEXT NOT NULL DEFAULT '';
   `,
-  // 16: per-automation triggers beyond cron — run_on_new_mail lets the mail
-  // probe start the automation when new inbound mail lands; notify_on_completion
-  // raises a desktop notification when a run finishes. The UPDATE arms both on
-  // the Lead-Eingang default for existing installs (seed flags block re-seeding
-  // and refreshUnmodifiedDefaults only rewrites name/instruction); the flags are
-  // visible in the UI, so a false name hit is user-correctable.
+  // 16: per-automation triggers beyond cron (run_on_new_mail, notify_on_completion).
+  // The UPDATE arms both on the Lead-Eingang default for existing installs; the
+  // flags are visible in the UI, so a false name match is user-correctable.
   `
     ALTER TABLE automations ADD COLUMN run_on_new_mail INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE automations ADD COLUMN notify_on_completion INTEGER NOT NULL DEFAULT 0;
     UPDATE automations SET run_on_new_mail = 1, notify_on_completion = 1 WHERE name = 'Lead-Eingang';
   `,
-  // 17: drop retired card kinds from stored card blobs — no tool emits
-  // email_hits or email_thread and no renderer exists for them, so stored
-  // entries of those kinds are dead weight. Rewrites only rows that contain
-  // one (messages.cards and automation_runs.cards hold the same MessageCard[]
-  // shape), carrying every other entry forward unchanged in the re-encoded
-  // array, and leaves malformed blobs untouched; a row whose every entry is
-  // retired becomes NULL, the "no cards" encoding the app writes.
+  // 17: drop retired card kinds (email_hits, email_thread) from stored card
+  // blobs. Rewrites only rows that contain one, carrying every other entry
+  // forward unchanged and leaving malformed blobs untouched; a row whose every
+  // entry is retired becomes NULL, the app's "no cards" encoding.
   `
     UPDATE messages
        SET cards = (
@@ -414,14 +383,11 @@ export const SCHEMA_STEPS: readonly string[] = [
           WHERE json_extract(value, '$.card.kind') IN ('email_hits', 'email_thread')
        );
   `,
-  // 18: per-account permission grants replace the binary write-access list —
-  // the settings row 'account.writeAccess' (a JSON array of armed account
-  // ids) becomes 'account.permissions' (an array of
-  // {accountId, write, send, delete} records). Formerly-armed accounts keep
-  // everything they could do: write access covered send, change and delete
-  // verbs alike, so each id maps to all three grants true. A malformed
-  // leftover value is dropped rather than carried (its default is read-only,
-  // the safe state).
+  // 18: per-account permission grants replace the binary write-access list. Each
+  // armed id in 'account.writeAccess' becomes an 'account.permissions' record
+  // with write/send/delete all true (write access covered all three). A
+  // malformed leftover is dropped, not carried; its default is read-only, the
+  // safe state.
   `
     UPDATE settings
        SET key = 'account.permissions',
@@ -435,10 +401,9 @@ export const SCHEMA_STEPS: readonly string[] = [
      WHERE key = 'account.writeAccess' AND json_valid(value);
     DELETE FROM settings WHERE key = 'account.writeAccess';
   `,
-  // 19: the email-signature feature is gone — drop the per-draft signature
-  // snapshot column and strip the signature fields from the stored account
-  // voices, which keep only their voice-learn bookkeeping
-  // (learnedAt/styleMemoryIds).
+  // 19: the email-signature feature is gone: drop the per-draft signature column
+  // and strip signature fields from the stored account voices (which keep only
+  // their voice-learn bookkeeping).
   `
     ALTER TABLE agent_drafts DROP COLUMN signature;
     UPDATE settings
@@ -450,10 +415,8 @@ export const SCHEMA_STEPS: readonly string[] = [
            )
      WHERE key = 'account.voices' AND json_valid(value);
   `,
-  // 20: the WhatsApp mirror (whatsapp/store.ts) — the personal account's
-  // chats, contacts and messages, filled from the pairing history sync and
-  // live socket events. Text only (media stays a bracketed marker), capped
-  // per chat, wiped when the account is unlinked.
+  // 20: the WhatsApp mirror (wa_contacts, wa_chats, wa_messages): text only,
+  // capped per chat, wiped on unlink.
   `
     CREATE TABLE wa_contacts (
       jid TEXT PRIMARY KEY,
@@ -480,11 +443,65 @@ export const SCHEMA_STEPS: readonly string[] = [
     );
     CREATE INDEX idx_wa_messages_chat_time ON wa_messages(chat_jid, timestamp);
   `,
-  // 21: compaction summaries persist as role='compaction' message rows; the
-  // cutoff column records the timestamp (ms) where the summary's
-  // kept-verbatim tail begins, so a rebuilt session replays the same
-  // compacted shape the live session ran with (agent/history.ts).
+  // 21: compaction summaries persist as role='compaction' rows; compaction_cutoff
+  // is the ms timestamp where the kept-verbatim tail begins, so a rebuilt
+  // session replays the same compacted shape the live one ran with.
   `
     ALTER TABLE messages ADD COLUMN compaction_cutoff INTEGER;
+  `,
+  // 22: lead intake analysis — score becomes an A/B/C priority tier (A hot,
+  // B warm, C cold) and each lead carries the detected inquiry language, both
+  // surfaced to the caller before first contact.
+  `
+    ALTER TABLE leads RENAME COLUMN score TO priority;
+    UPDATE leads SET priority = CASE priority
+      WHEN 'high' THEN 'A' WHEN 'medium' THEN 'B' WHEN 'low' THEN 'C' ELSE '' END;
+    ALTER TABLE leads ADD COLUMN language TEXT NOT NULL DEFAULT '';
+  `,
+  // 23: todos — a persistent human-attention queue the agent maintains, each
+  // with a checklist in todo_steps. dedupe_key lets a repeating run upsert one
+  // todo instead of piling up duplicates; the partial index skips ad-hoc ('').
+  `
+    CREATE TABLE todos (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      body TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'open',
+      conversation_id TEXT,
+      dedupe_key TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE todo_steps (
+      id TEXT PRIMARY KEY,
+      todo_id TEXT NOT NULL,
+      ordinal INTEGER NOT NULL,
+      label TEXT NOT NULL,
+      done INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_todo_steps_todo ON todo_steps(todo_id, ordinal);
+    CREATE INDEX idx_todos_dedupe ON todos(dedupe_key) WHERE dedupe_key <> '';
+  `,
+  // 24: todos gain an optional due date/time — the anchor for the home agenda
+  // (overdue at top, then by day, automations interleaved). Null = undated.
+  `
+    ALTER TABLE todos ADD COLUMN due_at TEXT;
+  `,
+  // 25: outbound_drafts — pending outbound messages for comm channels without a
+  // native provider draft (WhatsApp). Approved via the same draft→send card as
+  // email; a human click or an armed autosend dispatches them.
+  `
+    CREATE TABLE outbound_drafts (
+      id TEXT PRIMARY KEY,
+      channel TEXT NOT NULL,
+      target TEXT NOT NULL,
+      target_label TEXT NOT NULL DEFAULT '',
+      body TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'open',
+      sent_ref TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
   `,
 ];

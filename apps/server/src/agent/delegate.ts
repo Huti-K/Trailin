@@ -1,40 +1,37 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "@sinclair/typebox";
-import { prompts } from "../prompts.js";
-import { mapWithConcurrency } from "../utils/jobs.js";
-import { errorMessage } from "../utils/util.js";
+import { mapWithConcurrency } from "../core/utils/jobs.js";
+import { errorMessage } from "../core/utils/util.js";
 import { automationReadTools } from "./automationTools.js";
 import { buildKnowledgeContext, buildKnowledgeReadTools } from "./knowledgeTools.js";
 import { runOneShot } from "./oneShot.js";
+import { prompts } from "./prompts.js";
 import { textResult, tool } from "./toolkit.js";
 import { webFetchTool } from "./webFetchTool.js";
 import { webSearchTool } from "./webSearchTool.js";
 
 /**
  * The fan-out tool: the main agent hands off several independent read-only
- * lookups to short-lived worker agents that run in parallel, then folds
- * their reports back into one result. Workers get a stripped-down toolset —
- * the session's live per-account mail READ tools (shared by reference, so
- * they multiplex over the same MCP sessions) plus the library, past
- * automation runs and web search/fetch — and no view of the main
- * conversation.
- * Never any draft or write tool.
+ * lookups to short-lived parallel workers, then folds their reports into one
+ * result. Workers get the session's live mail READ tools (shared by reference,
+ * so they multiplex over the same MCP sessions) plus library, past automation
+ * runs and web search/fetch, and no view of the main conversation. Never any
+ * draft or write tool.
  */
 
 /** Keeps parallel MCP and model calls modest. */
 const MAX_TASKS = 8;
 const CONCURRENCY = 4;
 
-/** Task label for the result header, capped so a long task doesn't blow up the summary. */
 function truncateLabel(task: string, max = 80): string {
   return task.length > max ? `${task.slice(0, max - 1)}…` : task;
 }
 
 /**
- * Builds the session's delegate tool around that session's live mail read
- * tools. Per-session rather than a module singleton because the read tools
- * are per-account MCP wrappers owned by the session's toolset — sharing them
- * by reference is what lets workers ride the already-open MCP sessions.
+ * Builds the session's delegate tool around its live mail read tools.
+ * Per-session rather than a module singleton because the read tools are
+ * per-account MCP wrappers owned by the session's toolset; sharing them by
+ * reference lets workers ride the already-open MCP sessions.
  */
 export function buildDelegateTool(readTools: AgentTool[]): AgentTool {
   return tool({
@@ -84,7 +81,6 @@ lookup, call the email or web tools directly instead.`,
           report = `Worker failed: ${errorMessage(error)}`;
         }
         finished += 1;
-        // Streamed progress for the UI's tool badge; ignored elsewhere.
         onUpdate?.(textResult(`${finished}/${tasks.length} tasks done`));
         return report;
       });

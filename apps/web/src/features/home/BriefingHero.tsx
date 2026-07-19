@@ -24,10 +24,9 @@ export function findBriefingCard(run: RunFeedItem): BriefingCardData | undefined
   return match ? (match.card as BriefingCardData) : undefined;
 }
 
-/** Count of urgent items in a briefing run — exported so GlanceStrip's urgent
- *  figure never drifts from this card's own badge. Reads the structured
- *  card's own `items`; a run without a card has no urgent count. */
-export function countUrgentItems(run: RunFeedItem): number {
+/** Count of urgent items in a briefing run. Reads the structured card's own
+ *  `items`; a run without a card has no urgent count. */
+function countUrgentItems(run: RunFeedItem): number {
   const briefing = findBriefingCard(run);
   return briefing ? briefing.items.filter((item) => item.priority === "urgent").length : 0;
 }

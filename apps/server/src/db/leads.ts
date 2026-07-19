@@ -1,15 +1,8 @@
 import { randomUUID } from "node:crypto";
-import type { Lead, LeadScore, LeadSource, LeadStatus } from "@trailin/shared";
+import type { Lead, LeadPriority, LeadSource, LeadStatus } from "@trailin/shared";
 import { desc, eq } from "drizzle-orm";
-import { emitServerEvent } from "../events.js";
+import { emitServerEvent } from "../core/events.js";
 import { db, schema } from "./index.js";
-
-/**
- * Row-level store for the leads directory. Callers go through
- * leads/manage.ts, which layers email-keyed dedup and the automation cascade
- * on top; this module owns the rows themselves and emits the "leads" server
- * event on every mutation so the web app refetches.
- */
 
 /** A lead's identity is its normalized address: trimmed, lowercased. */
 export function normalizeLeadEmail(email: string): string {
@@ -26,16 +19,15 @@ export interface LeadInput {
   status?: LeadStatus;
   interest?: string;
   persona?: string;
-  score?: LeadScore;
+  priority?: LeadPriority;
+  language?: string;
   notes?: string;
   lastInboundAt?: string | null;
   lastOutboundAt?: string | null;
 }
 
-/** Every field but the identity (email) and origin (source) is editable. */
 export type LeadPatch = Omit<LeadInput, "email" | "source">;
 
-/** All leads, most recently touched first, optionally narrowed to one status. */
 export async function listLeads(filter: { status?: LeadStatus } = {}): Promise<Lead[]> {
   const base = db.select().from(schema.leads);
   const query = filter.status ? base.where(eq(schema.leads.status, filter.status)) : base;
@@ -69,7 +61,8 @@ export async function createLead(input: LeadInput): Promise<Lead> {
     status: input.status ?? "new",
     interest: input.interest?.trim() ?? "",
     persona: input.persona?.trim() ?? "",
-    score: input.score ?? "",
+    priority: input.priority ?? "",
+    language: input.language?.trim() ?? "",
     notes: input.notes?.trim() ?? "",
     lastInboundAt: input.lastInboundAt ?? null,
     lastOutboundAt: input.lastOutboundAt ?? null,
@@ -81,7 +74,6 @@ export async function createLead(input: LeadInput): Promise<Lead> {
   return lead;
 }
 
-/** Apply the defined fields of `patch`. Returns the updated row, or null when the id is unknown. */
 export async function updateLead(id: string, patch: LeadPatch): Promise<Lead | null> {
   const existing = await getLead(id);
   if (!existing) return null;
@@ -94,7 +86,8 @@ export async function updateLead(id: string, patch: LeadPatch): Promise<Lead | n
   if (patch.status !== undefined) updates.status = patch.status;
   if (patch.interest !== undefined) updates.interest = patch.interest.trim();
   if (patch.persona !== undefined) updates.persona = patch.persona.trim();
-  if (patch.score !== undefined) updates.score = patch.score;
+  if (patch.priority !== undefined) updates.priority = patch.priority;
+  if (patch.language !== undefined) updates.language = patch.language.trim();
   if (patch.notes !== undefined) updates.notes = patch.notes.trim();
   if (patch.lastInboundAt !== undefined) updates.lastInboundAt = patch.lastInboundAt;
   if (patch.lastOutboundAt !== undefined) updates.lastOutboundAt = patch.lastOutboundAt;
@@ -105,7 +98,6 @@ export async function updateLead(id: string, patch: LeadPatch): Promise<Lead | n
   return { ...existing, ...updates };
 }
 
-/** Returns false when no lead has this id. */
 export async function deleteLead(id: string): Promise<boolean> {
   const existing = await getLead(id);
   if (!existing) return false;

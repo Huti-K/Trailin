@@ -2,17 +2,15 @@ import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import Database from "better-sqlite3";
 import { type BetterSQLite3Database, drizzle } from "drizzle-orm/better-sqlite3";
-import { env } from "../env.js";
+import { env } from "../core/env.js";
 import * as schema from "./schema.js";
 import { SCHEMA_STEPS } from "./schemaSteps.js";
 
 /**
- * Lazy singleton: importing this module never touches the filesystem — the
- * database file is created, opened, and DDL-initialized on first use. That
- * keeps `buildApp()` importable by tests, which point DATABASE_PATH at a
- * scratch file before any query runs. Statement modules that
- * want module-scope prepared statements or transactions use `lazyStatement` /
- * `lazyTransaction` below for the same reason.
+ * Lazy singleton: importing never touches the filesystem; the database is
+ * created, opened, and DDL-initialized on first use, so tests can point
+ * DATABASE_PATH at a scratch file before any query runs. Module-scope prepared
+ * statements/transactions use lazyStatement / lazyTransaction for the same reason.
  */
 
 type DrizzleDb = BetterSQLite3Database<typeof schema>;
@@ -25,10 +23,9 @@ interface DbHandle {
 let handle: DbHandle | null = null;
 
 /**
- * Bring the file up to the current schema: run every step past the file's
- * `user_version`, each in its own transaction so a failed step leaves the
- * version pointing at the last completed one. A file from a newer build is
- * refused outright — there are no downgrades (dev policy, see schemaSteps.ts).
+ * Run every step past the file's user_version, each in its own transaction so
+ * a failed step leaves the version at the last completed one. A file from a
+ * newer build is refused outright: no downgrades (see schemaSteps.ts).
  */
 function applySchema(sqlite: Database.Database): void {
   const version = sqlite.pragma("user_version", { simple: true }) as number;
@@ -56,8 +53,8 @@ function openHandle(): DbHandle {
   const sqlite = new Database(dbPath);
   sqlite.pragma("journal_mode = WAL");
   // Wait up to 5s for a competing writer instead of throwing SQLITE_BUSY: under
-  // WAL two server processes (a `pnpm start` alongside `pnpm dev`) can hold the
-  // DB at once, and a locked moment shouldn't fail a request.
+  // WAL a second server process (pnpm start alongside pnpm dev) can hold the DB,
+  // and a locked moment shouldn't fail a request.
   sqlite.pragma("busy_timeout = 5000");
 
   applySchema(sqlite);
@@ -66,12 +63,7 @@ function openHandle(): DbHandle {
   return handle;
 }
 
-/**
- * Forwards property access to the lazily opened target so call sites keep
- * plain `db.select()` / `sqlite.prepare()` usage. Only top-level access goes
- * through the proxy; whatever a method returns (query builders, statements)
- * is the real object.
- */
+/** Forwards property access to the lazily opened target, so call sites use plain db.select() / sqlite.prepare(). */
 function lazyView<T extends object>(resolveTarget: () => T): T {
   return new Proxy({} as T, {
     get(_stub, prop) {
@@ -89,15 +81,15 @@ function lazyView<T extends object>(resolveTarget: () => T): T {
 
 export const db: DrizzleDb = lazyView(() => openHandle().db);
 
-// Raw handle for the FTS5 tables and `.backup()` — drizzle can't address virtual tables.
+// Raw handle for the FTS5 tables and .backup(); drizzle can't address virtual tables.
 export const sqlite: Database.Database = lazyView(() => openHandle().sqlite);
 
 export { schema };
 
 /**
- * Memoized prepare, safe to declare at module scope: the statement is
- * prepared on first call, against whichever handle is open at that moment,
- * and re-prepared if the database was closed and reopened since.
+ * Memoized prepare, safe at module scope: prepared on first call against
+ * whichever handle is open, and re-prepared if the database was closed and
+ * reopened since.
  */
 export function lazyStatement(sql: string): () => Database.Statement {
   let prepared: { stmt: Database.Statement; owner: DbHandle } | null = null;
@@ -109,10 +101,9 @@ export function lazyStatement(sql: string): () => Database.Statement {
 }
 
 /**
- * Memoized `sqlite.transaction(fn)`, safe to declare at module scope: the
- * transaction wrapper is built on first call, against whichever handle is
- * open at that moment, and rebuilt if the database was closed and reopened
- * since — the same owner check lazyStatement uses.
+ * Memoized sqlite.transaction(fn), safe at module scope: built on first call
+ * against whichever handle is open, and rebuilt after a close/reopen (the same
+ * owner check lazyStatement uses).
  */
 export function lazyTransaction<Args extends unknown[], Result>(
   fn: (...args: Args) => Result,
@@ -129,15 +120,15 @@ export function lazyTransaction<Args extends unknown[], Result>(
 let generation = 0;
 
 /**
- * Increments every time the handle is closed. Module-scope caches over table
- * contents (e.g. db/settings.ts) store the generation they loaded under and
- * reload when it moved, mirroring lazyStatement's owner check.
+ * Increments every time the handle is closed. Module-scope caches (e.g.
+ * db/settings.ts) store the generation they loaded under and reload when it
+ * moves, mirroring lazyStatement's owner check.
  */
 export function dbGeneration(): number {
   return generation;
 }
 
-/** Close the handle (app shutdown, test teardown). The next access reopens. */
+/** Close the handle (app shutdown, test teardown); the next access reopens. */
 export function closeDb(): void {
   handle?.sqlite.close();
   handle = null;
