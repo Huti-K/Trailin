@@ -411,11 +411,11 @@ export default function App() {
           className={cn(
             "min-h-0 flex-1 overflow-y-auto scroll-stable @container",
             // The Knowledge browser is a workspace, not a reading column: it
-            // fills the canvas edge to edge instead of scrolling (only a small
-            // bottom inset), so the scroller becomes a flex column the wrapper
-            // can size against. Ternaries, not overrides: tailwind-merge can't
-            // cancel the breakpoint/container-query variants of these classes.
-            currentPath === "knowledge" ? "flex flex-col pb-3 pl-3" : "px-5 pb-10 pt-1 sm:px-8",
+            // fills the canvas edge to edge instead of scrolling (only small
+            // side/bottom insets), so the scroller becomes a flex column the
+            // wrapper can size against. Ternaries, not overrides: tailwind-merge
+            // can't cancel the breakpoint/container-query variants of these.
+            currentPath === "knowledge" ? "flex flex-col px-3 pb-3" : "px-5 pb-10 pt-1 sm:px-8",
           )}
         >
           <div

@@ -561,6 +561,7 @@
   },
   "library": {
     "upload": "Upload files",
+    "openFolder": "Open folder",
     "uploading": "Uploading…",
     "uploaded_one": "{{count}} file added",
     "uploaded_other": "{{count}} files added",
@@ -615,6 +616,7 @@
     "usage": "{{used}} used",
     "actions": {
       "delete": "Delete",
+      "download": "Download",
       "select": "Select"
     },
     "editor": {

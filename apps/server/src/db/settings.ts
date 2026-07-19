@@ -6,6 +6,7 @@ import type {
 } from "@trailin/shared";
 import { isLanguage, type Language } from "@trailin/shared";
 import { eq } from "drizzle-orm";
+import { emitServerEvent } from "../core/events.js";
 import { db, dbGeneration, schema } from "./index.js";
 
 /**
@@ -178,6 +179,8 @@ export async function getWhatsAppSendAccess(): Promise<boolean> {
 
 export async function setWhatsAppSendAccess(enabled: boolean): Promise<void> {
   await setSetting(WHATSAPP_SEND_ACCESS_KEY, enabled ? "true" : "false");
+  // sendAccess is served as part of WhatsAppStatus.
+  emitServerEvent("whatsapp");
 }
 
 const FILES_READ_KEY = "files.read";

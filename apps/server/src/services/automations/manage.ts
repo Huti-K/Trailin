@@ -76,7 +76,10 @@ export async function createAutomation(input: AutomationInput): Promise<Automati
   await db.insert(schema.automations).values(automation);
   if (automation.pinned) pinExclusively(automation.id);
   await refreshSchedule(automation.id);
+  // Run views (feed, pinned, missed) embed automation fields, so an
+  // automation mutation is also a runs-data mutation.
   emitServerEvent("automations");
+  emitServerEvent("runs");
   return automation;
 }
 
@@ -124,6 +127,7 @@ export async function updateAutomation(id: string, patch: AutomationPatch): Prom
   if (updates.pinned === true) pinExclusively(id);
   await refreshSchedule(id);
   emitServerEvent("automations");
+  emitServerEvent("runs");
 
   return requireRow(
     db.select().from(schema.automations).where(eq(schema.automations.id, id)),
@@ -158,5 +162,6 @@ export async function deleteAutomation(id: string): Promise<boolean> {
   await db.delete(schema.automations).where(eq(schema.automations.id, id));
   await db.delete(schema.automationRuns).where(eq(schema.automationRuns.automationId, id));
   emitServerEvent("automations");
+  emitServerEvent("runs");
   return true;
 }

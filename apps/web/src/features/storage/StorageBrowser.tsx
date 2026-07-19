@@ -69,6 +69,7 @@ export function StorageBrowser({
   focusId,
   onOpenFile,
   onDelete,
+  onDownload,
   onDeleteMany,
   onFolderChange,
   actions,
@@ -84,6 +85,8 @@ export function StorageBrowser({
   focusId?: string | null;
   onOpenFile?: (node: StorageNode) => void;
   onDelete?: (node: StorageNode) => void;
+  /** Wired only where nodes carry `downloadable` (library documents). */
+  onDownload?: (node: StorageNode) => void;
   /** Enables multi-select; receives every selected node for one bulk delete. */
   onDeleteMany?: (nodes: StorageNode[]) => void;
   /** Reports folder navigation so the caller can target uploads and new files. */
@@ -254,6 +257,7 @@ export function StorageBrowser({
   const nodeActions: NodeActions = {
     openFolder,
     openFile: onOpenFile,
+    download: onDownload,
     delete: onDelete,
     toggleSelect: onDeleteMany ? toggleSelect : undefined,
     toggleSelectAll: onDeleteMany ? toggleSelectAll : undefined,

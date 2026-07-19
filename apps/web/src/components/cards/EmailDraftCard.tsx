@@ -1,3 +1,4 @@
+import { useQuery } from "@tanstack/react-query";
 import type { AgentCard } from "@trailin/shared";
 import { formatFileSize } from "@trailin/shared";
 import { BookmarkCheck, Paperclip, PenLine } from "lucide-react";
@@ -38,26 +39,20 @@ export function EmailDraftCard({ card, color }: { card: EmailDraftData; color?: 
   const canAct = Boolean(accountId);
   const keepKey = keepStorageKey(draft.draftId);
 
-  const [status, setStatus] = React.useState<DraftCardStatus>("open");
+  // The action's own outcome; wins over the fetched status so the card flips
+  // immediately. The "drafts" topic keeps the query side fresh when the draft
+  // is actioned elsewhere (e.g. approved from Home).
+  const [localStatus, setLocalStatus] = React.useState<DraftCardStatus | null>(null);
   const [kept, setKept] = React.useState(() => canAct && localStorage.getItem(keepKey) === "1");
-
-  // Re-runs whenever `kept` flips back to false (re-expanding), so reopening
-  // a kept card re-checks its fate instead of trusting a stale assumption.
-  React.useEffect(() => {
-    if (!accountId || kept) return;
-    let cancelled = false;
-    void api
-      .draftStatus(accountId, draft.draftId)
-      .then((result) => {
-        if (!cancelled && result.status !== "open") setStatus(result.status);
-      })
-      .catch(() => {
-        // 404 (no snapshot) or any other failure: treat as unknown, keep live actions.
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [accountId, draft.draftId, kept]);
+  const statusQuery = useQuery({
+    queryKey: ["drafts", "status", accountId, draft.draftId],
+    queryFn: () => api.draftStatus(accountId as string, draft.draftId),
+    enabled: canAct && !kept,
+    // 404 (no snapshot — the draft wasn't agent-written) or any other
+    // failure: treat as unknown, keep live actions.
+    retry: false,
+  });
+  const status: DraftCardStatus = localStatus ?? statusQuery.data?.status ?? "open";
 
   const keep = () => {
     localStorage.setItem(keepKey, "1");
@@ -74,9 +69,9 @@ export function EmailDraftCard({ card, color }: { card: EmailDraftData; color?: 
       if (!accountId) return;
       try {
         await api.sendDraft(accountId, draft.draftId);
-        setStatus("sent");
+        setLocalStatus("sent");
       } catch (err) {
-        if (isNotFound(err)) setStatus("gone");
+        if (isNotFound(err)) setLocalStatus("gone");
         else toast.error(err);
       }
     },
@@ -84,9 +79,9 @@ export function EmailDraftCard({ card, color }: { card: EmailDraftData; color?: 
       if (!accountId) return;
       try {
         await api.deleteDraft(accountId, draft.draftId);
-        setStatus("discarded");
+        setLocalStatus("discarded");
       } catch (err) {
-        if (isNotFound(err)) setStatus("gone");
+        if (isNotFound(err)) setLocalStatus("gone");
         else toast.error(err);
       }
     },

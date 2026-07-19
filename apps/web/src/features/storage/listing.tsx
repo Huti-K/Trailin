@@ -1,6 +1,7 @@
 import { formatFileSize } from "@trailin/shared";
 import {
   Check,
+  Download,
   FileSpreadsheet,
   FileText,
   Folder,
@@ -42,6 +43,8 @@ export interface StorageNode {
   tag?: string | null;
   /** False for nodes the caller refuses to delete (e.g. the root folders). */
   deletable?: boolean;
+  /** True for files the caller can serve as a raw download (library documents). */
+  downloadable?: boolean;
 }
 
 const IMAGE_EXT = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "heic"]);
@@ -57,6 +60,7 @@ function nodeIcon(node: StorageNode): LucideIcon {
 export interface NodeActions {
   openFolder: (id: string) => void;
   openFile?: (node: StorageNode) => void;
+  download?: (node: StorageNode) => void;
   delete?: (node: StorageNode) => void;
   /** Present only when the caller wired bulk deletion (onDeleteMany). */
   toggleSelect?: (id: string) => void;
@@ -68,17 +72,31 @@ export interface NodeActions {
 
 function RowActions({ node, actions }: { node: StorageNode; actions: NodeActions }) {
   const { t } = useTranslation();
-  if (!actions.delete || node.deletable === false) return null;
+  const canDownload = actions.download !== undefined && node.downloadable === true;
+  const canDelete = actions.delete !== undefined && node.deletable !== false;
+  if (!canDownload && !canDelete) return null;
   return (
     <HoverActions className="justify-end">
-      <Button
-        variant="ghost-danger"
-        size="icon-xs"
-        aria-label={t("storage.actions.delete")}
-        onClick={() => actions.delete?.(node)}
-      >
-        <Trash2 />
-      </Button>
+      {canDownload && (
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          aria-label={t("storage.actions.download")}
+          onClick={() => actions.download?.(node)}
+        >
+          <Download />
+        </Button>
+      )}
+      {canDelete && (
+        <Button
+          variant="ghost-danger"
+          size="icon-xs"
+          aria-label={t("storage.actions.delete")}
+          onClick={() => actions.delete?.(node)}
+        >
+          <Trash2 />
+        </Button>
+      )}
     </HoverActions>
   );
 }

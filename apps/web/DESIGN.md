@@ -166,6 +166,23 @@ about floating panels still follows the rules above:
 - Motion is quiet: content rises `6px` and fades in over ~360ms; lists stagger. Animate
   only `transform`/`opacity`. Respect `prefers-reduced-motion`.
 
+## State & liveness
+
+The UI is a function of live state, never of a page load. If seeing the new truth
+requires a refresh, a remount, or closing and reopening a panel, the wiring is wrong —
+fix the state, don't add a reload.
+
+- **Everything renders from reactive state.** Server data lives in TanStack Query
+  caches invalidated by their SSE topics; view state lives in React state or the URL.
+  When either changes, the view follows on its own.
+- **Mutations reflect immediately.** The handler that creates/edits/deletes also
+  updates or invalidates the query cache (or local state) so the row appears, changes,
+  or leaves right away — never leave a stale list waiting on the next fetch or poll.
+- **Transitions are rendered, not skipped.** In-flight work shows on the control that
+  caused it (a busy button takes `loading`), refetches keep the previous data on
+  screen (the accent sweep, never a blank flash), and enter/leave motion rides the
+  state change — content mounted or keyed anew snaps in and loses its animation.
+
 ## Component conventions
 
 - **Inputs / textareas / selects:** filled `surface-2`, no border, focus lightens the fill

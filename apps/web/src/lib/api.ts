@@ -427,6 +427,13 @@ export const api = {
   openLibraryDocument: (id: string): void => {
     openExternal(`/api/library/documents/${encodeURIComponent(id)}/open`);
   },
+  /** Download a library document even when its type would render inline. */
+  downloadLibraryDocument: (id: string): void => {
+    openExternal(`/api/library/documents/${encodeURIComponent(id)}/open?download=1`);
+  },
+  /** Open an agent-home folder ("", "memory", "knowledge/<dir>", …) in the OS file manager. */
+  revealLibraryFolder: (path: string) =>
+    http<{ ok: boolean }>("POST", "/api/library/reveal", { path }),
   /** One thread's conversation (drafts excluded), read live — the drafts' collapsible history. */
   threadDetail: (accountId: string, threadId: string) =>
     get<{ subject: string; messages: EmailThreadMessage[] }>(

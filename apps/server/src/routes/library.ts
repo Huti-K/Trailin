@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -5,9 +6,11 @@ import type { FastifyPluginAsyncTypebox } from "@fastify/type-provider-typebox";
 import { Type } from "@sinclair/typebox";
 import type { LibraryDocumentContent, LibrarySearchHit, LibraryStatus } from "@trailin/shared";
 import { badRequest, notFound } from "../core/errors.js";
+import { moduleLogger } from "../core/logger.js";
 import { contentDisposition, inlineForMime, mimeForExt } from "../core/utils/fileResponse.js";
 import { errorMessage } from "../core/utils/util.js";
 import { trimSnippet } from "../services/search/snippets.js";
+import { getAgentHomeDir, resolveWithin } from "../storage/home/agentHome.js";
 import {
   createFolder,
   deleteDocument,
@@ -25,7 +28,22 @@ import {
   searchChunks,
 } from "../storage/library/store.js";
 
+const log = moduleLogger("library");
+
 const UPLOAD_LIMIT = 64 * 1024 * 1024;
+
+/** Show a folder in the OS file manager; fire-and-forget (single-user, same machine). */
+function openInFileManager(absPath: string): void {
+  const [cmd, args]: [string, string[]] =
+    process.platform === "darwin"
+      ? ["open", [absPath]]
+      : process.platform === "win32"
+        ? ["explorer", [absPath]]
+        : ["xdg-open", [absPath]];
+  const child = spawn(cmd, args, { stdio: "ignore", detached: true });
+  child.on("error", (err) => log.warn({ err, absPath }, "opening folder in file manager failed"));
+  child.unref();
+}
 
 // Over-fetch chunks so collapsing to one hit per document still yields ~SEARCH_DOC_LIMIT documents.
 const SEARCH_DOC_LIMIT = 20;
@@ -67,6 +85,7 @@ const libraryFilesQuery = Type.Object({
   dir: Type.Optional(Type.String()),
 });
 const documentIdParams = Type.Object({ id: Type.String() });
+const openQuery = Type.Object({ download: Type.Optional(Type.String()) });
 const documentContentBody = Type.Object({ content: Type.String() });
 const folderBody = Type.Object({ path: Type.String() });
 const folderQuery = Type.Object({ path: Type.String() });
@@ -154,7 +173,7 @@ export const libraryRoutes: FastifyPluginAsyncTypebox = async (app) => {
 
   app.get(
     "/api/library/documents/:id/open",
-    { schema: { params: documentIdParams } },
+    { schema: { params: documentIdParams, querystring: openQuery } },
     async (req, reply) => {
       const doc = await getDocument(req.params.id);
       if (!doc) throw notFound("document not found");
@@ -169,8 +188,10 @@ export const libraryRoutes: FastifyPluginAsyncTypebox = async (app) => {
       const mime = mimeForExt(doc.ext);
       // html/htm are mapped to text/plain so they render as inert source, not
       // executed; PDFs/text/images open inline, everything else downloads.
+      // ?download forces the attachment path (the UI's download action).
+      const inline = !req.query.download && inlineForMime(mime);
       const disposition = contentDisposition(
-        inlineForMime(mime) ? "inline" : "attachment",
+        inline ? "inline" : "attachment",
         `${doc.title}.${doc.ext}`,
       );
 
@@ -180,6 +201,23 @@ export const libraryRoutes: FastifyPluginAsyncTypebox = async (app) => {
         .send(createReadStream(absPath));
     },
   );
+
+  // Opens an agent-home folder in the OS file manager ("", "memory", "skills",
+  // "knowledge", "knowledge/<dir>"); local-first, so the server and the user
+  // share a machine.
+  app.post("/api/library/reveal", { schema: { body: folderBody } }, async (req) => {
+    const absPath = resolveWithin(getAgentHomeDir(), req.body.path.trim() || ".");
+    if (!absPath) throw badRequest("path escapes the Trailin folder");
+    let stats: Awaited<ReturnType<typeof stat>>;
+    try {
+      stats = await stat(absPath);
+    } catch {
+      throw notFound("folder not found");
+    }
+    if (!stats.isDirectory()) throw badRequest("path is not a folder");
+    openInFileManager(absPath);
+    return { ok: true };
+  });
 
   app.delete(
     "/api/library/documents/:id",

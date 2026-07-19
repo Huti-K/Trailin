@@ -419,6 +419,20 @@ export function Accounts({ onChanged }: { onChanged?: () => void }) {
     }, 300);
   };
 
+  // Account data changed server-side (connect, removal, recolor, permission
+  // edit — possibly from another surface): re-pull everything. Colors are
+  // skipped while a local color edit is still persisting; the debounced flush
+  // above stays authoritative for what it is about to save.
+  useServerEvents(["accounts"], () => {
+    void loadPermissions();
+    const colorState = colorPersistRef.current;
+    const colorEditInFlight =
+      colorState.timer !== null || colorState.saving || colorState.pending !== null;
+    void Promise.all([load(), colorEditInFlight ? null : loadColors()]).then(([accts, saved]) => {
+      if (accts && saved) void ensureColors(accts, saved);
+    });
+  });
+
   const colorFor = (accountId: string): AccountColor | undefined =>
     colors.find((c) => c.accountId === accountId);
 

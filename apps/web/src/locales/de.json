@@ -561,6 +561,7 @@
   },
   "library": {
     "upload": "Dateien hochladen",
+    "openFolder": "Ordner öffnen",
     "uploading": "Wird hochgeladen…",
     "uploaded_one": "{{count}} Datei hinzugefügt",
     "uploaded_other": "{{count}} Dateien hinzugefügt",
@@ -615,6 +616,7 @@
     "usage": "{{used}} belegt",
     "actions": {
       "delete": "Löschen",
+      "download": "Herunterladen",
       "select": "Auswählen"
     },
     "editor": {

@@ -6,7 +6,7 @@ import type {
   LibraryStatus,
   MemoryEntry,
 } from "@trailin/shared";
-import { Plus, Upload } from "lucide-react";
+import { FolderOpen, Plus, Upload } from "lucide-react";
 import * as React from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
@@ -130,6 +130,7 @@ function toNodes(
       sizeBytes: doc.size,
       updatedAt: doc.modifiedAt,
       error: doc.status === "error" ? (doc.error ?? "") : null,
+      downloadable: true,
     });
   }
   return nodes;
@@ -290,6 +291,16 @@ export function LibrarySection({ focusId }: { focusId: string | null }) {
   // status.folder is <home>/knowledge; the rail note shows the home itself.
   const homePath = status.folder.replace(/[/\\]knowledge$/, "");
 
+  // The current browser location as a home-relative path for the OS file manager.
+  const revealPath =
+    currentFolderId === MEMORY_DIR
+      ? "memory"
+      : currentFolderId === SKILLS_DIR
+        ? "skills"
+        : currentFolderId?.startsWith(KNOWLEDGE_DIR)
+          ? `knowledge${currentDir ? `/${currentDir}` : ""}`
+          : "";
+
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: drag-and-drop upload target, not an interactive control
     <section
@@ -347,10 +358,21 @@ export function LibrarySection({ focusId }: { focusId: string | null }) {
         focusId={focusId}
         onOpenFile={openFile}
         onDelete={(node) => setNodesToDelete([node])}
+        onDownload={(node) => api.downloadLibraryDocument(node.id)}
         onDeleteMany={(nodes) => nodes.length > 0 && setNodesToDelete(nodes)}
         onFolderChange={setCurrentFolderId}
         actions={
           <>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() =>
+                void api.revealLibraryFolder(revealPath).catch((err: unknown) => toast.error(err))
+              }
+            >
+              <FolderOpen />
+              {t("library.openFolder")}
+            </Button>
             <Button variant="secondary" size="sm" onClick={() => setEditing({ kind: "create" })}>
               <Plus />
               {t("storage.editor.new")}
