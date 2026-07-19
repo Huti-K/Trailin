@@ -3,10 +3,10 @@ import { formatFileSize } from "@trailin/shared";
 import { BookmarkCheck, Paperclip, PenLine } from "lucide-react";
 import * as React from "react";
 import { useTranslation } from "react-i18next";
+import { DraftActionDialog, useDraftActions } from "@/components/draftActions";
 import { ThreadHistory } from "@/components/ThreadHistory";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { OpenExternalButton } from "@/components/ui/open-external-button";
 import { api, isNotFound } from "@/lib/api";
 import { toast } from "@/lib/toast";
@@ -20,9 +20,6 @@ type EmailDraftData = Extract<AgentCard, { kind: "email_draft" }>;
  *  `gone` is a 404 hit while sending/discarding: the draft vanished upstream
  *  outside this card's own action. */
 type DraftCardStatus = "open" | "sent" | "discarded" | "gone";
-
-/** One action pending confirmation in the shared armed-confirm dialog below. */
-type PendingAction = "send" | "discard" | null;
 
 /** localStorage flag for a card manually collapsed via Keep — cleared by
  *  clicking the collapsed line back open. */
@@ -43,8 +40,6 @@ export function EmailDraftCard({ card, color }: { card: EmailDraftData; color?: 
 
   const [status, setStatus] = React.useState<DraftCardStatus>("open");
   const [kept, setKept] = React.useState(() => canAct && localStorage.getItem(keepKey) === "1");
-  const [busy, setBusy] = React.useState(false);
-  const [pendingAction, setPendingAction] = React.useState<PendingAction>(null);
 
   // Re-runs whenever `kept` flips back to false (re-expanding), so reopening
   // a kept card re-checks its fate instead of trusting a stale assumption.
@@ -74,35 +69,28 @@ export function EmailDraftCard({ card, color }: { card: EmailDraftData; color?: 
     setKept(false);
   };
 
-  const send = async () => {
-    if (!accountId) return;
-    setBusy(true);
-    try {
-      await api.sendDraft(accountId, draft.draftId);
-      setStatus("sent");
-    } catch (err) {
-      if (isNotFound(err)) setStatus("gone");
-      else toast.error(err);
-    } finally {
-      setBusy(false);
-      setPendingAction(null);
-    }
-  };
-
-  const discard = async () => {
-    if (!accountId) return;
-    setBusy(true);
-    try {
-      await api.deleteDraft(accountId, draft.draftId);
-      setStatus("discarded");
-    } catch (err) {
-      if (isNotFound(err)) setStatus("gone");
-      else toast.error(err);
-    } finally {
-      setBusy(false);
-      setPendingAction(null);
-    }
-  };
+  const actions = useDraftActions({
+    send: async () => {
+      if (!accountId) return;
+      try {
+        await api.sendDraft(accountId, draft.draftId);
+        setStatus("sent");
+      } catch (err) {
+        if (isNotFound(err)) setStatus("gone");
+        else toast.error(err);
+      }
+    },
+    discard: async () => {
+      if (!accountId) return;
+      try {
+        await api.deleteDraft(accountId, draft.draftId);
+        setStatus("discarded");
+      } catch (err) {
+        if (isNotFound(err)) setStatus("gone");
+        else toast.error(err);
+      }
+    },
+  });
 
   const recipients: Array<[string, string[] | undefined]> = [
     [t("chat.cards.draft.to"), draft.to],
@@ -189,43 +177,39 @@ export function EmailDraftCard({ card, color }: { card: EmailDraftData; color?: 
 
           {canAct && (
             <div className="flex justify-end gap-2 pt-1">
-              <Button variant="ghost" size="sm" onClick={keep} disabled={busy}>
+              <Button variant="ghost" size="sm" onClick={keep} disabled={actions.busy}>
                 {t("chat.cards.draft.keep")}
               </Button>
               <Button
                 variant="ghost-danger"
                 size="sm"
-                onClick={() => setPendingAction("discard")}
-                disabled={busy}
+                onClick={() => actions.arm("discard")}
+                disabled={actions.busy}
               >
                 {t("chat.cards.draft.discard")}
               </Button>
-              <Button size="sm" onClick={() => setPendingAction("send")} disabled={busy}>
+              <Button size="sm" onClick={() => actions.arm("send")} disabled={actions.busy}>
                 {t("chat.cards.draft.send")}
               </Button>
             </div>
           )}
         </div>
       )}
-      <ConfirmDialog
-        open={pendingAction !== null}
-        onOpenChange={(next) => {
-          if (!next) setPendingAction(null);
+      <DraftActionDialog
+        pending={actions.pending}
+        busy={actions.busy}
+        onClose={actions.close}
+        onConfirm={() => void actions.confirm()}
+        labels={{
+          send: {
+            title: t("chat.cards.draft.send"),
+            description: t("chat.cards.draft.sendConfirm"),
+          },
+          discard: {
+            title: t("chat.cards.draft.discard"),
+            description: t("chat.cards.draft.discardConfirm"),
+          },
         }}
-        title={
-          pendingAction === "send" ? t("chat.cards.draft.send") : t("chat.cards.draft.discard")
-        }
-        description={
-          pendingAction === "send"
-            ? t("chat.cards.draft.sendConfirm")
-            : t("chat.cards.draft.discardConfirm")
-        }
-        confirmLabel={
-          pendingAction === "send" ? t("chat.cards.draft.send") : t("chat.cards.draft.discard")
-        }
-        variant={pendingAction === "send" ? "default" : "destructive"}
-        busy={busy}
-        onConfirm={() => void (pendingAction === "send" ? send() : discard())}
       />
     </CardShell>
   );

@@ -2,10 +2,10 @@ import type { EmailDraft } from "@trailin/shared";
 import { ChevronDown, ChevronRight, Send, Sparkles, Trash2 } from "lucide-react";
 import * as React from "react";
 import { useTranslation } from "react-i18next";
+import { DraftActionDialog, useDraftActions } from "@/components/draftActions";
 import { ThreadHistory } from "@/components/ThreadHistory";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { LoadingRow } from "@/components/ui/feedback";
 import { Input } from "@/components/ui/input";
 import { ListRow } from "@/components/ui/list-row";
@@ -15,9 +15,6 @@ import { api } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { dispatchTrailin } from "@/lib/trailinEvents";
 import { errorMessage } from "@/lib/utils";
-
-/** One action pending confirmation in the shared armed-confirm dialog below. */
-type PendingAction = "discard" | "send" | null;
 
 /** One draft — click to read the full content right here, edit its body in place. */
 export function DraftRow({
@@ -51,8 +48,6 @@ export function DraftRow({
   const [subjectDraft, setSubjectDraft] = React.useState(draft.subject);
   const [savedSubject, setSavedSubject] = React.useState(draft.subject);
   const [saving, setSaving] = React.useState(false);
-  const [busy, setBusy] = React.useState(false);
-  const [pendingAction, setPendingAction] = React.useState<PendingAction>(null);
   // True right after a successful send — the row shows a brief "Sent" state
   // until the drafts SSE topic fires and the parent list refetch removes it.
   const [sent, setSent] = React.useState(false);
@@ -86,20 +81,6 @@ export function DraftRow({
     rowRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [forceOpen]);
 
-  const discard = async () => {
-    setBusy(true);
-    onError(null);
-    try {
-      await api.deleteDraft(accountId, draft.id);
-      onDeleted();
-    } catch (err) {
-      onError(errorMessage(err));
-    } finally {
-      setBusy(false);
-      setPendingAction(null);
-    }
-  };
-
   const dirty = bodyDraft !== savedBody || subjectDraft !== savedSubject;
 
   const cancelEdit = () => {
@@ -130,26 +111,33 @@ export function DraftRow({
     }
   };
 
-  /** Flushes any unsaved edits first, then sends the draft as-is. */
-  const send = async () => {
-    setBusy(true);
-    onError(null);
-    try {
-      if (dirty) {
-        await api.updateDraft(accountId, draft.id, savePatch());
-        setSavedBody(bodyDraft);
-        setSavedSubject(subjectDraft);
+  const actions = useDraftActions({
+    // Flushes any unsaved edits first, then sends the draft as-is.
+    send: async () => {
+      onError(null);
+      try {
+        if (dirty) {
+          await api.updateDraft(accountId, draft.id, savePatch());
+          setSavedBody(bodyDraft);
+          setSavedSubject(subjectDraft);
+        }
+        await api.sendDraft(accountId, draft.id);
+        setSent(true);
+        toast.success(t("drafts.sentToast"));
+      } catch (err) {
+        onError(errorMessage(err));
       }
-      await api.sendDraft(accountId, draft.id);
-      setSent(true);
-      toast.success(t("drafts.sentToast"));
-    } catch (err) {
-      onError(errorMessage(err));
-    } finally {
-      setBusy(false);
-      setPendingAction(null);
-    }
-  };
+    },
+    discard: async () => {
+      onError(null);
+      try {
+        await api.deleteDraft(accountId, draft.id);
+        onDeleted();
+      } catch (err) {
+        onError(errorMessage(err));
+      }
+    },
+  });
 
   // Sending removes the draft upstream — the row itself disappears once the
   // drafts SSE topic fires and the parent list refetches. Until then, show a
@@ -220,9 +208,9 @@ export function DraftRow({
           <Button
             variant="ghost"
             size="icon-sm"
-            onClick={() => setPendingAction("send")}
-            disabled={busy}
-            loading={busy && pendingAction === "send"}
+            onClick={() => actions.arm("send")}
+            disabled={actions.busy}
+            loading={actions.busy && actions.pending === "send"}
             title={t("drafts.send")}
             aria-label={t("drafts.send")}
           >
@@ -231,9 +219,9 @@ export function DraftRow({
           <Button
             variant="ghost-danger"
             size="icon-sm"
-            onClick={() => setPendingAction("discard")}
-            disabled={busy}
-            loading={busy && pendingAction === "discard"}
+            onClick={() => actions.arm("discard")}
+            disabled={actions.busy}
+            loading={actions.busy && actions.pending === "discard"}
             title={t("drafts.discard")}
             aria-label={t("drafts.discard")}
           >
@@ -267,7 +255,7 @@ export function DraftRow({
                     value={subjectDraft}
                     onChange={(e) => setSubjectDraft(e.target.value)}
                     placeholder={t("drafts.noSubject")}
-                    disabled={busy}
+                    disabled={actions.busy}
                     className="h-7 flex-1 px-2 py-0 text-[13px] text-foreground/90"
                   />
                 </div>
@@ -279,7 +267,7 @@ export function DraftRow({
                   onChange={(e) => setBodyDraft(e.target.value)}
                   placeholder={t("drafts.emptyBodyText")}
                   rows={Math.max(6, bodyDraft.split("\n").length)}
-                  disabled={busy}
+                  disabled={actions.busy}
                   className="resize-none text-sm leading-relaxed text-foreground/90"
                 />
                 {dirty && (
@@ -288,11 +276,16 @@ export function DraftRow({
                       variant="ghost"
                       size="sm"
                       onClick={cancelEdit}
-                      disabled={saving || busy}
+                      disabled={saving || actions.busy}
                     >
                       {t("common.cancel")}
                     </Button>
-                    <Button size="sm" onClick={() => void save()} disabled={busy} loading={saving}>
+                    <Button
+                      size="sm"
+                      onClick={() => void save()}
+                      disabled={actions.busy}
+                      loading={saving}
+                    >
                       {saving ? t("common.saving") : t("drafts.save")}
                     </Button>
                   </div>
@@ -304,19 +297,15 @@ export function DraftRow({
           )}
         </div>
       )}
-      <ConfirmDialog
-        open={pendingAction !== null}
-        onOpenChange={(next) => {
-          if (!next) setPendingAction(null);
+      <DraftActionDialog
+        pending={actions.pending}
+        busy={actions.busy}
+        onClose={actions.close}
+        onConfirm={() => void actions.confirm()}
+        labels={{
+          send: { title: t("drafts.send"), description: t("drafts.sendConfirm") },
+          discard: { title: t("drafts.discard"), description: t("drafts.discardConfirm") },
         }}
-        title={pendingAction === "send" ? t("drafts.send") : t("drafts.discard")}
-        description={
-          pendingAction === "send" ? t("drafts.sendConfirm") : t("drafts.discardConfirm")
-        }
-        confirmLabel={pendingAction === "send" ? t("drafts.send") : t("drafts.discard")}
-        variant={pendingAction === "send" ? "default" : "destructive"}
-        busy={busy}
-        onConfirm={() => void (pendingAction === "send" ? send() : discard())}
       />
     </div>
   );
