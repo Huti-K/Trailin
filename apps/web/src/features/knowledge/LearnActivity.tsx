@@ -1,10 +1,10 @@
-import type { LearnRun, LearnStatus } from "@trailin/shared";
+import { useQuery } from "@tanstack/react-query";
+import type { LearnRun } from "@trailin/shared";
 import * as React from "react";
 import { useTranslation } from "react-i18next";
 import { DisclosureToggle } from "@/components/ui/disclosure-toggle";
 import { api } from "@/lib/api";
 import { dayTimeLabel, relativeTime } from "@/lib/dates";
-import { useServerEvents } from "@/lib/serverEvents";
 import { cn } from "@/lib/utils";
 
 /**
@@ -15,22 +15,12 @@ import { cn } from "@/lib/utils";
  */
 export function LearnActivity() {
   const { t, i18n } = useTranslation();
-  const [status, setStatus] = React.useState<LearnStatus | null>(null);
   const [open, setOpen] = React.useState(false);
-
-  const refresh = React.useCallback(() => {
-    // History is a bonus panel — a failed fetch just leaves it collapsed-empty.
-    api
-      .learnStatus()
-      .then(setStatus)
-      .catch(() => {});
-  }, []);
-
-  React.useEffect(() => {
-    refresh();
-  }, [refresh]);
-
-  useServerEvents(["learn"], refresh);
+  // History is a bonus panel — a failed fetch just leaves it collapsed-empty.
+  const { data: status } = useQuery({
+    queryKey: ["learn", "status"],
+    queryFn: () => api.learnStatus().catch(() => null),
+  });
 
   if (!status) return null;
 

@@ -1,3 +1,4 @@
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Skill } from "@trailin/shared";
 import { ChevronDown, ListChecks, Plus, Trash2 } from "lucide-react";
 import * as React from "react";
@@ -11,7 +12,6 @@ import { Input } from "@/components/ui/input";
 import { SectionTitle } from "@/components/ui/section-header";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/api";
-import { useServerEvents } from "@/lib/serverEvents";
 import { toast } from "@/lib/toast";
 import { useAutoGrow } from "@/lib/useAutoGrow";
 import { cn, stagger } from "@/lib/utils";
@@ -116,8 +116,15 @@ function SkillEditor({
 
 export function SkillsStrip() {
   const { t } = useTranslation();
-  const [skills, setSkills] = React.useState<Skill[]>([]);
-  const [loading, setLoading] = React.useState(true);
+  const queryClient = useQueryClient();
+  // Agent-side writes land via "skills" topic invalidation; refetches keep
+  // the previous data, so the list never blanks under the reader.
+  const skillsQuery = useQuery({ queryKey: ["skills"], queryFn: () => api.skills() });
+  const skills = skillsQuery.data ?? [];
+  const loading = skillsQuery.isPending;
+  React.useEffect(() => {
+    if (skillsQuery.error) toast.error(skillsQuery.error);
+  }, [skillsQuery.error]);
   const [open, setOpen] = React.useState(readSkillsOpen);
   /** "new" for the composer, a skill name for a row in edit mode, null for none. */
   const [editing, setEditing] = React.useState<string | null>(null);
@@ -125,23 +132,7 @@ export function SkillsStrip() {
   const [confirmName, setConfirmName] = React.useState<string | null>(null);
   const [deleting, setDeleting] = React.useState(false);
 
-  const load = React.useCallback(async () => setSkills(await api.skills()), []);
-
-  React.useEffect(() => {
-    void (async () => {
-      try {
-        await load();
-      } catch (err) {
-        toast.error(err);
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, [load]);
-
-  // Agent-side writes refetch without the loading gate — toggling it would
-  // blank the list under the reader.
-  useServerEvents(["skills"], () => void load().catch(() => {}));
+  const refresh = () => queryClient.invalidateQueries({ queryKey: ["skills"] });
 
   React.useEffect(() => {
     try {
@@ -156,7 +147,7 @@ export function SkillsStrip() {
     try {
       await api.saveSkill(name, description, instructions);
       setEditing(null);
-      await load();
+      await refresh();
     } catch (err) {
       toast.error(err);
     } finally {
@@ -168,7 +159,7 @@ export function SkillsStrip() {
     setDeleting(true);
     try {
       await api.deleteSkill(name);
-      await load();
+      await refresh();
     } catch (err) {
       toast.error(err);
     } finally {

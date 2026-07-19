@@ -1,3 +1,4 @@
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { LibraryDocument, LibrarySearchHit, LibraryStatus } from "@trailin/shared";
 import { Check, Folder, FolderOpen, SearchX, Upload } from "lucide-react";
 import * as React from "react";
@@ -15,7 +16,6 @@ import { SectionTitle } from "@/components/ui/section-header";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { api } from "@/lib/api";
-import { useServerEvents } from "@/lib/serverEvents";
 import { toast } from "@/lib/toast";
 import { usePagedVisible } from "@/lib/usePagedVisible";
 import { errorMessage, stagger } from "@/lib/utils";
@@ -79,8 +79,12 @@ function TileSkeleton({ tiles }: { tiles: number }) {
 
 export function LibrarySection({ focusId }: { focusId: string | null }) {
   const { t } = useTranslation();
-  const [status, setStatus] = React.useState<LibraryStatus | null>(null);
-  const [loadError, setLoadError] = React.useState<string | null>(null);
+  const queryClient = useQueryClient();
+  const libraryQuery = useQuery({ queryKey: ["library", "status"], queryFn: () => api.library() });
+  const status = libraryQuery.data ?? null;
+  const loadError = libraryQuery.error ? errorMessage(libraryQuery.error) : null;
+  /** Several flows get a fresh LibraryStatus back from their own call — push it into the shared query. */
+  const setStatus = (next: LibraryStatus) => queryClient.setQueryData(["library", "status"], next);
   const [uploading, setUploading] = React.useState(false);
   const [dragging, setDragging] = React.useState(false);
   const [query, setQuery] = React.useState("");
@@ -94,26 +98,7 @@ export function LibrarySection({ focusId }: { focusId: string | null }) {
   // than toggling — otherwise the overlay flickers as the pointer crosses rows.
   const dragDepth = React.useRef(0);
 
-  const refresh = React.useCallback(async () => {
-    try {
-      setStatus(await api.library());
-      setLoadError(null);
-    } catch (err) {
-      setLoadError(errorMessage(err));
-    }
-  }, []);
-
-  React.useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
-  React.useEffect(() => {
-    const onFocus = () => void refresh();
-    window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
-  }, [refresh]);
-
-  useServerEvents(["library"], () => void refresh());
+  const refresh = () => queryClient.invalidateQueries({ queryKey: ["library"] });
 
   // Content search (FTS) runs alongside the client-side title filter below —
   // debounced, and stale responses (query changed since the request went

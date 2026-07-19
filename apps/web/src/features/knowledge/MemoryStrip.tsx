@@ -1,3 +1,4 @@
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { AccountColor, ConnectedAccount, MemoryEntry } from "@trailin/shared";
 import { MEMORY_MAX_COUNT } from "@trailin/shared";
 import { Brain, ChevronDown, Plus } from "lucide-react";
@@ -13,7 +14,6 @@ import { SectionTitle } from "@/components/ui/section-header";
 import { Skeleton } from "@/components/ui/skeleton";
 import { accountColor, accountName } from "@/lib/accounts";
 import { api } from "@/lib/api";
-import { useServerEvents } from "@/lib/serverEvents";
 import { toast } from "@/lib/toast";
 import { usePagedVisible } from "@/lib/usePagedVisible";
 import { cn, stagger } from "@/lib/utils";
@@ -90,8 +90,15 @@ export function MemoryStrip({
   emailAccounts: ConnectedAccount[];
 }) {
   const { t } = useTranslation();
-  const [memories, setMemories] = React.useState<MemoryEntry[]>([]);
-  const [loading, setLoading] = React.useState(true);
+  const queryClient = useQueryClient();
+  // "memories" topic invalidation refetches without blanking the list under
+  // the reader — refetches keep the previous data.
+  const memoriesQuery = useQuery({ queryKey: ["memories"], queryFn: () => api.memories() });
+  const memories = memoriesQuery.data ?? [];
+  const loading = memoriesQuery.isPending;
+  React.useEffect(() => {
+    if (memoriesQuery.error) toast.error(memoriesQuery.error);
+  }, [memoriesQuery.error]);
   const [open, setOpen] = React.useState(readMemoryOpen);
   // Whether the single-line composer has expanded into a full MemoryEditor.
   const [composerOpen, setComposerOpen] = React.useState(false);
@@ -122,26 +129,7 @@ export function MemoryStrip({
   // Contact memories are keyed by the normalized address itself.
   const contactLabel = React.useCallback((address: string) => address, []);
 
-  const load = React.useCallback(async () => setMemories(await api.memories()), []);
-
-  const refresh = React.useCallback(async () => {
-    setLoading(true);
-    try {
-      await load();
-    } catch (err) {
-      toast.error(err);
-    } finally {
-      setLoading(false);
-    }
-  }, [load]);
-
-  React.useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
-  // Server-side changes refetch without the loading gate — toggling it would
-  // blank the list under the reader.
-  useServerEvents(["memories"], () => void load().catch(() => {}));
+  const refresh = () => queryClient.invalidateQueries({ queryKey: ["memories"] });
 
   React.useEffect(() => {
     try {
