@@ -7,11 +7,13 @@ import { errorMessage } from "../core/utils/util.js";
 import {
   appendDraftVersion,
   createDraftSnapshot,
+  findOpenDraftOnThread,
   getDraftCardDetails,
   markDraftStatus,
 } from "../db/draftStore.js";
 import { getAccountPermissions } from "../db/settings.js";
 import { getAttachmentProvider } from "../email/attachmentProviders.js";
+import { listDraftsCached } from "../email/draftsCache.js";
 import { type DraftAttachment, type DraftProvider, getDraftProvider } from "../email/providers.js";
 import {
   type ConnectConfig,
@@ -278,6 +280,30 @@ function buildDraftTool(
     },
     execute: async (params) => {
       const { attachLibraryDocumentIds, send, ...input } = params;
+
+      // One open agent draft per thread. Re-running the same instruction (a
+      // boot catch-up of a missed schedule, a refreshed briefing) reaches this
+      // tool with the same threadId and would otherwise stack a second draft on
+      // a thread the user has not looked at yet. The snapshot alone is not
+      // proof: a draft sent or deleted straight from webmail still reads open
+      // until the matcher resolves it, so a duplicate is only declared when the
+      // provider still lists the draft. A failed lookup blocks, since creating
+      // the duplicate is the outcome worth avoiding. The stale snapshot's own
+      // status is left alone — the matcher still needs it to pair an external
+      // send with its sent message.
+      if (input.threadId) {
+        const existing = await findOpenDraftOnThread(account.id, input.threadId);
+        if (existing) {
+          const live = await listDraftsCached(account).catch(() => null);
+          if (!live || live.some((draft) => draft.id === existing.providerDraftId)) {
+            return textResult(
+              `An unsent draft for this thread already exists in ${account.name} ` +
+                `(draft ${existing.providerDraftId}, subject "${existing.subject}"). Refine that ` +
+                `draft with the update-draft tool instead of creating a second one.`,
+            );
+          }
+        }
+      }
 
       // Attachments resolve first: a bad id or oversized set steers the
       // model (as result text) without a half-configured draft being created.

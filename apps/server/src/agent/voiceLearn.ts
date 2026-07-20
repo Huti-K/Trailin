@@ -48,6 +48,14 @@ const inFlight = new Set<string>();
 class NoSentMailError extends Error {}
 
 /**
+ * The one recorded failure boot reconcile retries. An account connected before
+ * a model was configured fails with this and would otherwise count as attempted
+ * forever; reconcile only runs once a model exists, so the error is stale by
+ * definition. Matched by exact message, so both sites must use this constant.
+ */
+const NO_MODEL_ERROR = "no LLM configured — sign in under Settings → AI";
+
+/**
  * One learn per account at a time: a concurrent second is refused, since two
  * overlapping learns would race each other's memory writes. Every outcome is
  * recorded to db/voiceRuns.ts (a failed learn gets a retry button in Settings,
@@ -414,7 +422,7 @@ export async function runVoiceLearnOnConnect(
   try {
     await recordedLearn(accountId, async () => {
       if (!(await deps.modelConfigured())) {
-        throw new Error("no LLM configured — sign in under Settings → AI");
+        throw new Error(NO_MODEL_ERROR);
       }
       if (!(await resolveEmailAccount(accountId, deps))) {
         throw new Error("not a connected email account");
@@ -440,8 +448,9 @@ export function startVoiceLearnOnConnect(accountId: string): void {
  * Boot catch-up: learn every connected email account with no attempt row and
  * no saved voice. Attempted-but-failed accounts are left alone (their error
  * rows are the user's to retry; auto-retrying every boot could hammer a broken
- * account). Runs sequentially: a burst of parallel model calls would spike
- * provider and LLM rate limits at boot. Never throws.
+ * account), except a NO_MODEL_ERROR row, which this boot has already disproved.
+ * Runs sequentially: a burst of parallel model calls would spike provider and
+ * LLM rate limits at boot. Never throws.
  */
 export async function reconcileVoiceLearns(deps: VoiceLearnDeps = defaultDeps): Promise<void> {
   try {
@@ -455,7 +464,9 @@ export async function reconcileVoiceLearns(deps: VoiceLearnDeps = defaultDeps): 
       listVoiceLearnRuns(),
       getAccountVoices(),
     ]);
-    const attempted = new Set(runs.map((run) => run.accountId));
+    const attempted = new Set(
+      runs.filter((run) => run.error !== NO_MODEL_ERROR).map((run) => run.accountId),
+    );
     const learned = new Set(voices.map((voice) => voice.accountId));
     for (const account of accounts) {
       if (!(EMAIL_APPS as readonly string[]).includes(account.app)) continue;

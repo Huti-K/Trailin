@@ -247,6 +247,34 @@ export async function listOpenDraftSnapshots(): Promise<OpenDraftSnapshot[]> {
   }));
 }
 
+/**
+ * The newest open agent draft on a thread, for the create-draft duplicate
+ * guard. Open here means "not sent or discarded through the app": a draft
+ * deleted directly in webmail still reads open, so the caller confirms against
+ * the provider's live list before treating this as a live duplicate.
+ */
+export async function findOpenDraftOnThread(
+  accountId: string,
+  threadId: string,
+): Promise<{ providerDraftId: string; subject: string } | null> {
+  const [row] = await db
+    .select({
+      providerDraftId: schema.agentDrafts.providerDraftId,
+      subject: schema.agentDrafts.subject,
+    })
+    .from(schema.agentDrafts)
+    .where(
+      and(
+        eq(schema.agentDrafts.accountId, accountId),
+        eq(schema.agentDrafts.threadId, threadId),
+        eq(schema.agentDrafts.status, "open"),
+      ),
+    )
+    .orderBy(desc(schema.agentDrafts.createdAt))
+    .limit(1);
+  return row ?? null;
+}
+
 export interface SentDraftSnapshot {
   accountId: string;
   providerDraftId: string;
