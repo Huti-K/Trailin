@@ -95,7 +95,7 @@ export function NewDot({ className }: { className?: string }) {
       data-tooltip={t("home.newMark")}
       className={cn("flex shrink-0 items-center", className)}
     >
-      <AccountDot tone="accent" className="h-2 w-2" />
+      <AccountDot tone="accent" className="dot-breathe h-2 w-2" />
     </span>
   );
 }

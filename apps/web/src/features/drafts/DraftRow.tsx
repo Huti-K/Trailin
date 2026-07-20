@@ -16,7 +16,7 @@ import { revealChat, sendChatCommand } from "@/features/chat/controller";
 import { NewDot } from "@/features/home/seen";
 import { api } from "@/lib/api";
 import { toast } from "@/lib/toast";
-import { cn, errorMessage } from "@/lib/utils";
+import { cn, errorMessage, rowTransition, withViewTransition } from "@/lib/utils";
 
 /** One draft — click to read the full content right here, edit its body in place. */
 export function DraftRow({
@@ -56,6 +56,9 @@ export function DraftRow({
   // True right after a successful send — the row shows a brief "Sent" state
   // until the drafts SSE topic fires and the parent list refetch removes it.
   const [sent, setSent] = React.useState(false);
+  // Discarded rows leave at once rather than waiting on the refetch, so the
+  // view transition has a frame to animate the gap closed.
+  const [discarded, setDiscarded] = React.useState(false);
   const rowRef = React.useRef<HTMLDivElement>(null);
 
   const loadDetail = React.useCallback(async () => {
@@ -127,7 +130,7 @@ export function DraftRow({
           setSavedSubject(subjectDraft);
         }
         await api.sendDraft(accountId, draft.id);
-        setSent(true);
+        withViewTransition(() => setSent(true));
         toast.success(t("drafts.sentToast"));
       } catch (err) {
         onError(errorMessage(err));
@@ -137,6 +140,7 @@ export function DraftRow({
       onError(null);
       try {
         await api.deleteDraft(accountId, draft.id);
+        withViewTransition(() => setDiscarded(true));
         onDeleted();
       } catch (err) {
         onError(errorMessage(err));
@@ -147,6 +151,8 @@ export function DraftRow({
   // Sending removes the draft upstream — the row itself disappears once the
   // drafts SSE topic fires and the parent list refetches. Until then, show a
   // quiet terminal line instead of live controls.
+  if (discarded) return null;
+
   if (sent) {
     return (
       <ListRow>
@@ -164,7 +170,11 @@ export function DraftRow({
     .join(" · ");
 
   return (
-    <div ref={rowRef} className="surface surface-hover scroll-mt-4 rounded-lg">
+    <div
+      ref={rowRef}
+      className="surface surface-hover scroll-mt-4 rounded-lg"
+      style={rowTransition(draft.id)}
+    >
       <div className="flex w-full items-center gap-2 px-2.5 py-2.5">
         <button
           type="button"
@@ -192,7 +202,7 @@ export function DraftRow({
           <Button
             variant="ghost"
             size="icon-xs"
-            className="hover:bg-accent/10 hover:text-accent"
+            className="icon-refine hover:bg-accent/10 hover:text-accent"
             onClick={(e) => {
               e.stopPropagation();
               revealChat();
@@ -217,6 +227,7 @@ export function DraftRow({
           <Button
             variant="ghost"
             size="icon-xs"
+            className="icon-send"
             onClick={() => actions.arm("send")}
             disabled={actions.busy}
             loading={actions.busy && actions.pending === "send"}
@@ -228,6 +239,7 @@ export function DraftRow({
           <Button
             variant="ghost-danger"
             size="icon-xs"
+            className="icon-discard"
             onClick={() => actions.arm("discard")}
             disabled={actions.busy}
             loading={actions.busy && actions.pending === "discard"}
@@ -285,9 +297,8 @@ export function DraftRow({
                   value={bodyDraft}
                   onChange={(e) => setBodyDraft(e.target.value)}
                   placeholder={t("drafts.emptyBodyText")}
-                  rows={Math.max(6, bodyDraft.split("\n").length)}
                   disabled={actions.busy}
-                  className="resize-none text-sm leading-relaxed text-foreground/90"
+                  className="field-sizing-content min-h-32 resize-none text-sm leading-relaxed text-foreground/90"
                 />
                 {dirty && (
                   <div className="flex justify-end gap-2">

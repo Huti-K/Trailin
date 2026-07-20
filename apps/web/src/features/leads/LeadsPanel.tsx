@@ -460,8 +460,7 @@ function LeadRow({
             defaultValue={lead.notes}
             aria-label={t("leads.notes")}
             placeholder={t("leads.notes")}
-            rows={Math.max(2, lead.notes.split("\n").length)}
-            className="resize-none text-sm"
+            className="field-sizing-content resize-none text-sm"
             onBlur={(e) => saveField("notes", e.target.value)}
           />
         </div>

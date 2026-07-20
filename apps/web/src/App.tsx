@@ -20,7 +20,7 @@ import { UpdateButton } from "@/components/UpdateButton";
 import { Button, type ButtonProps } from "@/components/ui/button";
 import { CursorTooltip } from "@/components/ui/cursor-tooltip";
 import { Dialog } from "@/components/ui/dialog";
-import { LoadingRow } from "@/components/ui/feedback";
+import { LoadingRow, LoadingSweep } from "@/components/ui/feedback";
 import { Kbd } from "@/components/ui/kbd";
 import { SearchField } from "@/components/ui/search-field";
 import { Toaster } from "@/components/ui/toaster";
@@ -345,6 +345,7 @@ export default function App() {
         )}
       >
         <div aria-hidden className="aurora" />
+        <LoadingSweep />
         <header className="flex shrink-0 items-center gap-4 px-5 py-5 sm:px-8">
           <HeaderIconButton
             label={t("app.openMenu")}

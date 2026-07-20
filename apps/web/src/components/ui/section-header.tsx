@@ -62,7 +62,10 @@ export function SectionTitle({
   const { t } = useTranslation();
   const badge = typeof count === "number" && count > 0 && (
     <Badge variant="muted" className="tabular">
-      {count}
+      {/* Keyed on the value so a change remounts the span and replays the tick. */}
+      <span key={count} className="count-tick inline-block">
+        {count}
+      </span>
     </Badge>
   );
 

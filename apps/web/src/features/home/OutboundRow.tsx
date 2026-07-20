@@ -12,7 +12,7 @@ import { revealChat, sendChatCommand } from "@/features/chat/controller";
 import { NewDot } from "@/features/home/seen";
 import { api, isNotFound } from "@/lib/api";
 import { toast } from "@/lib/toast";
-import { cn, errorMessage } from "@/lib/utils";
+import { cn, errorMessage, rowTransition, withViewTransition } from "@/lib/utils";
 
 /**
  * One outbound message awaiting approval (WhatsApp today) in the attention
@@ -46,6 +46,9 @@ export function OutboundRow({
   // True right after a send — a quiet terminal line until the "outbound"
   // server event removes the row from the open list.
   const [sent, setSent] = React.useState(false);
+  // Discarded rows leave at once rather than waiting on the refetch, so the
+  // view transition has a frame to animate the gap closed.
+  const [discarded, setDiscarded] = React.useState(false);
 
   const dirty = bodyDraft !== savedBody;
 
@@ -75,7 +78,7 @@ export function OutboundRow({
           setSavedBody(bodyDraft);
         }
         await api.sendOutbound(draft.id);
-        setSent(true);
+        withViewTransition(() => setSent(true));
         toast.success(t("home.outboundSentToast"));
         onChanged();
       } catch (err) {
@@ -87,6 +90,7 @@ export function OutboundRow({
       onError(null);
       try {
         await api.discardOutbound(draft.id);
+        withViewTransition(() => setDiscarded(true));
         onChanged();
       } catch (err) {
         if (isNotFound(err)) onChanged();
@@ -97,6 +101,8 @@ export function OutboundRow({
 
   const channelLabel = OUTBOUND_CHANNEL_LABELS[draft.channel] ?? draft.channel;
   const title = draft.targetLabel || channelLabel;
+
+  if (discarded) return null;
 
   if (sent) {
     return (
@@ -111,7 +117,7 @@ export function OutboundRow({
   }
 
   return (
-    <div className="surface surface-hover rounded-lg">
+    <div className="surface surface-hover rounded-lg" style={rowTransition(draft.id)}>
       <div className="flex w-full items-center gap-2 px-2.5 py-2.5">
         <button
           type="button"
@@ -136,7 +142,7 @@ export function OutboundRow({
           <Button
             variant="ghost"
             size="icon-xs"
-            className="hover:bg-accent/10 hover:text-accent"
+            className="icon-refine hover:bg-accent/10 hover:text-accent"
             onClick={(e) => {
               e.stopPropagation();
               revealChat();
@@ -161,6 +167,7 @@ export function OutboundRow({
           <Button
             variant="ghost"
             size="icon-xs"
+            className="icon-send"
             onClick={() => actions.arm("send")}
             disabled={actions.busy}
             loading={actions.busy && actions.pending === "send"}
@@ -172,6 +179,7 @@ export function OutboundRow({
           <Button
             variant="ghost-danger"
             size="icon-xs"
+            className="icon-discard"
             onClick={() => actions.arm("discard")}
             disabled={actions.busy}
             loading={actions.busy && actions.pending === "discard"}
@@ -199,9 +207,8 @@ export function OutboundRow({
             <Textarea
               value={bodyDraft}
               onChange={(e) => setBodyDraft(e.target.value)}
-              rows={Math.max(3, bodyDraft.split("\n").length)}
               disabled={actions.busy}
-              className="resize-none text-sm leading-relaxed text-foreground/90"
+              className="field-sizing-content min-h-[4.5rem] resize-none text-sm leading-relaxed text-foreground/90"
             />
             {dirty && (
               <div className="flex justify-end gap-2">

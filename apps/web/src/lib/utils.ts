@@ -1,4 +1,5 @@
 import { type ClassValue, clsx } from "clsx";
+import { flushSync } from "react-dom";
 import { twMerge } from "tailwind-merge";
 
 export function cn(...inputs: ClassValue[]) {
@@ -52,6 +53,32 @@ export function midpoint(a: number | undefined, b: number | undefined): number {
 
 /** List-entrance stagger, capped so a full page of rows doesn't take a second to finish arriving. */
 export const stagger = (i: number) => ({ animationDelay: `${Math.min(i, 8) * 45}ms` });
+
+/**
+ * Marks a row as its own view-transition subject, so it slides to its new
+ * position when the list around it changes instead of being cross-faded as
+ * part of the page. The id must be unique on screen and start with a letter —
+ * a bare uuid is not a valid CSS ident.
+ */
+export const rowTransition = (id: string) => ({ viewTransitionName: `row-${CSS.escape(id)}` });
+
+/**
+ * Applies a list mutation inside a view transition. `mutate` must change the
+ * DOM synchronously — a direct state write or `setQueryData` — because the
+ * transition captures the "after" frame as soon as it returns; an async
+ * refetch would land too late and animate nothing. Falls back to a plain call
+ * where the API is missing or the user asked for reduced motion.
+ */
+export function withViewTransition(mutate: () => void): void {
+  const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (reduced || typeof document.startViewTransition !== "function") {
+    mutate();
+    return;
+  }
+  document.startViewTransition(() => {
+    flushSync(mutate);
+  });
+}
 
 /** The modifier the Cmd/Ctrl shortcuts listen for, spelled the way this keyboard prints it. */
 export const MOD_LABEL =

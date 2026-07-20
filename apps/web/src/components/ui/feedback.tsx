@@ -1,10 +1,42 @@
+import { useIsFetching } from "@tanstack/react-query";
 import { X } from "lucide-react";
-import type * as React from "react";
+import * as React from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { IconButton } from "@/components/ui/icon-button";
 import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
+
+/**
+ * Indeterminate accent sweep along the canvas's top edge while a query is in
+ * flight — the results already on screen stay put underneath instead of
+ * blinking out to a spinner. Held back by a short delay because most queries
+ * here answer from the local server in single-digit milliseconds; only work
+ * that actually makes the user wait (a mail provider round-trip) ever shows
+ * it. Invisible at rest, and never takes layout.
+ */
+export function LoadingSweep() {
+  const fetching = useIsFetching();
+  const [visible, setVisible] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!fetching) {
+      setVisible(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setVisible(true), 200);
+    return () => window.clearTimeout(timer);
+  }, [fetching]);
+
+  return (
+    <div
+      aria-hidden
+      className="pointer-events-none absolute inset-x-0 top-0 z-20 h-px overflow-hidden"
+    >
+      {visible && <div className="palette-scan absolute inset-y-0 left-0 w-1/3 bg-accent" />}
+    </div>
+  );
+}
 
 /** Pale red banner for caught request errors. */
 export function ErrorBanner({ children }: { children: React.ReactNode }) {

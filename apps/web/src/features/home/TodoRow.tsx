@@ -13,7 +13,7 @@ import { dueChip } from "@/features/home/agenda";
 import { DueDatePicker } from "@/features/home/DueDatePicker";
 import { NewDot } from "@/features/home/seen";
 import { api } from "@/lib/api";
-import { cn } from "@/lib/utils";
+import { cn, rowTransition, withViewTransition } from "@/lib/utils";
 
 type TodoMutation = {
   id: string;
@@ -43,7 +43,13 @@ export function useTodoPatch(): PatchFn {
     onMutate: async ({ optimistic, key = ["todos"] }: TodoMutation) => {
       await queryClient.cancelQueries({ queryKey: key });
       const prev = queryClient.getQueryData<Todo[]>(key);
-      if (optimistic) queryClient.setQueryData<Todo[]>(key, (old) => optimistic(old ?? []));
+      // The optimistic write is the frame the user sees, so it carries the
+      // transition: rows below a completed todo slide up to close the gap.
+      if (optimistic) {
+        withViewTransition(() =>
+          queryClient.setQueryData<Todo[]>(key, (old) => optimistic(old ?? [])),
+        );
+      }
       return { prev, key };
     },
     onError: (_e, _v, ctx) => ctx?.prev && queryClient.setQueryData(ctx.key, ctx.prev),
@@ -141,7 +147,7 @@ export function TodoRow({
   return (
     <div
       ref={setNodeRef}
-      style={style}
+      style={{ ...style, ...rowTransition(todo.id) }}
       className={cn("group/todo relative", isDragging && "opacity-50")}
     >
       {/* Drag handle lives in the gutter left of the card, revealed on hover
@@ -283,8 +289,7 @@ export function TodoRow({
             <Textarea
               defaultValue={todo.body}
               placeholder={t("home.todosBodyPlaceholder")}
-              rows={Math.max(2, todo.body.split("\n").length)}
-              className="resize-none text-sm"
+              className="field-sizing-content resize-none text-sm"
               onBlur={(e) => saveBody(e.target.value)}
             />
           </div>
@@ -340,7 +345,7 @@ function Checkbox({
             : "bg-surface-2 text-muted-foreground/35 group-hover:text-muted-foreground",
         )}
       >
-        <Check className="h-3 w-3" strokeWidth={3} />
+        <Check className={cn("h-3 w-3", checked && "check-pop")} strokeWidth={3} />
       </span>
     </label>
   );

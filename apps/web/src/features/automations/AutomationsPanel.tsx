@@ -54,7 +54,7 @@ import {
 import { api } from "@/lib/api";
 import { desktopBridge } from "@/lib/desktop";
 import { toast } from "@/lib/toast";
-import { cn, midpoint } from "@/lib/utils";
+import { cn, midpoint, rowTransition, withViewTransition } from "@/lib/utils";
 
 const WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 0];
 
@@ -227,9 +227,11 @@ export function AutomationsPanel() {
     if (from < 0 || to < 0) return;
     const next = arrayMove(automations, from, to);
     const position = midpoint(next[to - 1]?.position, next[to + 1]?.position);
-    queryClient.setQueryData<Automation[]>(
-      ["automations", "list"],
-      next.map((a) => (a.id === active.id ? { ...a, position } : a)),
+    withViewTransition(() =>
+      queryClient.setQueryData<Automation[]>(
+        ["automations", "list"],
+        next.map((a) => (a.id === active.id ? { ...a, position } : a)),
+      ),
     );
     api.updateAutomation(String(active.id), { position }).catch((err: unknown) => {
       toast.error(err);
@@ -550,7 +552,7 @@ export function AutomationsPanel() {
                   key={automation.id}
                   ref={automation.id === focusAutomation ? focusRef : undefined}
                   className="animate-in-up"
-                  style={{ animationDelay: `${i * 45}ms` }}
+                  style={{ animationDelay: `${i * 45}ms`, ...rowTransition(automation.id) }}
                 >
                   <SortableAutomationRow id={automation.id}>
                     <AutomationCard

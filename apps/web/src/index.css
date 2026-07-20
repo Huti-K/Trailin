@@ -225,11 +225,15 @@
   /* A raised row that answers hover with a barely-there step toward the recessed
      grey — darker in light, brighter in dark — no border. Kept well above the
      canvas tone so the row lifts rather than sinks. Pair with `.surface`. */
+  /* Elevation is tone-only, so the lift is a 1px rise rather than a shadow. */
   .surface-hover {
-    transition: background-color 0.15s ease;
+    transition:
+      background-color 0.15s ease,
+      transform 0.15s ease;
   }
   .surface-hover:hover {
     background: color-mix(in oklch, var(--surface-2) 35%, var(--surface));
+    transform: translateY(-1px);
   }
   /*
     Anchored floating panel: select menus, the color picker — floats over
@@ -396,6 +400,24 @@
   }
 }
 
+/*
+  View transitions carry list mutations. A row that leaves fades out in place
+  while the rows below slide up to close the gap, instead of the list snapping
+  to its new shape. Rows opt in by taking a unique `view-transition-name`
+  (see `rowTransition` in lib/utils.ts), which lifts them out of the root
+  snapshot so each one animates on its own path; everything else cross-fades
+  as a single group. Durations sit just under the 0.36s entrance so a
+  rearrangement reads as quicker than an arrival.
+*/
+::view-transition-group(*) {
+  animation-duration: 0.3s;
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+}
+::view-transition-old(*),
+::view-transition-new(*) {
+  animation-duration: 0.22s;
+}
+
 /* One-shot arrival flash: a surface briefly tinted toward the accent, settling
    back to plain surface — for cards a cross-panel link just navigated to. */
 @keyframes flash-accent {
@@ -464,6 +486,67 @@
   background: currentColor;
   transform-origin: left center;
   animation: strike 0.4s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+/* Row action icons answer the pointer in the verb's own direction: the send
+   glyph lifts along its diagonal, the discard bin tips, the refine sparkle
+   swells. Transform only, so a hover never reflows the row. */
+.icon-send svg,
+.icon-discard svg,
+.icon-refine svg {
+  transition: transform 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.icon-send:hover:not(:disabled) svg {
+  transform: translate(1.5px, -1.5px);
+}
+.icon-discard:hover:not(:disabled) svg {
+  transform: rotate(-8deg);
+}
+.icon-refine:hover:not(:disabled) svg {
+  transform: scale(1.15) rotate(8deg);
+}
+
+/* The unseen-item dot breathes so it draws the eye without blinking at it. */
+@keyframes dot-breathe {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+.dot-breathe {
+  animation: dot-breathe 3s ease-in-out infinite;
+}
+
+/* The tick lands with the fill rather than appearing already drawn. */
+@keyframes check-pop {
+  from {
+    transform: scale(0.4);
+  }
+  to {
+    transform: scale(1);
+  }
+}
+.check-pop {
+  animation: check-pop 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* A count that changed drops into place, so a section's badge reads as live
+   rather than redrawn. Replayed by keying the span on the value. */
+@keyframes count-tick {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.count-tick {
+  animation: count-tick 0.24s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 /*
@@ -670,9 +753,29 @@
   .animate-in-down {
     animation: none;
   }
+  .surface-hover:hover {
+    transform: none;
+  }
+  /* withViewTransition already skips the transition; this covers any started
+     elsewhere, resolving them on the first frame. */
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none;
+  }
   .todo-strike::after {
     animation: none;
     transform: scaleX(1);
+  }
+  .dot-breathe,
+  .check-pop,
+  .count-tick {
+    animation: none;
+  }
+  .icon-send:hover svg,
+  .icon-discard:hover svg,
+  .icon-refine:hover svg {
+    transform: none;
   }
   .skeleton::after {
     animation: none;
