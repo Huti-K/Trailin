@@ -22,20 +22,49 @@ export function initialBackground(): string {
   return chromeBackground(nativeTheme.shouldUseDarkColors);
 }
 
-/** Data-URL spinner page shown in the window while the local server boots (the
- *  first launch on Windows can take a while — Defender scans the unpacked app).
- *  Inline so it needs no packaged asset. */
+/**
+ * Data-URL progress page shown in the window while the local server boots.
+ * Inline so it needs no packaged asset.
+ *
+ * The bar is time-driven, not measured: the server spends its startup inside
+ * the module graph, before any of its own code could report a phase, so there
+ * is nothing real to sample. It eases toward a ceiling it never reaches, so it
+ * always moves and never reads as finished early; the window navigating to the
+ * app is what ends it. The notes carry the actual information, and only appear
+ * once a wait is long enough to need explaining.
+ */
 export function splashUrl(): string {
   const dark = nativeTheme.shouldUseDarkColors;
   const track = dark ? "#27272a" : "#e4e4e7";
-  const head = dark ? "#a1a1aa" : "#52525b";
+  const fill = dark ? "#a1a1aa" : "#52525b";
+  const notes = [
+    [8_000, "Der lokale Server startet."],
+    [
+      25_000,
+      "Beim ersten Start nach einer Installation oder einem Update prüft das Betriebssystem alle Dateien der App. Das dauert einmalig länger.",
+    ],
+    [
+      60_000,
+      "Das dauert ungewöhnlich lange. Trailin protokolliert den Start in logs/trailin.log im Datenordner.",
+    ],
+  ] as const;
   const html =
     `<!doctype html><title>Trailin</title><style>` +
     `html,body{height:100%;margin:0;background:${chromeBackground(dark)}}` +
-    `body{display:flex;align-items:center;justify-content:center}` +
-    `div{width:28px;height:28px;border-radius:50%;border:3px solid ${track};border-top-color:${head};animation:s .8s linear infinite}` +
-    `@keyframes s{to{transform:rotate(1turn)}}` +
-    `</style><div></div>`;
+    `body{display:flex;align-items:center;justify-content:center;color:${fill};` +
+    `font:400 13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}` +
+    `main{width:264px;text-align:center}` +
+    `#t{height:2px;border-radius:1px;background:${track};overflow:hidden}` +
+    `#f{height:100%;width:0;background:${fill}}` +
+    `p{margin:14px 0 0}#n{margin-top:6px;font-size:12px;opacity:.65}` +
+    `</style><main><div id="t"><div id="f"></div></div>` +
+    `<p>Trailin wird gestartet</p><p id="n"></p></main><script>` +
+    `var p=0,s=Date.now(),n=${JSON.stringify(notes)};` +
+    `setInterval(function(){` +
+    `p+=(92-p)*0.06;document.getElementById("f").style.width=p.toFixed(1)+"%";` +
+    `var e=Date.now()-s,m="";for(var i=0;i<n.length;i++){if(e>=n[i][0])m=n[i][1]}` +
+    `var d=document.getElementById("n");if(d.textContent!==m)d.textContent=m;` +
+    `},80)</script>`;
   return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
 }
 
