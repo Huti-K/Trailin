@@ -12,6 +12,24 @@ export type ChangelogEntry = {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.3.3",
+    date: "2026-07-20",
+    notes: {
+      en: [
+        "Home marks what arrived since your last visit with a small dot and counts it at the top, so nothing new slips past.",
+        "WhatsApp can now be connected as a Business account instead of scanning a QR code with your phone. Sending works right away, reading chats stays with the phone link.",
+        "Every run shows why it started: a slot caught up after the app was closed, a completed to-do, or new mail.",
+        "The search for a service to connect finds onOffice and WhatsApp on more terms, in German too, and shows them the moment you type.",
+      ],
+      de: [
+        "Die Startseite markiert mit einem kleinen Punkt, was seit dem letzten Besuch dazugekommen ist, und zählt es oben mit, damit nichts Neues untergeht.",
+        "WhatsApp lässt sich jetzt auch als Business-Konto verbinden, statt einen QR-Code mit dem Telefon zu scannen. Das Senden funktioniert sofort, das Lesen von Chats bleibt bei der Telefonverbindung.",
+        "Jeder Lauf zeigt, warum er gestartet ist: ein nachgeholter Termin, ein erledigtes To-do oder neue Mail.",
+        "Die Suche nach einem Dienst findet onOffice und WhatsApp bei mehr Begriffen, auch auf Deutsch, und zeigt sie sofort beim Tippen.",
+      ],
+    },
+  },
+  {
     version: "0.3.2",
     date: "2026-07-19",
     notes: {
