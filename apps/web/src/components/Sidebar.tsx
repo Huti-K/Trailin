@@ -1,10 +1,11 @@
 import { type AppStatus, isSetupComplete } from "@trailin/shared";
 import { ChevronLeft, ChevronRight, type LucideIcon, TriangleAlert, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
+import { UpdatePill, usePendingUpdate } from "@/components/UpdatePill";
 import { Button } from "@/components/ui/button";
 import { visibleNavItems } from "@/lib/nav";
-import { cn } from "@/lib/utils";
+import { cn, withViewTransition } from "@/lib/utils";
 
 interface SidebarProps {
   status: AppStatus | null;
@@ -35,10 +36,20 @@ function SidebarNavLink({
   tone = "default",
 }: SidebarNavLinkProps) {
   const isWarning = tone === "warning";
+  const navigate = useNavigate();
   return (
     <Link
       to={to}
-      onClick={onClick}
+      onClick={(event) => {
+        onClick();
+        // A modified click still means "open elsewhere", so leave those to the
+        // browser and keep the real href. A plain one navigates here instead,
+        // inside a view transition: BrowserRouter is not a data router, so
+        // react-router's own `viewTransition` never fires.
+        if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        event.preventDefault();
+        withViewTransition(() => navigate(to));
+      }}
       aria-current={!isWarning && active ? "page" : undefined}
       className={cn(
         "group relative flex items-center gap-3 rounded-lg py-2 text-sm font-medium transition-colors",
@@ -64,6 +75,7 @@ function SidebarNavLink({
 export function Sidebar({ status, onClose, isCollapsed, onCollapsedChange }: SidebarProps) {
   const { t } = useTranslation();
   const location = useLocation();
+  const pendingUpdate = usePendingUpdate();
   const setupIncomplete = status !== null && !isSetupComplete(status);
 
   return (
@@ -162,6 +174,8 @@ export function Sidebar({ status, onClose, isCollapsed, onCollapsedChange }: Sid
         >
           {isCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
         </Button>
+
+        {pendingUpdate && <UpdatePill version={pendingUpdate} isCollapsed={isCollapsed} />}
       </div>
     </aside>
   );

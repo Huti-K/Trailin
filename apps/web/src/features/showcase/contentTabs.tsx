@@ -20,10 +20,12 @@ import { cn } from "@/lib/utils";
 import {
   DisclosureDemo,
   FocusRingDemo,
+  MicroInteractionsDemo,
   MotionDemo,
   OpenRunInChatDemo,
   PagedListDemo,
   ResizableDemo,
+  RowMotionDemo,
   ThreadHistoryDemo,
   ToggleRowDemo,
 } from "./demos";
@@ -145,11 +147,19 @@ export function SystemsTab() {
 
       <Section
         title="Interaction systems"
-        description="Focus ring, text selection, entrance motion, and the drag-to-resize rail."
+        description="Focus ring, text selection, and the drag-to-resize rail."
       >
         <FocusRingDemo />
-        <MotionDemo />
         <ResizableDemo />
+      </Section>
+
+      <Section
+        title="Motion"
+        description="How a list behaves over time: rows arrive staggered, and rows that leave or move ride a view transition so the list never snaps to its new shape. Send and discard use the same mechanism to opposite ends — a sent row keeps its name and morphs in place, a discarded one leaves. Below that, the micro-interactions a row answers a pointer with. Switching panels in the sidebar rides the same transition."
+      >
+        <MotionDemo />
+        <RowMotionDemo />
+        <MicroInteractionsDemo />
       </Section>
     </>
   );

@@ -16,7 +16,6 @@ import { useTranslation } from "react-i18next";
 import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { SearchPalette } from "@/components/SearchPalette";
 import { Sidebar } from "@/components/Sidebar";
-import { UpdateButton } from "@/components/UpdateButton";
 import { Button, type ButtonProps } from "@/components/ui/button";
 import { CursorTooltip } from "@/components/ui/cursor-tooltip";
 import { Dialog } from "@/components/ui/dialog";
@@ -43,7 +42,7 @@ import { useDesktopChrome } from "@/lib/useDesktopChrome";
 import { useResizableWidth } from "@/lib/useResizableWidth";
 import { useRunNotifications } from "@/lib/useRunNotifications";
 import { useTheme } from "@/lib/useTheme";
-import { cn, MOD_LABEL } from "@/lib/utils";
+import { cn, MOD_LABEL, withViewTransition } from "@/lib/utils";
 
 /** Set once setup finished (or was skipped); an established app never re-gates. */
 const SETUP_DISMISSED_KEY = "trailin-setup-dismissed";
@@ -208,7 +207,7 @@ export default function App() {
   // Navigation requests from non-React code (e.g. a toast's click-through action).
   React.useEffect(() => {
     return registerNavigate((path) => {
-      if (path.startsWith("/")) navigate(path);
+      if (path.startsWith("/")) withViewTransition(() => navigate(path));
     });
   }, [navigate]);
 
@@ -266,7 +265,7 @@ export default function App() {
   }, [toggleTheme]);
 
   const select = (next: string) => {
-    navigate(next === "home" ? "/" : `/${next}`);
+    withViewTransition(() => navigate(next === "home" ? "/" : `/${next}`));
     setMobileOpen(false);
     setChatOpen(false);
   };
@@ -702,7 +701,6 @@ export default function App() {
       <CursorTooltip />
       <SearchPalette onofficeConfigured={Boolean(status?.onofficeConfigured)} />
       <AttachmentViewer />
-      <UpdateButton />
     </div>
   );
 }

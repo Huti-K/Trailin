@@ -153,9 +153,12 @@ export function DraftRow({
   // quiet terminal line instead of live controls.
   if (discarded) return null;
 
+  // Carries the live row's transition name, so sending morphs the row in place
+  // into its terminal line rather than reading as a leave plus an arrival —
+  // the one outward, irreversible action should not look like a discard.
   if (sent) {
     return (
-      <ListRow>
+      <ListRow style={rowTransition(draft.id)}>
         <div className="min-w-0">
           <p className="truncate text-sm font-medium">{subjectDraft || t("drafts.noSubject")}</p>
           {draft.to && <p className="truncate text-xs text-muted-foreground">{draft.to}</p>}

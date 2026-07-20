@@ -4,16 +4,23 @@
  * screenshot. Part of the DEV showcase; safe to delete with the folder.
  */
 
+import { useQuery } from "@tanstack/react-query";
 import {
+  ArrowUp,
   Bell,
   Bomb,
   Brain,
+  Check,
   ChevronDown,
   ChevronUp,
   FileText,
   FolderOpen,
+  Inbox,
   RotateCcw,
+  Send,
+  Sparkles,
   Sunrise,
+  Trash2,
 } from "lucide-react";
 import * as React from "react";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
@@ -33,11 +40,11 @@ import { Kbd } from "@/components/ui/kbd";
 import { LinkButton } from "@/components/ui/link-button";
 import { ListRow } from "@/components/ui/list-row";
 import { SearchField } from "@/components/ui/search-field";
-import { Section, SectionHeader } from "@/components/ui/section-header";
+import { Section, SectionHeader, SectionTitle } from "@/components/ui/section-header";
 import { toast } from "@/lib/toast";
 import { usePagedVisible } from "@/lib/usePagedVisible";
 import { useResizableWidth } from "@/lib/useResizableWidth";
-import { cn, MOD_LABEL, toggleRowProps } from "@/lib/utils";
+import { cn, MOD_LABEL, rowTransition, toggleRowProps, withViewTransition } from "@/lib/utils";
 
 /** The tiny shared shapes: icon chips, account dots, and keyboard hints. */
 export function SmallMarksDemo() {
@@ -153,6 +160,39 @@ export function LoadingRowsDemo() {
     <div className="flex flex-col gap-1">
       <LoadingRow label="Loading your drafts…" />
       <LoadingRow className="py-1 text-xs" label="Compact — sized down via className" />
+    </div>
+  );
+}
+
+/**
+ * Drives the real app-wide sweep rather than mounting a second one: it reads
+ * the global in-flight count, so a deliberately slow query here lights the
+ * strip already sitting on the canvas edge. The 200ms delay is the point, the
+ * app's own local queries return too fast to ever flash it.
+ */
+export function LoadingSweepDemo() {
+  const [run, setRun] = React.useState(0);
+  const { isFetching } = useQuery({
+    queryKey: ["showcase-sweep", run],
+    queryFn: () => new Promise((resolve) => window.setTimeout(() => resolve(run), 1800)),
+    enabled: run > 0,
+    gcTime: 0,
+  });
+  return (
+    <div className="flex flex-col items-start gap-2">
+      <Button
+        variant="secondary"
+        size="sm"
+        onClick={() => setRun((n) => n + 1)}
+        disabled={isFetching}
+      >
+        {isFetching ? "Fetching…" : "Run a slow query"}
+      </Button>
+      <p className="max-w-md text-sm text-muted-foreground">
+        Watch the top edge of the canvas, not this box. One accent strip for the whole app, so a
+        refetch never needs a per-panel spinner. A busy <em>control</em> still takes{" "}
+        <code className="text-xs">loading</code>.
+      </p>
     </div>
   );
 }
@@ -420,6 +460,199 @@ export function MotionDemo() {
             <span className="text-sm">{label}</span>
           </ListRow>
         ))}
+      </div>
+    </div>
+  );
+}
+
+const ROW_MOTION_ROWS = [
+  { id: "anna", label: "Reply to Anna about Tuesday's viewing" },
+  { id: "invoice", label: "Send the invoice for Hufelandstraße" },
+  { id: "photos", label: "Refresh the exposé photos" },
+  { id: "meyer", label: "Call the Meyer family back" },
+];
+
+/**
+ * A list never snaps: every row carries `rowTransition(id)` so the browser can
+ * pair it across the frame, and each mutation runs inside `withViewTransition`,
+ * so the rows around the one that leaves or moves slide to their new places.
+ * Every write here is synchronous, which is what the transition requires.
+ * Under reduced motion the helper degrades to a plain write.
+ *
+ * Send and discard deliberately read differently: a sent row keeps its name and
+ * morphs in place into its terminal line, a discarded one gives the name up and
+ * leaves. Same mechanism, opposite meaning — the row that went out into the
+ * world must not look like the row that was thrown away.
+ */
+export function RowMotionDemo() {
+  const [rows, setRows] = React.useState(ROW_MOTION_ROWS);
+  const [sent, setSent] = React.useState<string[]>([]);
+
+  const discard = (id: string) =>
+    withViewTransition(() => setRows((prev) => prev.filter((row) => row.id !== id)));
+
+  const send = (id: string) => withViewTransition(() => setSent((prev) => [...prev, id]));
+
+  const lift = (id: string) =>
+    withViewTransition(() =>
+      setRows((prev) => {
+        const at = prev.findIndex((row) => row.id === id);
+        const moved = prev.find((row) => row.id === id);
+        if (at < 1 || !moved) return prev;
+        const rest = prev.filter((row) => row.id !== id);
+        return [...rest.slice(0, at - 1), moved, ...rest.slice(at - 1)];
+      }),
+    );
+
+  return (
+    <div className="flex flex-col items-start gap-3">
+      <Button
+        variant="secondary"
+        size="sm"
+        onClick={() => {
+          setRows(ROW_MOTION_ROWS);
+          setSent([]);
+        }}
+        disabled={rows.length === ROW_MOTION_ROWS.length && sent.length === 0}
+      >
+        <RotateCcw /> Refill the list
+      </Button>
+      <div className="flex w-full max-w-md flex-col gap-2">
+        {rows.map((row) =>
+          // Same transition name either way, so the browser pairs the live row
+          // with its terminal line and morphs rather than swapping.
+          sent.includes(row.id) ? (
+            <ListRow key={row.id} style={rowTransition(row.id)}>
+              <span className="truncate text-sm">{row.label}</span>
+              <Badge variant="success">Sent</Badge>
+            </ListRow>
+          ) : (
+            <ListRow key={row.id} style={rowTransition(row.id)}>
+              <span className="truncate text-sm">{row.label}</span>
+              <div className="flex shrink-0 items-center gap-1">
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label={`Move "${row.label}" up`}
+                  onClick={() => lift(row.id)}
+                >
+                  <ArrowUp />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  className="icon-send"
+                  aria-label={`Send "${row.label}"`}
+                  onClick={() => send(row.id)}
+                >
+                  <Send />
+                </Button>
+                <Button
+                  variant="ghost-danger"
+                  size="icon-xs"
+                  className="icon-discard"
+                  aria-label={`Discard "${row.label}"`}
+                  onClick={() => discard(row.id)}
+                >
+                  <Trash2 />
+                </Button>
+              </div>
+            </ListRow>
+          ),
+        )}
+      </div>
+      {rows.length === 0 && (
+        <p className="text-sm text-muted-foreground">
+          Every row left through a transition, and the list closed its own gaps.
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** The row-level micro-interactions, all transform/opacity only. */
+export function MicroInteractionsDemo() {
+  const [checked, setChecked] = React.useState(false);
+  const [count, setCount] = React.useState(3);
+  return (
+    <div className="flex flex-col gap-5">
+      <div className="flex flex-col gap-2">
+        <p className="text-sm text-muted-foreground">
+          Icon verbs — each glyph answers the pointer in its verb's own direction. Hover them.
+        </p>
+        <div className="flex flex-wrap items-center gap-1">
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            className="icon-refine hover:bg-accent/10 hover:text-accent"
+            aria-label="Refine"
+            data-tooltip="icon-refine — the sparkle swells"
+          >
+            <Sparkles />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            className="icon-send"
+            aria-label="Send"
+            data-tooltip="icon-send — the glyph lifts along its diagonal"
+          >
+            <Send />
+          </Button>
+          <Button
+            variant="ghost-danger"
+            size="icon-xs"
+            className="icon-discard"
+            aria-label="Discard"
+            data-tooltip="icon-discard — the bin tips"
+          >
+            <Trash2 />
+          </Button>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+        <div className="flex items-center gap-2">
+          <AccountDot tone="accent" className="dot-breathe h-2 w-2" />
+          <span className="text-sm text-muted-foreground">
+            <code className="text-xs">dot-breathe</code> — the unseen marker
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={() => setChecked((prev) => !prev)}
+          className="flex items-center gap-2 text-sm text-muted-foreground"
+        >
+          <span
+            className={cn(
+              "flex h-[18px] w-[18px] items-center justify-center rounded transition-colors",
+              checked
+                ? "bg-accent text-accent-foreground"
+                : "bg-surface-2 text-muted-foreground/35",
+            )}
+          >
+            <Check className={cn("h-3 w-3", checked && "check-pop")} strokeWidth={3} />
+          </span>
+          <code className="text-xs">check-pop</code> — the tick lands with the fill
+        </button>
+      </div>
+
+      {/* The count badge replays `count-tick` on its own, keyed on the value. */}
+      <div className="flex flex-col items-start gap-2">
+        <SectionTitle icon={Inbox} title="Needs attention" count={count} />
+        <div className="flex items-center gap-2">
+          <Button variant="secondary" size="sm" onClick={() => setCount((n) => n + 1)}>
+            Add one
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => setCount((n) => Math.max(0, n - 1))}
+            disabled={count === 0}
+          >
+            Take one
+          </Button>
+        </div>
       </div>
     </div>
   );

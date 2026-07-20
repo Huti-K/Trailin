@@ -2,7 +2,7 @@ import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { type QueryKey, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { Automation, Todo } from "@trailin/shared";
-import { Check, ChevronRight, Menu, MessageSquareShare, Pencil, X, Zap } from "lucide-react";
+import { Check, ChevronRight, Menu, MessageSquareShare, Pencil, Trash2, Zap } from "lucide-react";
 import * as React from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
@@ -249,7 +249,7 @@ export function TodoRow({
                 aria-label={t("home.todosDismiss")}
                 onClick={dismiss}
               >
-                <X />
+                <Trash2 />
               </Button>
             )}
             {expandable && !editing && (

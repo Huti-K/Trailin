@@ -4,9 +4,10 @@
  * delete with the folder.
  */
 
-import { Bell, Check, Inbox, Mail, Sparkles, Trash2, TriangleAlert } from "lucide-react";
+import { Bell, Check, Inbox, Mail, Sparkles, Trash2, TriangleAlert, X } from "lucide-react";
 import * as React from "react";
 import { RunStatusBadge } from "@/components/RunStatusBadge";
+import { setShowcaseUpdate } from "@/components/UpdatePill";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -28,6 +29,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError } from "@/lib/api";
+import { CHANGELOG } from "@/lib/changelog";
 import { openSearch } from "@/lib/nav";
 import { toast } from "@/lib/toast";
 import { cn, MOD_LABEL } from "@/lib/utils";
@@ -36,6 +38,7 @@ import {
   CursorTooltipDemo,
   ErrorBoundaryDemo,
   LoadingRowsDemo,
+  LoadingSweepDemo,
   NoticeDemo,
   RetryableErrorDemo,
   SectionHeaderDemo,
@@ -73,7 +76,10 @@ export function ButtonsTab() {
           <Button variant="destructive" data-tooltip="Confirm CTA in destructive dialogs">
             <Trash2 /> Destructive
           </Button>
-          <Button variant="ghost-danger" data-tooltip="Delete/discard row actions — pale red hover">
+          <Button
+            variant="ghost-danger"
+            data-tooltip="Delete/discard/dismiss row actions — pale red hover"
+          >
             <Trash2 /> Ghost danger
           </Button>
           <Button disabled data-tooltip="This is currently disabled">
@@ -101,6 +107,38 @@ export function ButtonsTab() {
             <Bell className="h-4 w-4" />
           </IconButton>
           <LinkButton data-tooltip="Goes somewhere else">Link button</LinkButton>
+        </div>
+        {/* One meaning, one glyph. Whether a row is deleted outright or only
+            flipped to a terminal status, the user cannot get it back either
+            way, so both are Trash2 in ghost-danger. X never carries that
+            weight. */}
+        <div className="flex flex-wrap items-center gap-x-8 gap-y-2">
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost-danger"
+              size="icon-xs"
+              aria-label="Dismiss (destructive)"
+              data-tooltip="Trash2 — the row is gone either way"
+            >
+              <Trash2 />
+            </Button>
+            <span className="text-sm text-muted-foreground">
+              Destructive: delete, discard, dismiss
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              aria-label="Close (non-destructive)"
+              data-tooltip="X — nothing is lost"
+            >
+              <X />
+            </Button>
+            <span className="text-sm text-muted-foreground">
+              Non-destructive: close a panel, clear a field
+            </span>
+          </div>
         </div>
       </Section>
 
@@ -276,6 +314,13 @@ export function SurfacesTab() {
           </Button>
         </div>
       </Section>
+
+      <Section
+        title="Update pill"
+        description="The one persistent CTA: it sits in the sidebar footer once an update has downloaded and stays until the restart, collapsing to its icon with the sidebar. Opens the changelog, where the notes sit above the restart button."
+      >
+        <UpdatePillDemo />
+      </Section>
     </>
   );
 }
@@ -352,6 +397,7 @@ export function FeedbackTab() {
         title="Feedback & empty states"
         description="Loading, skeletons, and the nothing-here shape."
       >
+        <LoadingSweepDemo />
         <LoadingRowsDemo />
         <RetryableErrorDemo />
         <div className="flex flex-col gap-2">
@@ -415,6 +461,29 @@ function DialogDemo() {
         <Input defaultValue="Gmail — personal" />
       </Dialog>
     </>
+  );
+}
+
+/** Stands the real pill up in the real sidebar, with the newest release as the
+ *  waiting update — outside the desktop shell nothing ever mounts it. Collapse
+ *  the sidebar while it is up to see its icon-only width. */
+function UpdatePillDemo() {
+  const [shown, setShown] = React.useState(false);
+  const pending = CHANGELOG[0]?.version;
+
+  React.useEffect(() => () => setShowcaseUpdate(null), []);
+
+  if (!pending) return null;
+  return (
+    <Button
+      variant="secondary"
+      onClick={() => {
+        setShown(!shown);
+        setShowcaseUpdate(shown ? null : pending);
+      }}
+    >
+      {shown ? "Hide it" : "Show it in the sidebar"}
+    </Button>
   );
 }
 

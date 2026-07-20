@@ -424,13 +424,17 @@
 }
 
 /*
-  View transitions carry list mutations. A row that leaves fades out in place
-  while the rows below slide up to close the gap, instead of the list snapping
-  to its new shape. Rows opt in by taking a unique `view-transition-name`
-  (see `rowTransition` in lib/utils.ts), which lifts them out of the root
-  snapshot so each one animates on its own path; everything else cross-fades
-  as a single group. Durations sit just under the 0.36s entrance so a
-  rearrangement reads as quicker than an arrival.
+  View transitions carry list mutations and route changes alike. A row that
+  leaves fades out in place while the rows below slide up to close the gap,
+  instead of the list snapping to its new shape. Rows opt in by taking a unique
+  `view-transition-name` (see `rowTransition` in lib/utils.ts), which lifts them
+  out of the root snapshot so each one animates on its own path; everything else
+  cross-fades as a single group. Switching panels (react-router's
+  `viewTransition`) rides the same rules, so the canvas cross-fades while the
+  sidebar and chat rail, unchanged between routes, sit still. Durations sit just
+  under the 0.36s entrance so a rearrangement reads as quicker than an arrival,
+  and one clock for every group keeps a leaving row from outliving the canvas
+  it left.
 */
 ::view-transition-group(*) {
   animation-duration: 0.3s;
@@ -763,10 +767,99 @@
   }
 }
 
+/* The update pill is the app's one standing "come back to me" control, sitting
+   in the sidebar footer until the restart. Three layers make it read as the
+   app's most-wanted button without blinking: a gradient accent face, an accent
+   glow that lifts it off the sidebar, and a sheen that crosses on a long dwell,
+   which is what separates a highlight from a loading bar. The sparkle pops on
+   the same 4.5s clock as the sheen, so the two land as one moment rather than
+   two loops. Both run a fixed three passes, never infinite: the pill stands in
+   the footer until the user chooses to restart, which can be hours, and a sweep
+   that never stops turns into noise nagging for something they may not be able
+   to do right now. After the announcement it rests as a plain gradient face.
+   Only transform/opacity animate, so the pill composites. */
+.update-pill {
+  position: relative;
+  overflow: hidden;
+  background-image: linear-gradient(
+    135deg,
+    var(--accent-soft),
+    color-mix(in oklch, var(--accent) 86%, black)
+  );
+  box-shadow:
+    0 1px 2px color-mix(in oklch, var(--accent) 40%, transparent),
+    0 6px 16px -6px color-mix(in oklch, var(--accent) 55%, transparent);
+  transition:
+    box-shadow 200ms ease-out,
+    filter 200ms ease-out;
+}
+/* The face is a gradient, so the base button's hover background-color never
+   shows; brightness is what reads as hover here. */
+.update-pill:hover {
+  filter: brightness(1.07);
+  box-shadow:
+    0 1px 2px color-mix(in oklch, var(--accent) 45%, transparent),
+    0 10px 24px -8px color-mix(in oklch, var(--accent) 70%, transparent);
+}
+/* The lighter dark-mode accent glows harder; pull it back so the footer keeps
+   its depth ladder. */
+.dark .update-pill {
+  box-shadow:
+    0 1px 2px color-mix(in oklch, var(--accent) 30%, transparent),
+    0 6px 18px -8px color-mix(in oklch, var(--accent) 45%, transparent);
+}
+.update-pill::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 45%;
+  pointer-events: none;
+  background: linear-gradient(
+    100deg,
+    transparent,
+    color-mix(in oklch, white 42%, transparent),
+    transparent
+  );
+  transform: translateX(-260%);
+  animation: update-sheen 4.5s ease-in-out 3;
+  will-change: transform;
+}
+.update-pill svg {
+  animation: update-sparkle 4.5s ease-in-out 3;
+}
+@keyframes update-sheen {
+  0%,
+  62% {
+    transform: translateX(-260%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
+}
+@keyframes update-sparkle {
+  0%,
+  62%,
+  100% {
+    transform: scale(1) rotate(0deg);
+  }
+  70% {
+    transform: scale(1.2) rotate(10deg);
+  }
+  80% {
+    transform: scale(1) rotate(0deg);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   /* Static tint stays; only the drift stops. */
   .aurora::before,
   .aurora::after {
+    animation: none;
+  }
+  /* The sheen parks off-frame; the pill keeps its gradient face and glow. */
+  .update-pill::after,
+  .update-pill svg {
     animation: none;
   }
   html {

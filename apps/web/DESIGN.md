@@ -195,8 +195,12 @@ fix the state, don't add a reload.
   neutral fills (grey on white, rising to white on the canvas); there is **no** outline
   variant (it maps to a tonal fill). Compact icon actions use the
   `icon-sm`/`icon-xs` sizes — never hand-roll `h-8 w-8` or restate the ghost colors in
-  a className. Destructive row actions (delete/discard) use `ghost-danger` — never
-  restate its pale red hover in a className.
+  a className. Destructive row actions (delete/discard/dismiss) use `ghost-danger` with
+  the `Trash2` icon — never restate its pale red hover in a className, and never a
+  second glyph for the same meaning: whether the row is deleted outright or only
+  flipped to a terminal status, the user cannot get it back either way, so it is one
+  action with one icon. `X` is reserved for the non-destructive counterpart — closing a
+  panel, clearing a selection or a field — and stays `ghost`.
 - **Badges:** pill, pastel tonal fill, no border.
 - **Account dots:** the shared `AccountDot` (`ui/account-dot.tsx`) — every round dot
   marker; it owns the unassigned-grey fallback (`UNASSIGNED_ACCOUNT_COLOR`) and the
@@ -231,6 +235,18 @@ fix the state, don't add a reload.
   names the row; `withViewTransition` wraps the **synchronous** write (a state set
   or `setQueryData`) — an `invalidateQueries` refetch lands too late to animate, so
   a row that must leave sets local state and lets the refetch reconcile behind it.
+  A row that reaches a **terminal state keeps its name**: the sent line carries the
+  same `rowTransition(id)` as the live row, so sending morphs the row in place
+  while discarding lets it go. The one outward, irreversible action must not read
+  like a discard.
+- **Route motion:** panel switches run through `withViewTransition` too — the
+  sidebar's `<Link>` and `select()` in `App.tsx` both wrap `navigate`, so the canvas
+  cross-fades while the unchanged chrome sits still. `BrowserRouter` is not a data
+  router, so react-router's own `viewTransition` prop does nothing here; drive it
+  from the helper. Modified clicks (cmd/ctrl/shift/alt) are left to the browser so
+  a link still opens elsewhere. One duration for every group
+  (`::view-transition-group(*)`) is what keeps a leaving row from outliving the
+  canvas it left.
 - **Loading:** the shared `LoadingSweep` (`ui/feedback.tsx`) — one accent strip on
   the canvas edge, delayed so the many millisecond-fast local queries never flash
   it. Never add a per-panel spinner for a refetch; a busy *control* still takes
