@@ -10,9 +10,11 @@
     "updateRestart": "Marlen neu starten & aktualisieren"
   },
   "changelog": {
-    "open": "Änderungen",
+    "open": "Changelog",
     "title": "Neuigkeiten",
-    "subtitle": "Aktuelle Änderungen in Marlen",
+    "subtitle": "Was sich in Marlen zuletzt verbessert hat",
+    "version": "Version {{version}}",
+    "current": "Installiert",
     "ready": "Bereit"
   },
   "views": {
@@ -34,7 +36,7 @@
     },
     "knowledge": {
       "title": "Wissen",
-      "description": "Dokumente und Notizen für Ihren Assistenten."
+      "description": "Notizen kennt Ihr Assistent in jedem Gespräch, Dokumente schlägt er bei Bedarf nach."
     },
     "settings": {
       "title": "Einstellungen",
@@ -377,6 +379,7 @@
     "learnVoiceStarted": "Ihr Schreibstil wird aus {{name}} gelernt. Er erscheint gleich in den Einstellungen.",
     "voiceLearning": "Stil wird gelernt…",
     "voiceLearned": "Stil gelernt",
+    "voiceEdit": "Schreibstil bearbeiten",
     "voiceLearnFailed": "Stil-Lernen fehlgeschlagen",
     "voiceLearnRetry": "Schreibstil erneut lernen"
   },
@@ -413,6 +416,8 @@
     "todosToday": "Heute",
     "todosTomorrow": "Morgen",
     "todosAnytime": "Jederzeit",
+    "todosAdd": "Aufgabe hinzufügen",
+    "todosAddPlaceholder": "Neue Aufgabe…",
     "todosReorder": "Verschieben",
     "todosDismiss": "Verwerfen",
     "todosEdit": "Bearbeiten",
@@ -651,6 +656,7 @@
       "save": "Speichern",
       "scope": "Gilt für",
       "general": "Allgemein",
+      "memoryHint": "Notizen sind das Gedächtnis des Assistenten: Dieser Text steht ihm in jedem Gespräch zur Verfügung (im System-Prompt).",
       "descriptionPlaceholder": "Kurzbeschreibung des Skills",
       "new": "Neu",
       "newTitle": "Neue Datei",

@@ -6,6 +6,7 @@ import { emitServerEvent } from "../../core/events.js";
 import { moduleLogger } from "../../core/logger.js";
 import { writeFileAtomic } from "../../core/utils/atomicFile.js";
 import { slugify } from "../../core/utils/util.js";
+import { repointVoiceStyleMemory } from "../../db/settings.js";
 import { memoryDir } from "../home/agentHome.js";
 import { parseFrontmatter, serializeFrontmatter } from "../home/frontmatter.js";
 
@@ -165,7 +166,9 @@ export async function createMemory(
   }
 
   if (existing.length >= MEMORY_MAX_COUNT) {
-    throw new Error(`memory is full (${MEMORY_MAX_COUNT} entries) — delete some in Settings`);
+    throw new Error(
+      `memory is full (${MEMORY_MAX_COUNT} entries), delete some on the Knowledge page`,
+    );
   }
   const now = new Date().toISOString();
   const entry: MemoryEntry = {
@@ -245,7 +248,10 @@ export async function updateMemory(
     updatedAt: new Date().toISOString(),
   };
   await writeMemoryEntryFile(next);
-  if (next.id !== current.id) await rm(entryPath(current.id)).catch(() => {});
+  if (next.id !== current.id) {
+    await rm(entryPath(current.id)).catch(() => {});
+    await repointVoiceStyleMemory(current.id, next.id);
+  }
   emitServerEvent("memories");
   return next;
 }

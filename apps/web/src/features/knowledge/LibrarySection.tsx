@@ -23,10 +23,10 @@ import { type EditorTarget, FileEditor } from "./FileEditor";
 /**
  * The agent home as files, filling the Knowledge page: one StorageBrowser
  * over memory/, skills/ and knowledge/. Memory and skill entries appear as
- * their md files (content or description as the row snippet, no in-app open;
- * editing happens through the agent or any editor). Knowledge documents come
- * from the library index, with FTS content search so a query also finds text
- * inside PDFs and Word files. Uploads land in knowledge/.
+ * their md files (content or description as the row snippet) and open in the
+ * FileEditor dialog. Knowledge documents come from the library index, with
+ * FTS content search so a query also finds text inside PDFs and Word files.
+ * Uploads land in knowledge/.
  */
 
 const MEMORY_DIR = "dir:memory";

@@ -71,6 +71,20 @@ describe("todos", () => {
     expect(listed.status).toBe("open");
   });
 
+  it("creates a manual todo via POST, trimming the title; a blank title 400s", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/todos",
+      payload: { title: "  Call the plumber  " },
+    });
+    const todo = res.json<Todo>();
+    expect(todo.title).toBe("Call the plumber");
+    expect((await listOpen()).some((t) => t.id === todo.id)).toBe(true);
+
+    const blank = await app.inject({ method: "POST", url: "/api/todos", payload: { title: "  " } });
+    expect(blank.statusCode).toBe(400);
+  });
+
   it("is idempotent on key: recreating reuses the one open todo", async () => {
     const first = await store.createTodo({ title: "Weekly sweep", key: "returns-sweep" });
     const second = await store.createTodo({ title: "Weekly sweep again", key: "returns-sweep" });

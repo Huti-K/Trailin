@@ -359,10 +359,12 @@ export const api = {
   leadAutomations: (id: string) =>
     get<Automation[]>(`/api/leads/${encodeURIComponent(id)}/automations`),
 
-  // The agent files and maintains todos; the web only lists them and toggles
-  // steps/status. updateTodo is the one maintenance verb (see routes/todos.ts).
+  // Todos come from the agent and from the user's own add row on Home;
+  // updateTodo is the one maintenance verb (see routes/todos.ts).
   todos: (status?: TodoStatus) =>
     get<Todo[]>(`/api/todos${status ? `?status=${encodeURIComponent(status)}` : ""}`),
+  createTodo: (body: { title: string; body?: string; dueAt?: string }) =>
+    http<Todo>("POST", "/api/todos", body),
   updateTodo: (
     id: string,
     patch: {

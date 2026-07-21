@@ -12,7 +12,9 @@
   "changelog": {
     "open": "Changelog",
     "title": "What's new",
-    "subtitle": "Recent updates to Marlen",
+    "subtitle": "What recently got better in Marlen",
+    "version": "Version {{version}}",
+    "current": "Installed",
     "ready": "Ready"
   },
   "views": {
@@ -34,7 +36,7 @@
     },
     "knowledge": {
       "title": "Knowledge",
-      "description": "Documents and memory for your agent."
+      "description": "Your assistant knows notes in every conversation and looks up documents as needed."
     },
     "settings": {
       "title": "Settings",
@@ -377,6 +379,7 @@
     "learnVoiceStarted": "Learning your writing style from {{name}}, it'll appear in Settings shortly.",
     "voiceLearning": "Learning style…",
     "voiceLearned": "Style learned",
+    "voiceEdit": "Edit writing style",
     "voiceLearnFailed": "Style learning failed",
     "voiceLearnRetry": "Retry learning writing style"
   },
@@ -413,6 +416,8 @@
     "todosToday": "Today",
     "todosTomorrow": "Tomorrow",
     "todosAnytime": "Anytime",
+    "todosAdd": "Add todo",
+    "todosAddPlaceholder": "New todo…",
     "todosReorder": "Reorder",
     "todosDismiss": "Dismiss",
     "todosEdit": "Edit",
@@ -651,6 +656,7 @@
       "save": "Save",
       "scope": "Applies to",
       "general": "General",
+      "memoryHint": "Notes are the assistant's memory: this text is available to it in every conversation (in its system prompt).",
       "descriptionPlaceholder": "Short description of the skill",
       "new": "New",
       "newTitle": "New file",

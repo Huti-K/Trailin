@@ -14,17 +14,27 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import type { AccountColor, AccountDrafts, Automation, EmailDraft, Todo } from "@marlen/shared";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, CircleCheck, Clock, ListTodo, Sparkles, TriangleAlert } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  ChevronRight,
+  CircleCheck,
+  Clock,
+  ListTodo,
+  Plus,
+  Sparkles,
+  TriangleAlert,
+} from "lucide-react";
 import * as React from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { AccountDot } from "@/components/ui/account-dot";
+import { Button } from "@/components/ui/button";
 import { DisclosureToggle } from "@/components/ui/disclosure-toggle";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorBanner, LoadingRow } from "@/components/ui/feedback";
 import { GroupLabel } from "@/components/ui/group-label";
 import { IconChip } from "@/components/ui/icon-chip";
+import { Input } from "@/components/ui/input";
 import { SectionTitle } from "@/components/ui/section-header";
 import { Select } from "@/components/ui/select";
 import { DraftRow } from "@/features/drafts/DraftRow";
@@ -43,7 +53,7 @@ import { api } from "@/lib/api";
 import { dateTimeLabel, dayLabel, timeLabel } from "@/lib/dates";
 import type { View } from "@/lib/nav";
 import { openConversationInChat } from "@/lib/quickActions";
-import { cn, midpoint, stagger } from "@/lib/utils";
+import { cn, errorMessage, midpoint, stagger } from "@/lib/utils";
 
 const AUTOMATION_HORIZON_DAYS = 14;
 const OVERDUE = "overdue";
@@ -100,6 +110,7 @@ export function AttentionSection({
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [expanded, setExpanded] = React.useState(true);
+  const [adding, setAdding] = React.useState(false);
   const [showDone, setShowDone] = React.useState(false);
   /** Account id, or "all" — narrows the approvals block only. */
   const [accountFilter, setAccountFilter] = React.useState("all");
@@ -385,7 +396,20 @@ export function AttentionSection({
         count={loaded ? count : null}
         expanded={expanded}
         onToggle={() => setExpanded((v) => !v)}
-      />
+      >
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          title={t("home.todosAdd")}
+          aria-label={t("home.todosAdd")}
+          onClick={() => {
+            setAdding((v) => (expanded ? !v : true));
+            setExpanded(true);
+          }}
+        >
+          <Plus />
+        </Button>
+      </SectionTitle>
       {expanded && (
         <>
           {rowError && <ErrorBanner>{rowError}</ErrorBanner>}
@@ -411,7 +435,12 @@ export function AttentionSection({
               )}
               {approvalsZone}
               {groups.filter((g) => !g.overdue).map(renderGroup)}
-              {allClear && <EmptyState icon={CircleCheck} description={t("home.attentionEmpty")} />}
+              {adding && (
+                <AddTodoRow seen={seen} onClose={() => setAdding(false)} onError={setRowError} />
+              )}
+              {allClear && !adding && (
+                <EmptyState icon={CircleCheck} description={t("home.attentionEmpty")} />
+              )}
             </div>
           </DndContext>
           {done.length > 0 && (
@@ -433,6 +462,68 @@ export function AttentionSection({
         </>
       )}
     </section>
+  );
+}
+
+/**
+ * The manual add row, revealed by the header's plus: Enter files an anytime
+ * todo and keeps the field open for the next one; Escape or leaving it empty
+ * closes it. Details (date, note, link) are edited on the created row.
+ */
+function AddTodoRow({
+  seen,
+  onClose,
+  onError,
+}: {
+  seen: Seen;
+  onClose: () => void;
+  onError: (message: string | null) => void;
+}) {
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const [title, setTitle] = React.useState("");
+  const create = useMutation({
+    mutationFn: (title: string) => api.createTodo({ title }),
+    onSuccess: (todo) => {
+      // The user filed this one themselves, so it never wears the new dot.
+      seen.see(todoSeenKey(todo.id));
+      void queryClient.invalidateQueries({ queryKey: ["todos"] });
+    },
+    onError: (e) => onError(errorMessage(e)),
+  });
+
+  const submit = () => {
+    const trimmed = title.trim();
+    if (!trimmed) {
+      onClose();
+      return;
+    }
+    create.mutate(trimmed);
+    setTitle("");
+  };
+
+  return (
+    <form
+      className="animate-in-up"
+      onSubmit={(e) => {
+        e.preventDefault();
+        submit();
+      }}
+    >
+      <Input
+        autoFocus
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+        placeholder={t("home.todosAddPlaceholder")}
+        aria-label={t("home.todosAdd")}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") onClose();
+        }}
+        onBlur={() => {
+          if (!title.trim()) onClose();
+        }}
+      />
+    </form>
   );
 }
 

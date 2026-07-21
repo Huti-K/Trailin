@@ -144,6 +144,25 @@ export async function patchAccountVoice(
   return run;
 }
 
+/** A memory content edit renames its file; follow the rename in any voice
+ *  pointing at the old id so the learned style stays linked. */
+export async function repointVoiceStyleMemory(oldId: string, newId: string): Promise<void> {
+  const voices = await getAccountVoices();
+  let changed = false;
+  for (const voice of voices) {
+    if (!voice.styleMemoryIds?.includes(oldId)) continue;
+    await patchAccountVoice(voice.accountId, (existing) => {
+      const base = existing ?? voice;
+      return {
+        ...base,
+        styleMemoryIds: (base.styleMemoryIds ?? []).map((id) => (id === oldId ? newId : id)),
+      };
+    });
+    changed = true;
+  }
+  if (changed) emitServerEvent("learn");
+}
+
 const ONOFFICE_AUTOMATION_CREATES_KEY = "onoffice.automationCreates";
 
 /**

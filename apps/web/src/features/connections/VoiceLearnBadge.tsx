@@ -1,23 +1,25 @@
-import type { ConnectedAccount } from "@marlen/shared";
+import type { ConnectedAccount, MemoryEntry } from "@marlen/shared";
 import { useQuery } from "@tanstack/react-query";
 import { AudioLines, RotateCcw } from "lucide-react";
+import * as React from "react";
 import { useTranslation } from "react-i18next";
-import { Link } from "react-router-dom";
 import { Badge, badgeVariants } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
+import { FileEditor } from "@/features/knowledge/FileEditor";
 import { api } from "@/lib/api";
 import { toast } from "@/lib/toast";
 
 /**
  * Voice-learn status for one account row: an in-flight or failed attempt, or
  * the learned voice itself — a chip whose tooltip lists the style directives
- * and which links to the backing memory on the Knowledge page. A learn
- * starting or finishing emits "learn", which the topic bridge turns into a
- * refetch of both queries.
+ * and which opens the backing style memory in the editor. A learn starting or
+ * finishing emits "learn", which the topic bridge turns into a refetch of
+ * both queries.
  */
 export function VoiceLearnBadge({ account }: { account: ConnectedAccount }) {
   const { t } = useTranslation();
+  const [editing, setEditing] = React.useState<MemoryEntry | null>(null);
   const { data: runs } = useQuery({
     queryKey: ["learn", "voiceRuns"],
     queryFn: () => api.voiceLearnRuns(),
@@ -67,15 +69,35 @@ export function VoiceLearnBadge({ account }: { account: ConnectedAccount }) {
 
   const voice = voices?.find((v) => v.accountId === account.id);
   if (voice) {
+    const edit = async () => {
+      if (!voice.memoryId) return;
+      try {
+        const entry = (await api.memories()).find((m) => m.id === voice.memoryId);
+        if (entry) setEditing(entry);
+      } catch (err) {
+        toast.error(err);
+      }
+    };
     return (
-      <Link
-        to={voice.memoryId ? `/knowledge?focus=memory:${voice.memoryId}` : "/knowledge"}
-        className={badgeVariants({ variant: "muted" })}
-        data-tooltip={voice.directives.join("\n")}
-      >
-        <AudioLines aria-hidden />
-        {t("connections.voiceLearned")}
-      </Link>
+      <>
+        <button
+          type="button"
+          onClick={() => void edit()}
+          className={badgeVariants({ variant: "muted" })}
+          data-tooltip={voice.directives.join("\n")}
+          aria-label={t("connections.voiceEdit")}
+        >
+          <AudioLines aria-hidden />
+          {t("connections.voiceLearned")}
+        </button>
+        {editing && (
+          <FileEditor
+            target={{ kind: "memory", entry: editing }}
+            onClose={() => setEditing(null)}
+            onStatus={() => {}}
+          />
+        )}
+      </>
     );
   }
 

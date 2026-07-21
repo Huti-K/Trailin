@@ -1,8 +1,8 @@
 import type { FastifyPluginAsyncTypebox } from "@fastify/type-provider-typebox";
 import type { Todo } from "@marlen/shared";
 import { Type } from "@sinclair/typebox";
-import { notFound } from "../core/errors.js";
-import { listTodos, type TodoUpdate } from "../db/todos.js";
+import { badRequest, notFound } from "../core/errors.js";
+import { createTodo, listTodos, type TodoUpdate } from "../db/todos.js";
 import { applyTodoUpdate } from "../services/todos.js";
 
 const idParams = Type.Object({ id: Type.String() });
@@ -14,6 +14,12 @@ const statusValue = Type.Union([
 ]);
 
 const listQuery = Type.Object({ status: Type.Optional(statusValue) });
+
+const createBody = Type.Object({
+  title: Type.String(),
+  body: Type.Optional(Type.String()),
+  dueAt: Type.Optional(Type.String()),
+});
 
 const patchBody = Type.Object({
   title: Type.Optional(Type.String()),
@@ -27,6 +33,13 @@ const patchBody = Type.Object({
 export const todosRoutes: FastifyPluginAsyncTypebox = async (app) => {
   app.get("/api/todos", { schema: { querystring: listQuery } }, async (req): Promise<Todo[]> => {
     return listTodos({ status: req.query.status });
+  });
+
+  app.post("/api/todos", { schema: { body: createBody } }, async (req): Promise<Todo> => {
+    const title = req.body.title.trim();
+    if (!title) throw badRequest("title must not be empty");
+    const { todo } = await createTodo({ ...req.body, title });
+    return todo;
   });
 
   app.patch(

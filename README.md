@@ -1,4 +1,7 @@
-# Marlen
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset=".github/banner-dark.svg">
+  <img src=".github/banner-light.svg" alt="Marlen, a local-first AI email assistant">
+</picture>
 
 A local-first AI email assistant. It reads, drafts, and organizes your mail —
 Gmail, Outlook / Microsoft 365, and anything else Pipedream can connect — with

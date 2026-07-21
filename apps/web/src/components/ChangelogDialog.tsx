@@ -8,22 +8,25 @@ import { desktopBridge } from "@/lib/desktop";
 /**
  * The version history as a plain list: version + date heading, then bullet
  * notes. When a downloaded update is waiting (`pendingVersion`), its entry wears
- * the accent "ready" badge and the footer offers the restart.
+ * the accent "ready" badge and the footer offers the restart; the running
+ * version (`currentVersion`) carries a quiet "installed" badge for orientation.
  */
 export function ChangelogDialog({
   open,
   onOpenChange,
   pendingVersion,
+  currentVersion,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   pendingVersion?: string | null;
+  currentVersion?: string | null;
 }) {
   const { t, i18n } = useTranslation();
   const formatDate = (iso: string) =>
     new Date(iso).toLocaleDateString(i18n.language, {
       day: "numeric",
-      month: "short",
+      month: "long",
       year: "numeric",
     });
 
@@ -45,14 +48,20 @@ export function ChangelogDialog({
         {CHANGELOG.map((entry) => (
           <section key={entry.version} className="flex flex-col gap-2">
             <div className="flex items-baseline gap-2">
-              <h3 className="font-mono text-sm font-medium tabular-nums text-foreground">
-                v{entry.version}
+              <h3 className="text-sm font-semibold tracking-tight text-foreground">
+                {t("changelog.version", { version: entry.version })}
               </h3>
               <span className="font-mono text-2xs tabular-nums text-muted-foreground">
                 {formatDate(entry.date)}
               </span>
-              {entry.version === pendingVersion && (
+              {entry.version === pendingVersion ? (
                 <Badge className="ml-auto">{t("changelog.ready")}</Badge>
+              ) : (
+                entry.version === currentVersion && (
+                  <Badge variant="muted" className="ml-auto">
+                    {t("changelog.current")}
+                  </Badge>
+                )
               )}
             </div>
             <ul className="flex flex-col gap-1.5">

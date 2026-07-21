@@ -116,7 +116,6 @@ export function AboutPanel() {
 
       <div className="flex flex-col gap-2">
         <div className="flex flex-wrap items-center justify-end gap-2.5">
-          <LinkButton onClick={() => setChangelogOpen(true)}>{t("changelog.open")}</LinkButton>
           <LinkButton
             onClick={() =>
               openExternal(
@@ -126,6 +125,9 @@ export function AboutPanel() {
           >
             {t("settings.about.reportIssue")}
           </LinkButton>
+          <Button variant="secondary" size="sm" onClick={() => setChangelogOpen(true)}>
+            {t("changelog.open")}
+          </Button>
           <Button variant="secondary" size="sm" onClick={() => openExternal(REPO_URL)}>
             <GithubMark />
             {t("settings.about.viewOnGithub")}
@@ -163,6 +165,7 @@ export function AboutPanel() {
         open={changelogOpen}
         onOpenChange={setChangelogOpen}
         pendingVersion={readyVersion}
+        currentVersion={info?.version}
       />
     </ListRow>
   );

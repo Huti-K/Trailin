@@ -10,8 +10,9 @@ import { BRIEFING_PRIORITIES } from "@marlen/shared";
 import { AlertTriangle, Clock, Eye, MessageCircleQuestion, PenLine, Sunrise } from "lucide-react";
 import * as React from "react";
 import { useTranslation } from "react-i18next";
+import { useNavigate } from "react-router-dom";
 import { AccountDot } from "@/components/ui/account-dot";
-import { Badge } from "@/components/ui/badge";
+import { Badge, badgeVariants } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DisclosureToggle } from "@/components/ui/disclosure-toggle";
 import { GroupLabel } from "@/components/ui/group-label";
@@ -208,6 +209,7 @@ function BriefingRow({
   colors?: AccountColor[];
 }) {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const account = accounts?.find((a) => a.accountId === item.accountId);
   const urgent = item.priority === "urgent";
   const subject = item.subject || t("chat.cards.noSubject");
@@ -231,7 +233,14 @@ function BriefingRow({
     dispatchQuickAction(text);
   };
 
+  // Jumps straight to the draft's approval row on Home (same ?draft= handoff
+  // as the search palette); the chat prompt is the fallback for a card whose
+  // item carries no account id.
   const reviewDraft = () => {
+    if (item.accountId && item.draftId) {
+      navigate({ pathname: "/", search: `?draft=${item.accountId}:${item.draftId}` });
+      return;
+    }
     dispatchQuickAction(
       t("chat.cards.briefing.reviewDraftPrompt", {
         sender: item.sender,
@@ -254,12 +263,7 @@ function BriefingRow({
   };
 
   return (
-    <div
-      className={cn(
-        "group -mx-2 flex items-start gap-2 rounded-lg px-2 py-1.5",
-        urgent && "tint-warning",
-      )}
-    >
+    <div className="group -mx-2 flex items-start gap-2 rounded-lg px-2 py-1.5">
       {/* Colour alone can't carry which inbox a row came from — the one thing
           this cross-account layout trades away for density. */}
       <AccountMarker
@@ -271,8 +275,12 @@ function BriefingRow({
       />
       <div className="min-w-0 flex-1">
         <p className="text-sm leading-relaxed">
+          {/* Urgency is a mark on the row, never a fill behind it (DESIGN.md). */}
           {urgent && (
-            <AlertTriangle className="mr-1 -mt-0.5 inline-block h-3.5 w-3.5 shrink-0" aria-hidden />
+            <AlertTriangle
+              className="mr-1 -mt-0.5 inline-block h-3.5 w-3.5 shrink-0 text-warning"
+              aria-hidden
+            />
           )}
           <span className="font-medium">{item.sender}</span> {subject}
           <span className="mx-1.5 text-muted-foreground/50">·</span>
@@ -286,7 +294,18 @@ function BriefingRow({
                 {item.deadline}
               </Badge>
             )}
-            {item.draftId && <Badge variant="success">{t("chat.cards.briefing.draftReady")}</Badge>}
+            {item.draftId && (
+              <button
+                type="button"
+                onClick={reviewDraft}
+                className={badgeVariants({ variant: "success" })}
+                data-tooltip={t("chat.cards.briefing.reviewDraft")}
+                aria-label={t("chat.cards.briefing.reviewDraft")}
+              >
+                <Eye aria-hidden />
+                {t("chat.cards.briefing.draftReady")}
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -409,7 +428,7 @@ function RollupGroup({
 
 /**
  * One rolled-up low-value message — a compact, quiet counterpart to
- * BriefingRow: smaller type, tighter rows, no priority tint, deadline/draft
+ * BriefingRow: smaller type, tighter rows, no urgency mark, deadline/draft
  * badges or draft/ask actions. Its single action is an open-in-webmail button
  * that surfaces on hover, so the noise stays scannable and one click away from
  * the real thing without ever competing with a tier item.

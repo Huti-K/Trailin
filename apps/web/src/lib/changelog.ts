@@ -12,6 +12,24 @@ export type ChangelogEntry = {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.3.9",
+    date: "2026-07-21",
+    notes: {
+      en: [
+        'Add your own to-dos on the home page. The plus next to "To do" opens a field, Enter files the entry, and the pencil on the new row adds a date, a note, or an automation that starts once it is done.',
+        '"Draft ready" in the morning briefing is now a button that jumps straight to that draft in the approvals list, ready to send, edit, or discard. The detour through the assistant is gone.',
+        "A learned writing style opens in the editor with a click on its chip in Settings, edits keep each directive on its own line, and renaming the note behind it no longer detaches it from its account.",
+        "The changelog marks the version you are running, with dates written out in full.",
+      ],
+      de: [
+        'Eigene Aufgaben direkt auf der Startseite anlegen. Das Plus neben "Zu erledigen" öffnet ein Feld, Enter legt den Eintrag an, und über den Stift bekommt die neue Zeile ein Datum, eine Notiz oder eine Automatisierung, die beim Erledigen startet.',
+        '"Entwurf bereit" im Morgenbriefing ist jetzt ein Knopf, der direkt zum Entwurf in der Freigabe-Liste springt, bereit zum Senden, Bearbeiten oder Verwerfen. Der Umweg über den Assistenten entfällt.',
+        "Ein gelernter Schreibstil öffnet sich per Klick auf sein Abzeichen in den Einstellungen im Editor, beim Bearbeiten bleibt jede Vorgabe in ihrer eigenen Zeile, und das Umbenennen der Notiz dahinter löst sie nicht mehr vom Konto.",
+        "Das Changelog zeigt, welche Version gerade läuft, mit ausgeschriebenem Datum.",
+      ],
+    },
+  },
+  {
     version: "0.3.8",
     date: "2026-07-21",
     notes: {

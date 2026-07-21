@@ -33,6 +33,17 @@ export type EditorTarget =
 /** null = keep the entry's current contact scope untouched. */
 type MemoryScope = { accountId: string | null } | null;
 
+/** Memories keep one fact per line (learned styles are one directive per line):
+ *  tiptap's blank-line paragraph breaks collapse to single newlines, whitespace
+ *  inside a line to one space. */
+function memoryContent(markdown: string): string {
+  return markdown
+    .split("\n")
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .join("\n");
+}
+
 /** What the create flow produces; notes and folders land in the browsed knowledge folder. */
 type CreateKind = "note" | "folder" | "memory" | "skill";
 const CREATE_KINDS: CreateKind[] = ["note", "folder", "memory", "skill"];
@@ -128,8 +139,7 @@ export function FileEditor({
     setSaving(true);
     try {
       if (target.kind === "memory") {
-        // Single-line the fact: memories are one sentence, not a document.
-        const content = markdown.replace(/\s+/g, " ").trim();
+        const content = memoryContent(markdown);
         await (scope === null
           ? api.updateMemory(target.entry.id, content)
           : api.updateMemory(target.entry.id, content, scope.accountId, null));
@@ -138,7 +148,7 @@ export function FileEditor({
       } else if (target.kind === "document") {
         onStatus(await api.saveDocumentContent(target.doc.id, markdown));
       } else if (createKind === "memory") {
-        await api.addMemory(markdown.replace(/\s+/g, " ").trim(), scope?.accountId ?? null);
+        await api.addMemory(memoryContent(markdown), scope?.accountId ?? null);
       } else if (createKind === "skill") {
         await api.saveSkill(name, description, markdown);
       } else if (createKind === "folder") {
@@ -241,6 +251,10 @@ export function FileEditor({
               getMarkdownRef.current = getMarkdown;
             }}
           />
+        )}
+
+        {isMemory && (
+          <p className="text-xs text-muted-foreground">{t("storage.editor.memoryHint")}</p>
         )}
 
         {isMemory && (
